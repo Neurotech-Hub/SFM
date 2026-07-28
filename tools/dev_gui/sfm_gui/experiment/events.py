@@ -49,6 +49,7 @@ class EventKind(Enum):
     DOME_CLOSED = auto()
     NODE_ONLINE = auto()
     NODE_OFFLINE = auto()
+    NODE_RECOVERED = auto()  # operator cleared a node's fault (see recover_node)
 
     # Base-station / session
     BNC_IN = auto()

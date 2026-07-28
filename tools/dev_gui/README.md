@@ -1,6 +1,7 @@
-# VFM Developer GUI
+# SFM Developer GUI
 
-Python desktop application (DearPyGui) for controlling and monitoring VFM foraging modules over the CAN bus from the Raspberry Pi 5 base station.
+Python desktop application (DearPyGui) for the **Spatial Foraging Module (SFM)** —
+a base station plus multiple **VFM** nodes — over the CAN bus on a Raspberry Pi 5.
 
 ## Requirements
 
@@ -47,7 +48,7 @@ python run.py --help
   --interface, -i  SocketCAN interface name  (default: can0)
   --bitrate,   -b  CAN bitrate in bps        (default: 250000)
   --nodes,     -n  Number of expected nodes  (default: 9)
-  --log-dir        Directory for CSV logs    (default: ~/vfm_logs)
+  --log-dir        Directory for CSV logs    (default: ~/sfm_logs)
 ```
 
 All CLI arguments pre-fill the setup screen; you can still edit them before clicking **Start Session**.
@@ -83,7 +84,7 @@ python -m pytest tests/ -v
 
 The GUI is for live monitoring and discovery. Behavioral tasks live in a
 separate **event-driven experiment engine** under
-[`vfm_gui/experiment/`](vfm_gui/experiment/). Nodes stay dumb (commands in,
+[`sfm_gui/experiment/`](sfm_gui/experiment/). Nodes stay dumb (commands in,
 events out); your script decides what to do next.
 
 ### Quick start — free feeding against the simulator
@@ -94,7 +95,7 @@ python node_simulator.py --interface vcan0 --nodes 3 --skip-discovery
 
 # Terminal 2 — run the built-in free-feeding template for 60 s
 python run_experiment.py free_feeding --interface vcan0 --nodes 1,2,3 \
-    --seconds 60 --reload-delay 2 --no-io --log-dir ~/vfm_logs
+    --seconds 60 --reload-delay 2 --no-io --log-dir ~/sfm_logs
 ```
 
 On a non-Pi host use `--no-io` so GPIO/BNC setup is skipped.
@@ -102,7 +103,7 @@ On a non-Pi host use `--no-io` so GPIO/BNC setup is skipped.
 ### Write your own experiment
 
 ```python
-from vfm_gui.experiment import Experiment, EventKind
+from sfm_gui.experiment import Experiment, EventKind
 
 exp = Experiment(nodes=[1, 2, 3], name="my_task")
 
@@ -134,7 +135,7 @@ A script may expose either `exp = Experiment(...)` or
 
 | Name | Module | Behavior |
 |------|--------|----------|
-| `free_feeding` | `vfm_gui.experiment.templates.free_feeding` | Dispense on all nodes at start; after each confirmed take, wait `reload_delay` and re-dispense; end on duration and/or pellet cap |
+| `free_feeding` | `sfm_gui.experiment.templates.free_feeding` | Dispense on all nodes at start; after each confirmed take, wait `reload_delay` and re-dispense; end on duration and/or pellet cap |
 
 Reloading on the confirmed take means the session paces itself to the animal:
 a pellet that is offered but not eaten does not trigger another one.
@@ -143,13 +144,11 @@ a pellet that is offered but not eaten does not trigger another one.
 
 - **Events** (`EventKind`): `PELLET_LOADED`, `PELLET_PRESENTED`, `DOME_OPENED`,
   `PELLET_TAKEN`, `FAULT`, `FEED_SKIPPED`, `DOME_OPEN_WARNING`, phase events,
-  `PRESENCE_CHANGED`, `SENSOR_CHANGED`, plus derived `DOME_CLOSED`,
+  `PRESENCE_CHANGED`, `PG_CHANGED`, plus derived `DOME_CLOSED`,
   `NODE_ONLINE` / `NODE_OFFLINE`, and base-station `BNC_IN`, `SESSION_START`,
   `SESSION_END`.
-  `DOME_CLOSED` carries `pellet_present`, so an access that ended without a
-  retrieval is distinguishable from one that did not.
-- **Context actions**: `dispense`, `abort`, `broadcast_dispense`,
-  `bnc_pulse`, `set_heartbeat_interval`, `after` / `every` timers,
+- **Context actions**: `dispense`, `recover`, `abort`, `broadcast_dispense`,
+  `broadcast_recover`, `bnc_pulse`, `set_heartbeat_interval`, `after` / `every` timers,
   named `counter` / `incr`, `log`.
 - **Lifecycle**: `start_when(condition)`, `end_after(hours=…, pellets=…)`,
   `end_when(condition)`.
@@ -166,7 +165,7 @@ the event log:
 
 - **BNC IN 1 / BNC IN 2** — configurable label, edge (rising/falling/both),
   and a free-text "action" placeholder. A handful of convenience keywords
-  (`dispense_all`, `abort_all`, `ping_all`, `reqstatus_all`) are dispatched
+  (`dispense_all`, `recover_all`, `ping_all`, `reqstatus_all`) are dispatched
   automatically when enabled; any other value is just logged, ready to be
   wired to real behaviour later.
 - **BNC OUT** — configurable label, pulse width (microseconds), and a
@@ -175,7 +174,7 @@ the event log:
   one-shot pulse for bench testing regardless of the enable state.
 
 All GPIO for BNC I/O, the user button, and AEO (daisy-chain discovery enable)
-is centralized in [vfm_gui/io_manager.py](vfm_gui/io_manager.py). It degrades
+is centralized in [sfm_gui/io_manager.py](sfm_gui/io_manager.py). It degrades
 to a harmless simulation mode automatically when no GPIO backend
 (`gpiod`/`RPi.GPIO`) or hardware is available — e.g. when developing against
 `vcan0` on a non-Pi machine.
@@ -193,12 +192,12 @@ tools/dev_gui/
 ├── tests/
 │   ├── test_hat.py           # Interactive hardware validation (not pytest)
 │   └── test_*.py             # Automated unit tests (pytest)
-├── vfm_gui/
+├── sfm_gui/
     ├── protocol.py           # CAN protocol constants + parsers
     ├── can_manager.py        # SocketCAN wrapper (threaded RX)
     ├── io_manager.py         # BNC I/O, button, AEO GPIO (non-CAN)
     ├── discovery_manager.py  # ANNOUNCE/ASSIGN/REJOIN via IOManager.drive_aeo()
-    ├── mac_id_registry.py    # Persistent MAC ↔ Node ID dictionary (~/.vfm/…)
+    ├── mac_id_registry.py    # Persistent MAC ↔ Node ID dictionary (~/.sfm/…)
     ├── node_registry.py      # Per-node live state (session)
     ├── log_manager.py        # Ring buffer + CSV auto-save
     ├── app.py                # DearPyGui screens + render loop
@@ -213,7 +212,7 @@ tools/dev_gui/
 ## Persistent MAC ↔ Node ID map
 
 The base station keeps a dictionary of discovered modules in
-`~/.vfm/mac_id_registry.json` (created automatically):
+`~/.sfm/mac_id_registry.json` (created automatically):
 
 ```json
 {
@@ -236,7 +235,7 @@ The base station keeps a dictionary of discovered modules in
 
 | Direction      | CAN ID           | Content                        |
 |---------------|------------------|-------------------------------|
-| base → node   | `0x100 + nodeId` | Command (Dispense, Abort, …)  |
+| base → node   | `0x100 + nodeId` | Command (Dispense, Recover, …)  |
 | base → all    | `0x100`          | Broadcast command             |
 | node → base   | `0x200 + nodeId` | Periodic heartbeat/status snapshot |
 | node → base   | `0x300 + nodeId` | Immediate event (dispense, fault, Pong, input change) |
@@ -246,7 +245,7 @@ The base station keeps a dictionary of discovered modules in
 | node → base   | `0x083`          | REJOIN (returning node)       |
 
 Broadcast command opcodes include `ClearId` (`0x07`) — the GUI **Clear All IDs**
-button clears `~/.vfm/mac_id_registry.json`, broadcasts ClearId so every node
+button clears `~/.sfm/mac_id_registry.json`, broadcasts ClearId so every node
 wipes its NVS ID, then rediscovers and rebuilds the MAC↔ID dictionary.
 
 `InputChanged` event payloads are `[0x06, inputId, active]`, where input IDs are

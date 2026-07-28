@@ -44,10 +44,10 @@ except ImportError:
     print("python-can is required: pip install python-can", file=sys.stderr)
     sys.exit(1)
 
-# Import protocol helpers from the vfm_gui package if available,
+# Import protocol helpers from the sfm_gui package if available,
 # otherwise define the bare minimum here so the simulator is standalone.
 try:
-    from vfm_gui.protocol import (
+    from sfm_gui.protocol import (
         CanCmd,
         CanEvent,
         DispenseState,

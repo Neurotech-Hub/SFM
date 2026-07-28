@@ -1,11 +1,11 @@
-"""Tests for vfm_gui.protocol — frame encoding/decoding round-trips."""
+"""Tests for sfm_gui.protocol — frame encoding/decoding round-trips."""
 
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from vfm_gui.protocol import (
+from sfm_gui.protocol import (
     CanCmd,
     CanEvent,
     InputId,
@@ -43,9 +43,9 @@ class TestBuildCmdFrame:
         assert data[0] == CanCmd.Dispense
 
     def test_broadcast(self):
-        arb_id, data = build_cmd_frame(0, CanCmd.Abort)
+        arb_id, data = build_cmd_frame(0, CanCmd.Recover)
         assert arb_id == CAN_CMD_BASE  # 0x100
-        assert data[0] == CanCmd.Abort
+        assert data[0] == CanCmd.Recover
 
     def test_assign_id_payload(self):
         arb_id, data = build_cmd_frame(5, CanCmd.AssignId, bytes([7]))
@@ -169,6 +169,7 @@ class TestParseEvent:
 
     def test_phase_display_names(self):
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.PelletLoaded] == "Loaded"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.DomeOpened] == "DomeOpened"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Lowering] == "Lowering"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Loading] == "Loading"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Raising] == "Raising"
@@ -204,14 +205,14 @@ class TestParseEvent:
         assert ServiceStatus.PelletLost == 5
 
     def test_parse_event_context_dome_opened(self):
-        from vfm_gui.protocol import parse_event_context
+        from sfm_gui.protocol import parse_event_context
         ev = parse_event(bytes([CanEvent.DomeOpened, 0x02, 0x00, 0x01]))
         ctx = parse_event_context(ev)
         assert ctx["pellet_count"] == 2
         assert ctx["pellet_present"] is True
 
     def test_parse_event_context_pellet_taken(self):
-        from vfm_gui.protocol import parse_event_context
+        from sfm_gui.protocol import parse_event_context
         ev = parse_event(bytes([CanEvent.PelletTaken, 0x07, 0x00, 0x00]))
         ctx = parse_event_context(ev)
         assert ctx["pellet_count"] == 7

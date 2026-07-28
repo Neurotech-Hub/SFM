@@ -23,6 +23,7 @@ class CanCmd(IntEnum):
     Ping      = 0x01
     Dispense  = 0x02
     Abort     = 0x03
+    Recover   = 0x03  # alias of Abort (legacy GUI / experiment naming)
     AssignId  = 0x04  # payload byte[0] = new nodeId
     SetConfig = 0x05  # payload TBD
     ReqStatus = 0x06
