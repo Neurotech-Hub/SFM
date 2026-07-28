@@ -14,7 +14,7 @@ VFM::VFM()
 
       presence_(false),
 
-      touchThreshold_(40000),
+      presenceThreshold_(35000),
 
       btnHoldMs_(3000),
 
@@ -155,13 +155,13 @@ bool VFM::begin() {
 
     // 6. Touch pin (analog read) and BTN (active LOW, long-press clears NVS ID)
 
-    pinMode(PIN_TOUCH, INPUT);
+    pinMode(PIN_PRESENCE, INPUT);
 
     pinMode(PIN_BTN, INPUT_PULLUP);
 
     // Seed the edge-reporting snapshots from real inputs so startup levels do
     // not generate false InputChanged events.
-    updateTouch();
+    updatePresence();
     reportedPg1_      = dispenser_.pg1();
     reportedPg2_      = dispenser_.pg2();
     reportedPg3_      = dispenser_.pg3();
@@ -202,7 +202,7 @@ void VFM::update() {
 
     leds_.update();
 
-    updateTouch();
+    updatePresence();
 
     updateButton();
 
@@ -548,15 +548,15 @@ void VFM::updatePingBlink() {
 
 
 
-void VFM::updateTouch() {
+void VFM::updatePresence() {
 
-    // ESP32-S3 touch sensor is read via touchRead() which returns a raw value;
+    // ESP32-S3 presence detection sensor (capacitive pad on GPIO5).
+    // touchRead() returns a raw count; presence asserts when raw exceeds
+    // the bench-tuned threshold (idle ~30–35k, presence often 100k+).
 
-    // lower values typically indicate a touch. Threshold must be bench-tuned.
+    uint32_t val = touchRead(PIN_PRESENCE);
 
-    uint32_t val = touchRead(PIN_TOUCH);
-
-    presence_ = (val > touchThreshold_);
+    presence_ = (val > presenceThreshold_);
 
 }
 

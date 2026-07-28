@@ -43,12 +43,13 @@ public:
     NodeIdentity     &identity()    { return identity_; }
     LedService       &leds()        { return leds_; }
 
-    // Capacitive touch reading (raw analog value from PIN_TOUCH).
-    // The VFM facade exposes a simple threshold-based presence flag.
+    // Presence detection sensor (ESP32 touchRead on PIN_PRESENCE / GPIO5).
+    // Raw value above the threshold asserts animal presence.
     bool presenceDetected() const   { return presence_; }
 
-    // Override the touch threshold (default 40; lower = more sensitive).
-    void setTouchThreshold(uint16_t t) { touchThreshold_ = t; }
+    // Override the presence detection threshold (default 35000).
+    // Higher = less sensitive (raw must rise further above idle).
+    void setPresenceThreshold(uint16_t t) { presenceThreshold_ = t; }
 
     // Force an immediate heartbeat regardless of the heartbeat timer.
     void sendHeartbeatNow();
@@ -67,7 +68,7 @@ private:
     LedService       leds_;
 
     bool     presence_;
-    uint16_t touchThreshold_;
+    uint16_t presenceThreshold_;
 
     // Last input states published through CanEvent::InputChanged. These let
     // the GUI react immediately instead of waiting for the next heartbeat.
@@ -98,7 +99,7 @@ private:
     void sendInputChanged(InputId input, bool active);
     void sendPhaseEvent(CanEvent ev);
     void sendHeartbeatIfDue();
-    void updateTouch();
+    void updatePresence();
     void updateButton();
     void updatePingBlink();
     void flashLedsClear();            // visual confirmation of NVS clear

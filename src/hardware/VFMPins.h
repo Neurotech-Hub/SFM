@@ -59,7 +59,8 @@ constexpr uint8_t PIN_PG3 = 44; // trigger = HIGH (dome open)
 // ---------------------------------------------------------------------------
 // Sensing / user IO
 // ---------------------------------------------------------------------------
-constexpr uint8_t PIN_TOUCH    = 5;  // Capacitive touch (touch sensor input)
+constexpr uint8_t PIN_PRESENCE = 5;  // Presence detection sensor (ESP32 touchRead)
+constexpr uint8_t PIN_TOUCH    = PIN_PRESENCE; // alias — prefer PIN_PRESENCE
 constexpr uint8_t PIN_STATUS_LED = 39; // RGB / status LED
 constexpr uint8_t PIN_LED_IO_9   = 9;  // LED_IO_09
 constexpr uint8_t PIN_LED_IO_10  = 10; // LED_IO_10

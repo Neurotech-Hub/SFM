@@ -19,7 +19,9 @@ These are the ones called out most often during bring-up.
 | **30 s**      | `kDomeOpenWarnMs`       | `DispenserService.h` | Dome held open continuously → `DomeOpenWarning` (non-sticky)                             |
 | **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
 | **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
-| **700 steps** | `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel from the load position; bench default for 28BYJ-48                      |
+| **320 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past** the load position sensor by this much before M1 turns. The sensor is not the drop height — the plate has to sit this far below it for the pellet to land cleanly. PG2 is ignored during this descent |
+| **1420 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 320 + 1100 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from PG2 home |
+| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel to clear the load sensor before the approach. Fixed travel, not sensor-gated: at the drop position PG2 may already read clear, and a sensor-gated seek would skip the move and then lower into the floor |
 
 
 ---
@@ -28,19 +30,25 @@ These are the ones called out most often during bring-up.
 
 ## Dispenser — motion defaults
 
-Defined in `src/services/DispenserService.h`. Overridable before `begin()` via setters (`setRaiseSteps`, `setFeedTimeoutMs`, etc.).
+Defined in `src/services/DispenserService.h`. Overridable before `begin()` via setters (`setRaiseSteps`, `setGrabSteps`, `setSeekAwaySteps`, `setFeedTimeoutMs`, etc.).
+
+The three travel numbers are one calibrated set — the load sensor is a reference point, not the
+drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-check
+`kDefaultRaiseSteps` whenever the grab depth changes.
 
 
 | Value       | Constant                 | Meaning                                |
 | ----------- | ------------------------ | -------------------------------------- |
-| 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed (M1/M2)   |
-| 2048 steps  | `kDefaultLowerSteps`     | Max seek-away / approach budget for M2 |
-| 700 steps   | `kDefaultRaiseSteps`     | M2 up travel from the load position    |
-| 4096 steps  | `kDefaultFeedMaxSteps`   | M1 max steps before feed timeout path  |
-| 8 s         | `kDefaultLowerTimeoutMs` | M2 lower / seek-away phase timeout     |
-| 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout                 |
-| 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                 |
-| 20 ms       | `kSensorDebounceMs`      | Sensor debounce (pellet / load / dome) |
+| 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed (M1/M2)      |
+| 2048 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor |
+| 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel to clear the load sensor (fixed, not sensor-gated) |
+| 320 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
+| 1420 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
+| 4096 steps  | `kDefaultFeedMaxSteps`   | M1 max steps before feed timeout path     |
+| 8 s         | `kDefaultLowerTimeoutMs` | M2 seek-away / approach / grab-descent timeout (re-armed per sub-phase) |
+| 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout                    |
+| 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                    |
+| 20 ms       | `kSensorDebounceMs`      | Sensor debounce (pellet / load / dome)    |
 
 
 Not overrideable via SetConfig CAN yet — only compile-time / setter before begin.
@@ -90,7 +98,7 @@ Same header; **not** runtime-configurable via CAN today.
 | 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                         |
 | 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                          |
 | 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                  |
-| 40             | `touchThreshold_`                     | Capacitive animal-presence threshold                                          |
+| 35000          | `presenceThreshold_`                  | Presence detection sensor threshold (`raw > thr` → animal present)            |
 | 100 ms         | `flashLedsClear()` delays             | Visual confirm of NVS clear                                                   |
 
 

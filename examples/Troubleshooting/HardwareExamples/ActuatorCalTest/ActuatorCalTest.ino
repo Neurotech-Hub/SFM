@@ -12,17 +12,22 @@
 //
 // Open Serial Monitor at 115200 baud.
 //
-// Typical calibration flow:
+// Typical calibration flow. NOTE the order: PG2 is only a reference point, the
+// firmware feeds kDefaultGrabSteps BELOW it, and raiseSteps is measured from
+// there — so find the grab depth first, then zero, then jog up.
 //   1. home     – drive DOWN until PG2 triggers → loading position (pos=0)
-//   2. u <n>    – jog UP n steps toward the presentation dome
-//                 repeat until height looks right; note "raiseSteps" from 's'h
-//   3. d <n>    – jog DOWN n steps (IGNORES PG2) for pellet-grab depth
-//   4. home     – return to PG2 loading position when done
+//   2. d <n>    – jog DOWN n steps (IGNORES PG2) until M1 can drop a pellet
+//                 cleanly; that n is kDefaultGrabSteps (bench value: 320)
+//   3. z        – zero here, at the pellet-drop position
+//   4. u <n>    – jog UP n steps toward the presentation dome, repeating until
+//                 the height looks right; 's' then reads out kDefaultRaiseSteps
+//                 measured from the DROP position (bench value: 1420)
+//   5. home     – return to PG2 loading position when done
 //
 // Commands (line-based; Enter required):
 //   home        drive down to PG2 and zero (loading position)
 //   u [n]       jog UP n steps   (default 50) – finds raiseSteps
-//   d [n]       jog DOWN n steps (default 50) – ignores PG2 stop
+//   d [n]       jog DOWN n steps (default 50) – ignores PG2, finds grab depth
 //   x           abort motion, de-energise
 //   z           zero position here (without moving)
 //   s           print status (pos, raiseSteps candidate, PG2, speed)
@@ -39,7 +44,7 @@ static constexpr float    kDefaultSpeed = kDefaultMotorSpeed; // 500
 static constexpr float    kMinSpeed     = 100.0f;
 static constexpr float    kMaxSpeed     = 800.0f;
 static constexpr long     kDefaultJog   = 50;
-static constexpr uint32_t kDebounceMs   = kPGDebounceMs;      // 20
+static constexpr uint32_t kDebounceMs   = kSensorDebounceMs; // 20
 static constexpr uint32_t kHomeTimeoutMs = kDefaultLowerTimeoutMs; // 8000
 static constexpr long     kHomeMaxSteps  = kDefaultLowerSteps;     // 2048
 
@@ -105,7 +110,7 @@ void printHelp() {
     Serial.println(F("Commands:"));
     Serial.println(F("  home     DOWN until PG2 → loading pos (zero)"));
     Serial.println(F("  u [n]    jog UP n steps (default 50) → find raiseSteps"));
-    Serial.println(F("  d [n]    jog DOWN n steps (default 50) – IGNORES PG2"));
+    Serial.println(F("  d [n]    jog DOWN n steps (default 50) – IGNORES PG2 → grab depth"));
     Serial.println(F("  x        abort + de-energise"));
     Serial.println(F("  z        zero position here"));
     Serial.println(F("  s        status"));
@@ -155,7 +160,7 @@ void startJog(long steps, bool up) {
     Serial.print(steps);
     Serial.println(F(" steps"));
     if (!up) {
-        Serial.println(F("[CAL] DOWN ignores PG2 (grab-depth calibration)"));
+        Serial.println(F("[CAL] DOWN ignores PG2 (grab-depth calibration) – 'z' to zero here"));
     }
 }
 

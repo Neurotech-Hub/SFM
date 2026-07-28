@@ -9,17 +9,21 @@
 //   +          – increase motor speed by 100 steps/s
 //   -          – decrease motor speed by 100 steps/s
 //   r          – print current raiseSteps
-//   r <n>      – set raiseSteps (e.g. "r 700" or "r 1200")
+//   r <n>      – set raiseSteps (e.g. "r 1420" or "r 1200")
 //
-// Defaults match library: raise=700, feed timeout=30 s.
+// Defaults match library: grab=320, raise=1420, seek-away=800, feed timeout=30 s.
+// raiseSteps is measured from the pellet-drop position (kDefaultGrabSteps below
+// the load sensor), not from the load sensor itself.
 
 #include <VFM.h>
 
-static constexpr float    kMotorSpeed    = 500.0f;
-static constexpr long     kLowerSteps    = 2048;
-static constexpr long     kRaiseSteps    = 700;
-static constexpr long     kFeedMaxSteps  = 4096;
-static constexpr uint32_t kFeedTimeoutMs = 30000;
+static constexpr float    kMotorSpeed     = 500.0f;
+static constexpr long     kLowerSteps     = 2048;
+static constexpr long     kSeekAwaySteps  = 800;
+static constexpr long     kGrabSteps      = 320;
+static constexpr long     kRaiseSteps     = 1420;
+static constexpr long     kFeedMaxSteps   = 4096;
+static constexpr uint32_t kFeedTimeoutMs  = 30000;
 
 vfm::DispenserService dispenser;
 float currentSpeed     = kMotorSpeed;
@@ -129,11 +133,13 @@ void setup() {
     Serial.println(F("VFM DispenseTest"));
     Serial.println(F("Commands: d=dispense  a=abort  s=status  +=faster  -=slower"));
     Serial.println(F("          r         = show raiseSteps"));
-    Serial.println(F("          r <n>     = set raiseSteps (e.g. r 700)"));
+    Serial.println(F("          r <n>     = set raiseSteps (e.g. r 1420)"));
     Serial.println(F("PelletTaken returns to Idle; DomeOpened reports each dome lift"));
 
     dispenser.setMotorSpeed(kMotorSpeed);
     dispenser.setLowerSteps(kLowerSteps);
+    dispenser.setSeekAwaySteps(kSeekAwaySteps);
+    dispenser.setGrabSteps(kGrabSteps);
     dispenser.setRaiseSteps(kRaiseSteps);
     dispenser.setFeedMaxSteps(kFeedMaxSteps);
     dispenser.setFeedTimeoutMs(kFeedTimeoutMs);

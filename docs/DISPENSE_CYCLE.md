@@ -16,7 +16,7 @@ Each node has three optical sensors, named for the job they do.
 
 All three are debounced in firmware by `kSensorDebounceMs` before any logic or reporting acts on them.
 
-A fourth input, **animal presence**, is the capacitive touch pad. It is independent of the dispense cycle and
+A fourth input, **animal presence**, is the presence detection sensor (capacitive pad). It is independent of the dispense cycle and
 is reported for behavioral context only.
 
 The pellet sensor sits on the plate and reports occupancy in every state. Because it holds its state, the node
@@ -53,17 +53,24 @@ always knows whether the plate is occupied — before a dispense, during travel,
 
 **Occupancy check.** On `Dispense` the node reads the pellet sensor first. If a pellet is already on the
 plate it does not lower and does not run the feed wheel: it reports `FeedSkipped` and raises what is there
-(or stays presented if the plate is already elevated). A node never stacks a second pellet on an occupied plate.
+(or stays presented if the plate is already elevated). An occupied plate sitting at the load sensor never made
+the grab descent, so its raise is shortened by `kDefaultGrabSteps` to finish at the same presentation height.
+A node never stacks a second pellet on an occupied plate.
 
-**Lowering.** Only when the plate is empty. The actuator seeks the load position: if it is already there it
-first moves clear, then approaches until the load position sensor asserts. Both directions are budgeted by
-`kDefaultLowerSteps` and `kDefaultLowerTimeoutMs`.
+**Lowering.** Only when the plate is empty. The load position sensor is a reference point, not the height at
+which a pellet can be dropped, so this phase has two parts. The actuator first seeks the load position: if it
+is already down it moves clear by a fixed `kDefaultSeekAwaySteps` — fixed rather than sensor-gated, because
+at the drop position the sensor may already read clear — then approaches until the load position sensor
+asserts, budgeted by `kDefaultLowerSteps`. It then keeps going down a further `kDefaultGrabSteps` to the
+**drop position**, ignoring the sensor for that stretch. Both parts are budgeted by `kDefaultLowerTimeoutMs`.
 
-**Feeding.** M1 turns the pellet wheel until the pellet sensor asserts, which confirms a pellet has arrived on
-the plate. The node halts M1, reports `PelletLoaded`, and begins the raise in the same tick. If no pellet
-arrives within `kDefaultFeedTimeoutMs` — an empty hopper or a wheel jam — the node faults with `Timeout`.
+**Feeding.** With the plate at the drop position, M1 turns the pellet wheel until the pellet sensor asserts,
+which confirms a pellet has arrived on the plate. The node halts M1, reports `PelletLoaded`, and begins the
+raise in the same tick. If no pellet arrives within `kDefaultFeedTimeoutMs` — an empty hopper or a wheel jam —
+the node faults with `Timeout`.
 
-**Raising.** M2 lifts the plate by `kDefaultRaiseSteps` from the load position. Two checks run during travel:
+**Raising.** M2 lifts the plate by `kDefaultRaiseSteps` from the drop position — the grab descent back plus
+the presentation height above the load sensor. Two checks run during travel:
 the load position sensor must clear within `kLoadClearOnRaiseMs` (otherwise `Jam`), and the pellet sensor must
 stay asserted. A pellet that falls off in transit clears the sensor for `kPelletLostMs` and faults with
 `PelletLost`, so an empty plate is never presented as if it held a pellet.
@@ -132,7 +139,7 @@ Node → base on CAN ID `0x200 + nodeId`, sent every `kDefaultHeartbeatIntervalM
 | ---- | ------- |
 | 0 | Dispense state |
 | 1–2 | Pellets presented (LE16) |
-| 3 | Animal presence (touch) |
+| 3 | Animal presence (presence detection sensor) |
 | 4 | Sensor bits: `bit0` pellet present, `bit1` at load position, `bit2` dome open |
 | 5 | Fault code |
 | 6–7 | Pellets taken (LE16) |

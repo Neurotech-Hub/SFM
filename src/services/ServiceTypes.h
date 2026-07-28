@@ -21,11 +21,11 @@ enum class ServiceStatus : uint8_t {
 // ---------------------------------------------------------------------------
 enum class DispenseState : uint8_t {
     Idle = 0,
-    Lowering    = 1, // M2 down until load-position sensor (empty plate only)
+    Lowering    = 1, // M2 down to the load sensor, then grabSteps_ past it (empty plate only)
     Feeding     = 2, // M1 until pellet presence asserts
-    Raising     = 3, // M2 up by raiseSteps_ from load position
+    Raising     = 3, // M2 up by raiseSteps_ from the pellet-drop position
     Presented   = 4, // Pellet at top; ends on PelletTaken → Idle
-    SeekingAway = 5, // M2 up until load sensor clears (before approach)
+    SeekingAway = 5, // M2 up by seekAwaySteps_ to clear the load sensor (before approach)
     Fault       = 6, // sticky until abort()
 };
 
@@ -83,7 +83,7 @@ enum class InputId : uint8_t {
     PG1      = 0x01, // pellet presence on plate
     PG2      = 0x02, // load position
     PG3      = 0x03, // dome open
-    Presence = 0x04, // capacitive animal presence
+    Presence = 0x04, // animal presence detection sensor
 };
 
 // ---------------------------------------------------------------------------

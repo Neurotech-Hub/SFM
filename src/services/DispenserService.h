@@ -10,10 +10,14 @@ namespace vfm {
 // ---------------------------------------------------------------------------
 // Tunable defaults (override before begin() via setters)
 // ---------------------------------------------------------------------------
-// 28BYJ-48 half-step ≈ 4096 steps/rev. Raise ~700 is the current bench default.
+// 28BYJ-48 half-step ≈ 4096 steps/rev.
+// The load sensor (PG2) is not the drop height: M2 descends kDefaultGrabSteps
+// further before M1 turns, and the raise is measured from that drop position.
 constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
-constexpr long     kDefaultLowerSteps      = 2048;   // max seek-away / approach budget
-constexpr long     kDefaultRaiseSteps      = 700;    // M2 up travel from load position
+constexpr long     kDefaultLowerSteps      = 2048;   // max approach budget toward PG2
+constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up to clear PG2 before approach
+constexpr long     kDefaultGrabSteps       = 320;    // M2 down past PG2 to the drop position
+constexpr long     kDefaultRaiseSteps      = 1420;   // M2 up travel from the drop position
 constexpr long     kDefaultFeedMaxSteps    = 4096;   // M1 max steps before timeout
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
 constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)
@@ -62,6 +66,8 @@ public:
         motor2_.setMaxSpeed(motorSpeed_ * 2.0f);
     }
     void setLowerSteps(long steps)            { lowerSteps_ = steps; }
+    void setSeekAwaySteps(long steps)         { seekAwaySteps_ = steps; }
+    void setGrabSteps(long steps)             { grabSteps_ = steps; }
     void setRaiseSteps(long steps)            { raiseSteps_ = steps; }
     void setFeedMaxSteps(long steps)          { feedMaxSteps_ = steps; }
     void setLowerTimeoutMs(uint32_t ms)       { lowerTimeoutMs_ = ms; }
@@ -85,6 +91,7 @@ private:
     uint32_t motionStartMs_;
     long     motor2Target_;
     bool     pg3WasOpen_;
+    bool     grabPhase_; // Lowering sub-phase: descending past PG2 to the drop position
 
     uint32_t raiseStartMs_;
     uint32_t pg3OpenSinceMs_;
@@ -95,6 +102,8 @@ private:
 
     float    motorSpeed_;
     long     lowerSteps_;
+    long     seekAwaySteps_;
+    long     grabSteps_;
     long     raiseSteps_;
     long     feedMaxSteps_;
     uint32_t lowerTimeoutMs_;
@@ -115,7 +124,8 @@ private:
 
     void startSeekAwayFromPg2();
     void startApproachPg2();
-    void startRaise();
+    void startGrabDescent();
+    void startRaise(long steps);
     void startFeed();
     void beginLoweringPhase();
     void beginOccupiedDispense();

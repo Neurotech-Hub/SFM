@@ -64,7 +64,7 @@ class InputId(IntEnum):
     PG1      = 0x01  # pellet presence on plate
     PG2      = 0x02  # load position
     PG3      = 0x03  # dome open
-    Presence = 0x04  # capacitive animal presence
+    Presence = 0x04  # animal presence detection sensor
 
 
 class DispenseState(IntEnum):

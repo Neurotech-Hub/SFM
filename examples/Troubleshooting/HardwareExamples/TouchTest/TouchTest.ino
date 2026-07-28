@@ -1,18 +1,18 @@
-// TouchTest – capacitive touch bring-up test for VFM module (GPIO5).
+// TouchTest – presence detection sensor bring-up for VFM module (GPIO5).
 //
 // Pin:
-//   GPIO5 – PIN_TOUCH (ESP32-S3 touch sensor)
+//   GPIO5 – PIN_PRESENCE (ESP32-S3 capacitive presence detection sensor)
 //
 // Observed bench behaviour (ESP32-S3 touchRead):
-//   Idle  ~ 30 000 – 35 000
-//   Touch ~ 100 000 – 2 500 000   (raw INCREASES when touched)
+//   Idle     ~ 30 000 – 35 000
+//   Present  ~ 100 000 – 2 500 000   (raw INCREASES when animal is present)
 //   presence = (raw > threshold)
 //
 // Open Serial Monitor at 115200 baud (any line ending works).
 //
 // Commands:
-//   s       print current raw value + touch state
-//   t <n>   set threshold (no upper limit; e.g. t 50000)
+//   s       print current raw value + presence state
+//   t <n>   set threshold (no upper limit; e.g. t 35000)
 //   + / -   nudge threshold by 5000 (immediate)
 //   m       toggle continuous raw monitor (default ON)
 //   c       capture idle baseline and suggest threshold
@@ -23,7 +23,7 @@
 using namespace vfm;
 
 static constexpr uint32_t kSampleMs   = 200;
-static constexpr uint32_t kDefaultThr = 50000;  // between idle (~33k) and touch (~100k+)
+static constexpr uint32_t kDefaultThr = 35000;  // between idle (~33k) and present (~100k+)
 static constexpr uint32_t kNudge      = 5000;
 static constexpr uint8_t  kBaselineN  = 20;
 
@@ -44,12 +44,12 @@ static bool isTouched(uint32_t raw, uint32_t thr) {
 void printHelp() {
     Serial.println(F("Commands:"));
     Serial.println(F("  s       current raw + state"));
-    Serial.println(F("  t <n>   set threshold (e.g. t 50000)"));
+    Serial.println(F("  t <n>   set threshold (e.g. t 35000)"));
     Serial.println(F("  + / -   nudge threshold by 5000 (immediate)"));
     Serial.println(F("  m       toggle continuous monitor"));
     Serial.println(F("  c       capture idle baseline + suggest threshold"));
     Serial.println(F("  h       help"));
-    Serial.println(F("Logic: raw > threshold => TOUCHED"));
+    Serial.println(F("Logic: raw > threshold => PRESENT"));
 }
 
 void applyThreshold(uint32_t thr) {
@@ -58,35 +58,35 @@ void applyThreshold(uint32_t thr) {
     touched = isTouched(lastRaw, threshold);
     prevTouched = touched;
 
-    Serial.print(F("[TOUCH] thr=")); Serial.print(threshold);
+    Serial.print(F("[PRESENCE] thr=")); Serial.print(threshold);
     Serial.print(F("  raw=")); Serial.print(lastRaw);
     Serial.print(F("  -> "));
-    Serial.println(touched ? F("TOUCHED") : F("clear"));
+    Serial.println(touched ? F("PRESENT") : F("clear"));
 }
 
 void printStatus() {
-    Serial.print(F("[TOUCH] raw="));
+    Serial.print(F("[PRESENCE] raw="));
     Serial.print(lastRaw);
     Serial.print(F("  thr="));
     Serial.print(threshold);
     Serial.print(F("  -> "));
-    Serial.println(touched ? F("TOUCHED") : F("clear"));
+    Serial.println(touched ? F("PRESENT") : F("clear"));
 }
 
 void sampleOnce() {
-    lastRaw = touchRead(PIN_TOUCH);
+    lastRaw = touchRead(PIN_PRESENCE);
     touched = isTouched(lastRaw, threshold);
 }
 
 void captureBaseline() {
-    Serial.println(F("[TOUCH] Capturing idle baseline – keep finger OFF for ~1 s..."));
+    Serial.println(F("[PRESENCE] Capturing idle baseline – keep pad clear for ~1 s..."));
     delay(300);
 
     uint64_t sum = 0;
     uint32_t minV = UINT32_MAX;
     uint32_t maxV = 0;
     for (uint8_t i = 0; i < kBaselineN; i++) {
-        uint32_t v = touchRead(PIN_TOUCH);
+        uint32_t v = touchRead(PIN_PRESENCE);
         sum += v;
         if (v < minV) minV = v;
         if (v > maxV) maxV = v;
@@ -94,14 +94,14 @@ void captureBaseline() {
     }
 
     uint32_t avg = (uint32_t)(sum / kBaselineN);
-    // Place threshold above idle max with ~50% headroom toward typical touch
+    // Place threshold above idle max with ~50% headroom toward typical presence
     uint32_t suggest = maxV + (maxV / 2);
     if (suggest <= maxV) suggest = maxV + 1;
 
-    Serial.print(F("[TOUCH] idle avg=")); Serial.print(avg);
+    Serial.print(F("[PRESENCE] idle avg=")); Serial.print(avg);
     Serial.print(F("  min=")); Serial.print(minV);
     Serial.print(F("  max=")); Serial.println(maxV);
-    Serial.print(F("[TOUCH] Suggested threshold: ")); Serial.println(suggest);
+    Serial.print(F("[PRESENCE] Suggested threshold: ")); Serial.println(suggest);
     Serial.println(F("  Applying now. Use +/- or 't <n>' to fine-tune."));
     applyThreshold(suggest);
 }
@@ -141,9 +141,9 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM TouchTest ====="));
-    Serial.println(F("PIN_TOUCH = GPIO5  |  touchRead()  |  presence = raw > thr"));
-    Serial.println(F("Idle ~30k-35k, touch raises raw (often 100k+)"));
+    Serial.println(F("\n===== VFM Presence Detection Test ====="));
+    Serial.println(F("PIN_PRESENCE = GPIO5  |  touchRead()  |  presence = raw > thr"));
+    Serial.println(F("Idle ~30k-35k, presence raises raw (often 100k+)"));
     Serial.print(F("Default threshold: ")); Serial.println(kDefaultThr);
     printHelp();
     Serial.println(F("Tip: run 'c' with pad idle, then fine-tune with +/-"));
@@ -162,8 +162,8 @@ void loop() {
         sampleOnce();
 
         if (touched != prevTouched) {
-            Serial.print(F("[TOUCH] "));
-            Serial.print(touched ? F("TOUCHED") : F("released"));
+            Serial.print(F("[PRESENCE] "));
+            Serial.print(touched ? F("PRESENT") : F("clear"));
             Serial.print(F("  raw=")); Serial.print(lastRaw);
             Serial.print(F("  thr=")); Serial.println(threshold);
             prevTouched = touched;
