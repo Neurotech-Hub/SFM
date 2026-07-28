@@ -21,6 +21,10 @@ DispenserService::DispenserService()
       motor2Target_(0),
       pg3WasOpen_(false),
       grabPhase_(false),
+      phaseStartPos_(0),
+      feedStartPos_(0),
+      belowLoad_(false),
+      approachRetried_(false),
       raiseStartMs_(0),
       pg3OpenSinceMs_(0),
       pelletClearSinceMs_(0),
@@ -63,6 +67,13 @@ ServiceStatus DispenserService::begin() {
     pelletClearSinceMs_ = 0;
     domeWarnLatched_ = false;
     grabPhase_ = false;
+    approachRetried_ = false;
+    phaseStartPos_ = motor2_.currentPosition();
+    feedStartPos_  = motor1_.currentPosition();
+    // Height is unknown at boot. PG2 asserted proves the load position; clear is
+    // ambiguous (above or below), and the approach's seek-away retry recovers
+    // from a cold start left at the drop position.
+    belowLoad_ = pg2State_;
     lastFault_ = ServiceStatus::Ok;
 
     return ServiceStatus::Ok;
@@ -87,7 +98,7 @@ void DispenserService::update() {
                 faultNow(ServiceStatus::Timeout);
                 break;
             }
-            if (motor2_.currentPosition() >= seekAwaySteps_) {
+            if ((motor2_.currentPosition() - phaseStartPos_) >= seekAwaySteps_) {
                 startApproachPg2();
                 setState(DispenseState::Lowering);
             } else {
@@ -96,37 +107,49 @@ void DispenserService::update() {
             break;
 
         case DispenseState::Lowering:
-            if (phaseTimedOut(lowerTimeoutMs_)) {
+            if (!grabPhase_) {
+                // Approach: down until the load sensor asserts. Whichever budget
+                // runs out first means the same thing — PG2 was never reached —
+                // so both route through the retry rather than straight to Fault.
+                if (pg2State_) {
+                    startGrabDescent(); // no halt; grab branch runs this same tick
+                } else if (phaseTimedOut(lowerTimeoutMs_) ||
+                           labs(motor2_.currentPosition() - phaseStartPos_) >= lowerSteps_) {
+                    // The actuator started below the sensor and this approach drove
+                    // it into the stop. Back off once and re-approach before
+                    // calling it a fault.
+                    if (approachRetried_) {
+                        faultNow(ServiceStatus::Timeout);
+                    } else {
+                        approachRetried_ = true;
+                        belowLoad_ = true;
+                        startSeekAwayFromPg2();
+                        setState(DispenseState::SeekingAway);
+                    }
+                    break;
+                }
+            } else if (phaseTimedOut(lowerTimeoutMs_)) {
                 faultNow(ServiceStatus::Timeout);
                 break;
             }
-            if (!grabPhase_) {
-                // Approach: down until the load sensor asserts.
-                if (labs(motor2_.currentPosition()) >= lowerSteps_) {
-                    faultNow(ServiceStatus::Timeout);
-                    break;
-                }
-                if (pg2State_) {
-                    startGrabDescent(); // continue down, no halt
-                } else {
-                    motor2_.runSpeed();
-                }
-            } else {
+            if (grabPhase_) {
                 // Grab descent: fixed travel past PG2 to the drop position.
                 // PG2 is deliberately ignored here (same as ActuatorCalTest 'd <n>').
-                if (labs(motor2_.currentPosition()) >= grabSteps_) {
+                if (labs(motor2_.currentPosition() - phaseStartPos_) >= grabSteps_) {
                     haltMotors();
                     startFeed();
                     setState(DispenseState::Feeding);
                 } else {
                     motor2_.runSpeed();
                 }
+            } else {
+                motor2_.runSpeed();
             }
             break;
 
         case DispenseState::Feeding:
             if (phaseTimedOut(feedTimeoutMs_) ||
-                (labs(motor1_.currentPosition()) >= feedMaxSteps_)) {
+                (labs(motor1_.currentPosition() - feedStartPos_) >= feedMaxSteps_)) {
                 faultNow(ServiceStatus::Timeout);
                 break;
             }
@@ -166,6 +189,7 @@ void DispenserService::update() {
                 pelletCount_++;
                 pg3WasOpen_ = pg3State_;
                 pelletClearSinceMs_ = 0;
+                belowLoad_ = false; // the raise completed; plate is above PG2
                 setState(DispenseState::Presented);
             } else {
                 motor2_.runSpeed();
@@ -220,17 +244,21 @@ bool DispenserService::dispense() {
 
 void DispenserService::beginOccupiedDispense() {
     setEvent(DispenseEvent::FeedSkipped);
-    // Already elevated (not at load): stay/return to Presented without motion.
-    if (!pg2State_) {
-        pg3WasOpen_ = pg3State_;
-        setState(DispenseState::Presented);
+
+    if (pg2State_) {
+        long steps = raiseSteps_ - grabSteps_;
+        startRaise(steps > 0 ? steps : raiseSteps_);
+        setState(DispenseState::Raising);
         return;
     }
-    // Sitting at the load sensor, not at the drop position: the raise is short by
-    // the grab descent it never made.
-    long steps = raiseSteps_ - grabSteps_;
-    startRaise(steps > 0 ? steps : raiseSteps_);
-    setState(DispenseState::Raising);
+    if (belowLoad_) {
+        startRaise(raiseSteps_);
+        setState(DispenseState::Raising);
+        return;
+    }
+    // Already elevated: stay/return to Presented without motion.
+    pg3WasOpen_ = pg3State_;
+    setState(DispenseState::Presented);
 }
 
 void DispenserService::abort() {
@@ -251,8 +279,9 @@ DispenseEvent DispenserService::takeEvent() {
 void DispenserService::beginLoweringPhase() {
     motionStartMs_ = millis();
     grabPhase_ = false;
+    approachRetried_ = false;
 
-    if (pg2State_) {
+    if (pg2State_ || belowLoad_) {
         startSeekAwayFromPg2();
         setState(DispenseState::SeekingAway);
     } else {
@@ -263,42 +292,45 @@ void DispenserService::beginLoweringPhase() {
 
 void DispenserService::startSeekAwayFromPg2() {
     motor2_.enableOutputs();
-    motor2_.setCurrentPosition(0);
+    phaseStartPos_ = motor2_.currentPosition();
     motionStartMs_ = millis();
-    motor2_.setSpeed(motorSpeed_);
+    motor2_.setSpeed(motorSpeed_); // UP
 }
 
 void DispenserService::startApproachPg2() {
     motor2_.enableOutputs();
-    motor2_.setCurrentPosition(0);
+    phaseStartPos_ = motor2_.currentPosition();
     motionStartMs_ = millis();
-    motor2_.setSpeed(-motorSpeed_);
+    motor2_.setSpeed(-motorSpeed_); // DOWN
 }
 
 // Continuation of the approach: PG2 has asserted, keep going DOWN by grabSteps_
-// to the height at which M1 can drop a pellet onto the plate. Motor stays
-// energised and keeps its -motorSpeed_; only the reference position is re-zeroed.
+// to the height at which M1 can drop a pellet onto the plate. Nothing is done to
+// the motor here — it is already energised and already running at -motorSpeed_,
+// and this is the same physical move. Only the measurement datum moves.
 void DispenserService::startGrabDescent() {
+    if (grabPhase_) return;
     grabPhase_ = true;
-    motor2_.setCurrentPosition(0);
+    belowLoad_ = true;
+    phaseStartPos_ = motor2_.currentPosition();
     motionStartMs_ = millis();
 }
 
 void DispenserService::startFeed() {
     motor1_.enableOutputs();
-    motor1_.setCurrentPosition(0);
+    feedStartPos_ = motor1_.currentPosition();
     motionStartMs_ = millis();
     motor1_.setSpeed(motorSpeed_);
 }
 
 void DispenserService::startRaise(long steps) {
     motor2_.enableOutputs();
-    motor2_.setCurrentPosition(0);
+    phaseStartPos_ = motor2_.currentPosition();
+    motor2Target_  = phaseStartPos_ + steps;
     motionStartMs_ = millis();
     raiseStartMs_ = millis();
     pelletClearSinceMs_ = 0;
     grabPhase_ = false;
-    motor2Target_ = steps;
     motor2_.setSpeed(motorSpeed_); // UP
 }
 

@@ -59,10 +59,17 @@ A node never stacks a second pellet on an occupied plate.
 
 **Lowering.** Only when the plate is empty. The load position sensor is a reference point, not the height at
 which a pellet can be dropped, so this phase has two parts. The actuator first seeks the load position: if it
-is already down it moves clear by a fixed `kDefaultSeekAwaySteps` — fixed rather than sensor-gated, because
-at the drop position the sensor may already read clear — then approaches until the load position sensor
+is at or below the sensor it moves clear by a fixed `kDefaultSeekAwaySteps` — fixed rather than sensor-gated,
+because at the drop position the sensor already reads clear — then approaches until the load position sensor
 asserts, budgeted by `kDefaultLowerSteps`. It then keeps going down a further `kDefaultGrabSteps` to the
 **drop position**, ignoring the sensor for that stretch. Both parts are budgeted by `kDefaultLowerTimeoutMs`.
+
+Whether to seek away is decided by the actuator's *tracked height*, not by the sensor. The sensor cannot
+answer it: at the drop position the flag has passed out of the beam and reads exactly like the elevated
+position. Reading it as "already elevated" is what drives the plate down into the stop instead of up to the
+dome. The node marks itself at-or-below the load position when the grab descent starts, and clears that only
+when a raise completes. Height is unknown after a reset, so an approach that spends its whole budget without
+seeing the sensor backs off by one seek-away and re-approaches before it will fault.
 
 **Feeding.** With the plate at the drop position, M1 turns the pellet wheel until the pellet sensor asserts,
 which confirms a pellet has arrived on the plate. The node halts M1, reports `PelletLoaded`, and begins the

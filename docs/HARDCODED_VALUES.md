@@ -40,7 +40,7 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | Value       | Constant                 | Meaning                                |
 | ----------- | ------------------------ | -------------------------------------- |
 | 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed (M1/M2)      |
-| 2048 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor |
+| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 1900 steps. Exhausting it is not a fault on the first try: the approach backs off by one seek-away and re-approaches, and only faults if that also fails |
 | 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel to clear the load sensor (fixed, not sensor-gated) |
 | 320 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
 | 1420 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |

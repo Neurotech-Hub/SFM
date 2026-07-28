@@ -2,5 +2,6 @@
 .vscode/
 venv/
 .envrc
+.claude/
 __pycache__/
 build/

@@ -17,8 +17,8 @@
 
 #include <VFM.h>
 
-static constexpr float    kMotorSpeed     = 500.0f;
-static constexpr long     kLowerSteps     = 2048;
+static constexpr float    kMotorSpeed     = 300.0f;
+static constexpr long     kLowerSteps     = 3072;
 static constexpr long     kSeekAwaySteps  = 800;
 static constexpr long     kGrabSteps      = 320;
 static constexpr long     kRaiseSteps     = 1420;

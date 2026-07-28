@@ -14,7 +14,10 @@ namespace vfm {
 // The load sensor (PG2) is not the drop height: M2 descends kDefaultGrabSteps
 // further before M1 turns, and the raise is measured from that drop position.
 constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
-constexpr long     kDefaultLowerSteps      = 2048;   // max approach budget toward PG2
+// Approach budget. Worst case is an approach that starts from a seek-away taken
+// at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
+// kDefaultSeekAwaySteps ≈ 1900 steps. 2048 left almost no margin for that path.
+constexpr long     kDefaultLowerSteps      = 3072;   // max approach budget toward PG2
 constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up to clear PG2 before approach
 constexpr long     kDefaultGrabSteps       = 320;    // M2 down past PG2 to the drop position
 constexpr long     kDefaultRaiseSteps      = 1420;   // M2 up travel from the drop position
@@ -92,6 +95,19 @@ private:
     long     motor2Target_;
     bool     pg3WasOpen_;
     bool     grabPhase_; // Lowering sub-phase: descending past PG2 to the drop position
+
+    // M2 travel is measured against the position latched at each phase start,
+    // never by re-zeroing the stepper mid-motion: AccelStepper derives the coil
+    // pattern from currentPosition() & 0x7, so setCurrentPosition() on a moving
+    // motor jumps the commutation phase and the actuator loses steps.
+    long     phaseStartPos_; // M2 position at the start of the current phase
+    long     feedStartPos_;  // M1 position at the start of the feed
+
+    // True when the actuator is at or below the load sensor, where a downward
+    // approach can never find PG2. PG2 itself cannot answer this: at the drop
+    // position the flag has already passed out of the beam and reads clear.
+    bool     belowLoad_;
+    bool     approachRetried_; // one seek-away retry per dispense cycle
 
     uint32_t raiseStartMs_;
     uint32_t pg3OpenSinceMs_;
