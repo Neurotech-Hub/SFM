@@ -20,6 +20,7 @@ from ..protocol import (
     node_id_from_event_id,
     node_id_from_hb_id,
     parse_event,
+    parse_event_context,
     parse_fault_code,
     parse_heartbeat,
     parse_input_changed,
@@ -32,7 +33,8 @@ class EventKind(Enum):
     # Direct CAN events
     PELLET_LOADED = auto()
     PELLET_PRESENTED = auto()
-    ACCESS_ATTEMPT = auto()
+    PELLET_TAKEN = auto()
+    FEED_SKIPPED = auto()
     FAULT = auto()
     LOWERING = auto()
     LOADING = auto()
@@ -42,7 +44,7 @@ class EventKind(Enum):
     PG_CHANGED = auto()
     HEARTBEAT = auto()
 
-    # Derived by the engine
+    # Derived by the engine / also CanEvent.DomeOpened
     DOME_OPENED = auto()
     DOME_CLOSED = auto()
     NODE_ONLINE = auto()
@@ -59,7 +61,9 @@ class EventKind(Enum):
 _CAN_EVENT_TO_KIND: Dict[CanEvent, EventKind] = {
     CanEvent.PelletLoaded: EventKind.PELLET_LOADED,
     CanEvent.PelletPresented: EventKind.PELLET_PRESENTED,
-    CanEvent.AccessAttempt: EventKind.ACCESS_ATTEMPT,
+    CanEvent.DomeOpened: EventKind.DOME_OPENED,
+    CanEvent.PelletTaken: EventKind.PELLET_TAKEN,
+    CanEvent.FeedSkipped: EventKind.FEED_SKIPPED,
     CanEvent.Fault: EventKind.FAULT,
     CanEvent.Lowering: EventKind.LOWERING,
     CanEvent.Loading: EventKind.LOADING,
@@ -237,13 +241,20 @@ class EventNormalizer:
             event_data["fault_code"] = fault if fault is not None else ServiceStatus.Ok
             if payload.raw_extra:
                 event_data["raw_extra"] = bytes(payload.raw_extra)
-        elif payload.raw_extra:
-            # Milestone events carry pellet count as uint16 LE.
-            if len(payload.raw_extra) >= 2:
-                event_data["pellet_count"] = (
-                    payload.raw_extra[0] | (payload.raw_extra[1] << 8)
-                )
-            event_data["raw_extra"] = bytes(payload.raw_extra)
+        else:
+            ctx = parse_event_context(payload)
+            if ctx is not None:
+                event_data["pellet_count"] = ctx["pellet_count"]
+                if "pellet_present" in ctx:
+                    event_data["pellet_present"] = ctx["pellet_present"]
+                if "dome_open" in ctx:
+                    event_data["dome_open"] = ctx["dome_open"]
+            elif payload.raw_extra:
+                if len(payload.raw_extra) >= 2:
+                    event_data["pellet_count"] = (
+                        payload.raw_extra[0] | (payload.raw_extra[1] << 8)
+                    )
+                event_data["raw_extra"] = bytes(payload.raw_extra)
 
         return [
             NodeEvent(

@@ -2,7 +2,7 @@
   "name": "free_feeding",
   "label": "Free Feeding",
   "template": "free_feeding",
-  "description": "Load all nodes; re-dispense after dome close; end on duration/pellet cap.",
+  "description": "Load all nodes; re-dispense after each PelletTaken; end on duration/pellet cap.",
   "parameters": [
     {
       "key": "reload_delay_s",

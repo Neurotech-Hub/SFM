@@ -197,6 +197,49 @@ class TestParseEvent:
         ev = parse_event(bytes([CanEvent.PelletPresented, ServiceStatus.Jam]))
         assert parse_fault_code(ev) is None
 
+    def test_dome_opened_and_pellet_taken_opcodes(self):
+        assert CanEvent.DomeOpened == 0x03
+        assert CanEvent.PelletTaken == 0x0B
+        assert CanEvent.FeedSkipped == 0x0C
+        assert ServiceStatus.PelletLost == 5
+
+    def test_parse_event_context_dome_opened(self):
+        from vfm_gui.protocol import parse_event_context
+        ev = parse_event(bytes([CanEvent.DomeOpened, 0x02, 0x00, 0x01]))
+        ctx = parse_event_context(ev)
+        assert ctx["pellet_count"] == 2
+        assert ctx["pellet_present"] is True
+
+    def test_parse_event_context_pellet_taken(self):
+        from vfm_gui.protocol import parse_event_context
+        ev = parse_event(bytes([CanEvent.PelletTaken, 0x07, 0x00, 0x00]))
+        ctx = parse_event_context(ev)
+        assert ctx["pellet_count"] == 7
+        assert ctx["dome_open"] is False
+
+    def test_heartbeat_pellets_taken(self):
+        data = bytes([0, 3, 0, 0, 0, 0, 5, 0])
+        hb = parse_heartbeat(data)
+        assert hb.pellets_presented == 3
+        assert hb.pellets_taken == 5
+
+    def test_build_heartbeat_roundtrip_taken(self):
+        hb = HeartbeatPayload(
+            dispense_state=DispenseState.Idle,
+            presence=False,
+            pg1=True,
+            pg2=False,
+            pg3=False,
+            fault_code=ServiceStatus.Ok,
+            pellets_presented=9,
+            pellets_taken=4,
+        )
+        _, data = build_heartbeat_frame(1, hb)
+        parsed = parse_heartbeat(data)
+        assert parsed.pellets_presented == 9
+        assert parsed.pellets_taken == 4
+        assert parsed.pg1 is True
+
 
 class TestParseDiscovery:
     def test_announce(self):

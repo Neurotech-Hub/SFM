@@ -38,12 +38,23 @@ def test_normalizer_pellet_presented() -> None:
     assert ev.data.get("pellet_count") == 5
 
 
-def test_normalizer_access_attempt() -> None:
+def test_normalizer_dome_opened() -> None:
     norm = EventNormalizer()
-    arb, data = build_event_frame(1, CanEvent.AccessAttempt)
+    arb, data = build_event_frame(1, CanEvent.DomeOpened, b"\x03\x00\x01")
     events = norm.frame_to_events(_msg(arb, data), now=1.0)
-    assert events[0].kind == EventKind.ACCESS_ATTEMPT
+    assert events[0].kind == EventKind.DOME_OPENED
     assert events[0].node_id == 1
+    assert events[0].data.get("pellet_count") == 3
+    assert events[0].data.get("pellet_present") is True
+
+
+def test_normalizer_pellet_taken() -> None:
+    norm = EventNormalizer()
+    arb, data = build_event_frame(2, CanEvent.PelletTaken, b"\x04\x00\x01")
+    events = norm.frame_to_events(_msg(arb, data), now=1.0)
+    assert events[0].kind == EventKind.PELLET_TAKEN
+    assert events[0].data.get("pellet_count") == 4
+    assert events[0].data.get("dome_open") is True
 
 
 def test_normalizer_derives_dome_closed_from_pg3() -> None:
@@ -193,13 +204,13 @@ def test_runner_event_handler() -> None:
     exp = Experiment(nodes=[1])
     seen = []
 
-    @exp.on_access_attempt
+    @exp.on_pellet_taken
     def _a(ctx, ev):
         seen.append(ev.node_id)
 
     runner = exp.make_runner()
     runner.start(now=0.0)
-    runner.inject(NodeEvent(EventKind.ACCESS_ATTEMPT, node_id=7, timestamp=1.0))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=7, timestamp=1.0))
     assert seen == [7]
 
 
@@ -243,23 +254,26 @@ def test_free_feeding_dispenses_all_nodes_on_start() -> None:
     assert dispenses == [(1, CanCmd.Dispense), (2, CanCmd.Dispense), (3, CanCmd.Dispense)]
 
 
-def test_free_feeding_reloads_after_dome_close() -> None:
+def test_free_feeding_reloads_after_pellet_taken() -> None:
     exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
     # Clear the initial dispenses from the command log for easier asserts.
     runner.ctx.commands_sent.clear()
 
-    runner.inject(NodeEvent(EventKind.ACCESS_ATTEMPT, node_id=1, timestamp=1.0))
-    assert runner.ctx.counter("retrieval_attempts") == 1
-    # No reload yet — dome not closed.
+    runner.inject(NodeEvent(EventKind.DOME_OPENED, node_id=1, timestamp=1.0,
+                            data={"pellet_present": True}))
+    assert runner.ctx.counter("dome_openings") == 1
+    # No reload yet — pellet not taken.
     assert runner.ctx.commands_sent == []
 
-    runner.inject(NodeEvent(EventKind.DOME_CLOSED, node_id=1, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0,
+                            data={"dome_open": True}))
+    assert runner.ctx.counter("pellets_taken") == 1
     # Delay not elapsed.
     assert runner.ctx.commands_sent == []
 
-    runner.step(now=4.0)  # 2s after dome close
+    runner.step(now=4.0)  # 2s after take
     dispenses = [
         (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
@@ -272,7 +286,7 @@ def test_free_feeding_immediate_reload_when_delay_zero() -> None:
     runner.start(now=0.0)
     runner.ctx.commands_sent.clear()
 
-    runner.inject(NodeEvent(EventKind.DOME_CLOSED, node_id=2, timestamp=1.0))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=1.0))
     dispenses = [
         (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
@@ -287,7 +301,7 @@ def test_free_feeding_fault_stops_session() -> None:
     runner.ctx.commands_sent.clear()
 
     # Schedule a pending reload on node 2, then fault on node 1.
-    runner.inject(NodeEvent(EventKind.DOME_CLOSED, node_id=2, timestamp=1.0))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=1.0))
     assert not runner.is_finished
 
     runner.inject(
@@ -317,8 +331,8 @@ def test_free_feeding_fault_stops_session() -> None:
     assert dispenses == []
 
 
-def test_free_feeding_fault_no_reload_after_dome() -> None:
-    """Dome-close after a fault must not restart dispensing."""
+def test_free_feeding_fault_no_reload_after_take() -> None:
+    """PelletTaken after a fault must not restart dispensing."""
     exp = build_free_feeding(nodes=[1], reload_delay_s=0.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
@@ -334,7 +348,7 @@ def test_free_feeding_fault_no_reload_after_dome() -> None:
     assert runner.is_finished
     runner.ctx.commands_sent.clear()
 
-    runner.inject(NodeEvent(EventKind.DOME_CLOSED, node_id=1, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0))
     runner.step(now=3.0)
     dispenses = [
         (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense

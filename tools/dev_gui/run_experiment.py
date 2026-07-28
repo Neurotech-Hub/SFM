@@ -155,7 +155,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--reload-delay",
         type=float,
         default=2.0,
-        help="Free-feeding: seconds after dome close before re-dispense (default: 2)",
+        help="Free-feeding: seconds after PelletTaken before re-dispense (default: 2)",
     )
     parser.add_argument(
         "--bnc-on-dispense",

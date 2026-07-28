@@ -130,7 +130,7 @@ void setup() {
     Serial.println(F("Commands: d=dispense  a=abort  s=status  +=faster  -=slower"));
     Serial.println(F("          r         = show raiseSteps"));
     Serial.println(F("          r <n>     = set raiseSteps (e.g. r 700)"));
-    Serial.println(F("PG3 AccessAttempt keeps Presented until Abort/Dispense"));
+    Serial.println(F("PelletTaken returns to Idle; DomeOpened reports each dome lift"));
 
     dispenser.setMotorSpeed(kMotorSpeed);
     dispenser.setLowerSteps(kLowerSteps);
@@ -157,8 +157,15 @@ void loop() {
             Serial.print(F("[Event] PelletPresented  total="));
             Serial.println(dispenser.pelletCount());
             break;
-        case vfm::DispenseEvent::AccessAttempt:
-            Serial.println(F("[Event] AccessAttempt (still Presented)"));
+        case vfm::DispenseEvent::DomeOpened:
+            Serial.println(F("[Event] DomeOpened"));
+            break;
+        case vfm::DispenseEvent::PelletTaken:
+            Serial.print(F("[Event] PelletTaken  taken="));
+            Serial.println(dispenser.takenCount());
+            break;
+        case vfm::DispenseEvent::FeedSkipped:
+            Serial.println(F("[Event] FeedSkipped (plate occupied)"));
             break;
         case vfm::DispenseEvent::DomeOpenWarning:
             Serial.println(F("[Event] DomeOpenWarning (>30s open)"));
@@ -166,8 +173,10 @@ void loop() {
         case vfm::DispenseEvent::Fault:
             Serial.print(F("[Event] FAULT – "));
             Serial.println(
-                dispenser.faultCode() == vfm::ServiceStatus::Timeout ? F("Timeout") :
-                dispenser.faultCode() == vfm::ServiceStatus::Jam     ? F("Jam") : F("?"));
+                dispenser.faultCode() == vfm::ServiceStatus::Timeout    ? F("Timeout") :
+                dispenser.faultCode() == vfm::ServiceStatus::Jam        ? F("Jam") :
+                dispenser.faultCode() == vfm::ServiceStatus::PelletLost ? F("PelletLost") :
+                F("?"));
             break;
         default:
             break;

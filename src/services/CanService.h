@@ -15,12 +15,13 @@ constexpr uint32_t kDefaultHeartbeatIntervalMs = 5000;
 // ---------------------------------------------------------------------------
 // Heartbeat payload packed into 8 bytes:
 //   byte 0: DispenseState
-//   byte 1: pelletCount (low byte)
+//   byte 1: pelletCount (low byte) — pellets presented
 //   byte 2: pelletCount (high byte)
 //   byte 3: presence (touch, 0/1)
 //   byte 4: PG bits  [2:PG3 | 1:PG2 | 0:PG1]
 //   byte 5: fault code (ServiceStatus)
-//   byte 6-7: reserved
+//   byte 6: takenCount (low byte) — pellets taken
+//   byte 7: takenCount (high byte)
 // ---------------------------------------------------------------------------
 struct HeartbeatPayload {
     uint8_t dispenseState;
@@ -29,8 +30,8 @@ struct HeartbeatPayload {
     uint8_t presence;
     uint8_t pgBits;
     uint8_t faultCode;
-    uint8_t reserved0;
-    uint8_t reserved1;
+    uint8_t takenCountLo;
+    uint8_t takenCountHi;
 };
 
 // Callback type for received commands. Called from update() (no ISR context).

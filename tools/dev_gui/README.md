@@ -111,11 +111,11 @@ def start(ctx):
     for n in ctx.nodes:
         ctx.dispense(n)
 
-@exp.on_access_attempt
-def attempted(ctx, ev):
-    ctx.log("retrieval_attempt", node=ev.node_id)
+@exp.on_dome_opened
+def accessed(ctx, ev):
+    ctx.log("dome_opened", node=ev.node_id)
 
-@exp.on_dome_closed
+@exp.on_pellet_taken
 def reload(ctx, ev):
     ctx.after(2.0, lambda: ctx.dispense(ev.node_id))
 
@@ -134,14 +134,20 @@ A script may expose either `exp = Experiment(...)` or
 
 | Name | Module | Behavior |
 |------|--------|----------|
-| `free_feeding` | `vfm_gui.experiment.templates.free_feeding` | Dispense on all nodes at start; on dome close, wait `reload_delay` and re-dispense; end on duration and/or pellet cap |
+| `free_feeding` | `vfm_gui.experiment.templates.free_feeding` | Dispense on all nodes at start; after each confirmed take, wait `reload_delay` and re-dispense; end on duration and/or pellet cap |
+
+Reloading on the confirmed take means the session paces itself to the animal:
+a pellet that is offered but not eaten does not trigger another one.
 
 ### API surface
 
-- **Events** (`EventKind`): `PELLET_LOADED`, `PELLET_PRESENTED`, `ACCESS_ATTEMPT`,
-  `FAULT`, phase events, `PRESENCE_CHANGED`, `PG_CHANGED`, plus derived
-  `DOME_OPENED` / `DOME_CLOSED`, `NODE_ONLINE` / `NODE_OFFLINE`, and
-  base-station `BNC_IN`, `SESSION_START`, `SESSION_END`.
+- **Events** (`EventKind`): `PELLET_LOADED`, `PELLET_PRESENTED`, `DOME_OPENED`,
+  `PELLET_TAKEN`, `FAULT`, `FEED_SKIPPED`, `DOME_OPEN_WARNING`, phase events,
+  `PRESENCE_CHANGED`, `SENSOR_CHANGED`, plus derived `DOME_CLOSED`,
+  `NODE_ONLINE` / `NODE_OFFLINE`, and base-station `BNC_IN`, `SESSION_START`,
+  `SESSION_END`.
+  `DOME_CLOSED` carries `pellet_present`, so an access that ended without a
+  retrieval is distinguishable from one that did not.
 - **Context actions**: `dispense`, `abort`, `broadcast_dispense`,
   `bnc_pulse`, `set_heartbeat_interval`, `after` / `every` timers,
   named `counter` / `incr`, `log`.
@@ -243,10 +249,13 @@ Broadcast command opcodes include `ClearId` (`0x07`) — the GUI **Clear All IDs
 button clears `~/.vfm/mac_id_registry.json`, broadcasts ClearId so every node
 wipes its NVS ID, then rediscovers and rebuilds the MAC↔ID dictionary.
 
-`InputChanged` event payloads are `[0x06, inputId, active]`, where input IDs
-are PG1=`1`, PG2=`2`, PG3=`3`, and presence=`4`. These events update the GUI
-indicators and log immediately; heartbeats remain the periodic recovery
-snapshot.
+`InputChanged` event payloads are `[0x06, inputId, active]`, where input IDs are
+pellet sensor=`1`, load position=`2`, dome=`3`, and animal presence=`4`. These
+events update the GUI indicators and log immediately; heartbeats remain the
+periodic recovery snapshot.
+
+The full event vocabulary, payload layouts and heartbeat byte map are documented
+in [docs/DISPENSE_CYCLE.md](../../docs/DISPENSE_CYCLE.md).
 
 BNC IN/OUT activity is not a CAN frame — it is logged in the event log with
 `frame_type="BNC"` for a unified timeline alongside CAN traffic.

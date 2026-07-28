@@ -79,8 +79,8 @@ void CanService::sendHeartbeat(const HeartbeatPayload &p) {
     msg.data[3] = p.presence;
     msg.data[4] = p.pgBits;
     msg.data[5] = p.faultCode;
-    msg.data[6] = p.reserved0;
-    msg.data[7] = p.reserved1;
+    msg.data[6] = p.takenCountLo;
+    msg.data[7] = p.takenCountHi;
 
     txMessage(msg);
     lastHeartbeatMs_ = millis();

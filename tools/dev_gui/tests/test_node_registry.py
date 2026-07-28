@@ -94,7 +94,8 @@ class TestNodeRegistry:
             (CanEvent.Loading, DispenseState.Loading, "LOADING"),
             (CanEvent.PelletLoaded, DispenseState.Loading, "LOADING"),
             (CanEvent.Raising, DispenseState.Raising, "RAISING"),
-            (CanEvent.AccessAttempt, DispenseState.AccessAttempt, "ACCESSATTEMPT"),
+            (CanEvent.DomeOpened, DispenseState.Presented, "PRESENTED"),
+            (CanEvent.PelletTaken, DispenseState.Idle, "IDLE"),
         ]
         for event, state, label in seq:
             reg.update_from_event(1, event)
@@ -115,6 +116,20 @@ class TestNodeRegistry:
         reg.update_from_heartbeat(1, make_hb())
         reg.update_from_event(1, CanEvent.Fault, fault_code=ServiceStatus.Jam)
         assert reg.get(1).fault_code == ServiceStatus.Jam
+
+    def test_fault_event_pellet_lost(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.Fault, fault_code=ServiceStatus.PelletLost)
+        node = reg.get(1)
+        assert node.dispense_state == DispenseState.Fault
+        assert node.fault_code == ServiceStatus.PelletLost
+
+    def test_feed_skipped_maps_to_raising(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.FeedSkipped)
+        assert reg.get(1).dispense_state == DispenseState.Raising
 
     def test_dome_open_warning_and_clear_on_pg3(self):
         reg = NodeRegistry(1)

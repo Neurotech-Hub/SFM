@@ -13,7 +13,7 @@
 // CAN frame reference (250 kbps, 11-bit IDs):
 //   Commands  base->node : 0x100 + nodeId  (0x100 = broadcast)
 //   Heartbeat node->base : 0x200 + nodeId  every ~1 s
-//   Events    node->base : 0x300 + nodeId  on Loaded/Presented/AccessAttempt/Fault
+//   Events    node->base : 0x300 + nodeId  on Loaded/Presented/DomeOpened/PelletTaken/Fault
 //   Discovery node<->base: 0x080-0x083
 
 #include <VFM.h>

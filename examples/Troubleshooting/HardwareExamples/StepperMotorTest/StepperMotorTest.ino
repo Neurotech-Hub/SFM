@@ -25,7 +25,7 @@
 
 using namespace vfm;
 
-static constexpr long  kJogSteps    = 1024;
+static constexpr long  kJogSteps    = 500;
 static constexpr float kDefaultSpeed = 400.0f; // 28BYJ-48 reliable range: 200–600 half-steps/s
 static constexpr float kMinSpeed     = 100.0f;
 static constexpr float kMaxSpeed     = 800.0f;

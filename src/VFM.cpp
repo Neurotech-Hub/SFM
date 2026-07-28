@@ -208,9 +208,9 @@ void VFM::update() {
 
     handleInputEvents();
 
-    // Milestone events (Loaded / Presented / Access / Fault) first, then
+    // Milestone events (Loaded / Presented / Dome / Taken / Fault) first, then
     // phase-entry events (Lowering / Loading / Raising) so a same-tick
-    // PG1→Raising transition logs as Loaded then Raising.
+    // load→Raising transition logs as Loaded then Raising.
     handleDispenserEvents();
 
     handleDispensePhaseEvents();
@@ -281,7 +281,11 @@ void VFM::handleDispenserEvents() {
 
         case DispenseEvent::PelletPresented: canEv = CanEvent::PelletPresented; break;
 
-        case DispenseEvent::AccessAttempt:   canEv = CanEvent::AccessAttempt;   break;
+        case DispenseEvent::DomeOpened:      canEv = CanEvent::DomeOpened;      break;
+
+        case DispenseEvent::PelletTaken:     canEv = CanEvent::PelletTaken;     break;
+
+        case DispenseEvent::FeedSkipped:     canEv = CanEvent::FeedSkipped;     break;
 
         case DispenseEvent::DomeOpenWarning: canEv = CanEvent::DomeOpenWarning; break;
 
@@ -305,7 +309,9 @@ void VFM::handleDispenserEvents() {
 
     if (ev == DispenseEvent::PelletLoaded || ev == DispenseEvent::PelletPresented ||
 
-        ev == DispenseEvent::AccessAttempt) {
+        ev == DispenseEvent::DomeOpened || ev == DispenseEvent::PelletTaken ||
+
+        ev == DispenseEvent::FeedSkipped) {
 
         leds_.setStatusLed(false);
 
@@ -314,8 +320,6 @@ void VFM::handleDispenserEvents() {
 
 
     if (ev == DispenseEvent::Fault) {
-
-        // Fault payload: byte[0] unused by count convention — send fault code
 
         uint8_t extra[1] = { static_cast<uint8_t>(dispenser_.faultCode()) };
 
@@ -327,15 +331,40 @@ void VFM::handleDispenserEvents() {
 
 
 
-    // Attach pellet count as two extra bytes in the event payload
+    // count LE16 (+ optional context byte for DomeOpened / PelletTaken)
 
-    uint8_t extra[2];
+    uint8_t extra[3];
 
     uint32_t count = dispenser_.pelletCount();
 
     extra[0] = static_cast<uint8_t>(count & 0xFF);
 
     extra[1] = static_cast<uint8_t>((count >> 8) & 0xFF);
+
+    if (ev == DispenseEvent::DomeOpened) {
+
+        extra[2] = dispenser_.lastDomeOpenedWithPellet() ? 1 : 0;
+
+        can_.sendEvent(canEv, extra, 3);
+
+        return;
+
+    }
+
+    if (ev == DispenseEvent::PelletTaken) {
+
+        // PelletTaken count uses takenCount in the cycle doc sense of
+        // presented count still carried as LE16; context = dome open.
+        count = dispenser_.takenCount();
+        extra[0] = static_cast<uint8_t>(count & 0xFF);
+        extra[1] = static_cast<uint8_t>((count >> 8) & 0xFF);
+        extra[2] = dispenser_.lastTakenWithDomeOpen() ? 1 : 0;
+
+        can_.sendEvent(canEv, extra, 3);
+
+        return;
+
+    }
 
     can_.sendEvent(canEv, extra, 2);
 
@@ -344,9 +373,9 @@ void VFM::handleDispenserEvents() {
 
 // ---------------------------------------------------------------------------
 // Publish dispenser phase entries in real time (not waiting for heartbeat):
-//   Lowering — M2 seeking/approaching PG2
+//   Lowering — M2 seeking/approaching load position
 //   Loading  — M1 feeding (Feeding state)
-//   Raising  — M2 raising after PG1 load
+//   Raising  — M2 raising after load / FeedSkipped
 // Loaded is still sent via PelletLoaded in handleDispenserEvents().
 // ---------------------------------------------------------------------------
 
@@ -417,11 +446,9 @@ void VFM::handleInputEvents() {
         reportedPg2_ = pg2;
         sendInputChanged(InputId::PG2, pg2);
     }
-    if (pg3 != reportedPg3_ && !dispenser_.pg3EventBlanked()) {
-        const bool wasOpen = reportedPg3_;
+    if (pg3 != reportedPg3_) {
         reportedPg3_ = pg3;
         sendInputChanged(InputId::PG3, pg3);
-        if (wasOpen && !pg3) dispenser_.blankPg3Events();  // blank after full cycle
     }
     if (presence_ != reportedPresence_) {
         reportedPresence_ = presence_;
@@ -462,6 +489,12 @@ static HeartbeatPayload buildHeartbeat(const DispenserService &d, bool presence)
                        (d.pg3() ? 0x04 : 0);
 
     p.faultCode      = static_cast<uint8_t>(d.faultCode());
+
+    uint32_t taken     = d.takenCount();
+
+    p.takenCountLo   = static_cast<uint8_t>(taken & 0xFF);
+
+    p.takenCountHi   = static_cast<uint8_t>((taken >> 8) & 0xFF);
 
     return p;
 

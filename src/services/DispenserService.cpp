@@ -15,16 +15,17 @@ DispenserService::DispenserService()
       state_(DispenseState::Idle),
       pendingEvent_(DispenseEvent::None),
       pelletCount_(0),
+      takenCount_(0),
       lastFault_(ServiceStatus::Ok),
       motionStartMs_(0),
       motor2Target_(0),
       pg3WasOpen_(false),
-      pg3BlankUntilMs_(0),
-      pg1OnSinceMs_(0),
       raiseStartMs_(0),
       pg3OpenSinceMs_(0),
+      pelletClearSinceMs_(0),
       domeWarnLatched_(false),
-      pelletDropLatched_(false),
+      lastDomeOpenedWithPellet_(false),
+      lastTakenWithDomeOpen_(false),
       motorSpeed_(kDefaultMotorSpeed),
       lowerSteps_(kDefaultLowerSteps),
       raiseSteps_(kDefaultRaiseSteps),
@@ -55,8 +56,8 @@ ServiceStatus DispenserService::begin() {
     pg3State_ = pg3Raw_;
     pg1LastChangeMs_ = pg2LastChangeMs_ = pg3LastChangeMs_ = now;
     pg3WasOpen_ = pg3State_;
-    pg1OnSinceMs_ = pg1State_ ? now : 0;
     pg3OpenSinceMs_ = pg3State_ ? now : 0;
+    pelletClearSinceMs_ = 0;
     domeWarnLatched_ = false;
     lastFault_ = ServiceStatus::Ok;
 
@@ -66,10 +67,7 @@ ServiceStatus DispenserService::begin() {
 void DispenserService::update() {
     updatePhotogates();
 
-    // Jam / warning monitors run in all non-Fault states
     if (state_ != DispenseState::Fault) {
-        checkPg1Jam();
-        if (state_ == DispenseState::Fault) return;
         checkDomeOpenWarning();
     }
 
@@ -113,27 +111,31 @@ void DispenserService::update() {
                 faultNow(ServiceStatus::Timeout);
                 break;
             }
-            if (!pelletDropLatched_) {
-                if (pg1State_) {
-                    // Drop detected — stop M1; wait for PG1 clear before raise
-                    haltMotors();
-                    setEvent(DispenseEvent::PelletLoaded);
-                    pelletDropLatched_ = true;
-                } else {
-                    motor1_.runSpeed();
-                }
-            } else if (!pg1State_) {
+            if (pg1State_) {
+                haltMotors();
+                setEvent(DispenseEvent::PelletLoaded);
                 startRaise();
                 setState(DispenseState::Raising);
+            } else {
+                motor1_.runSpeed();
             }
             break;
 
         case DispenseState::Raising:
-            // Jam: PG2 (home) must clear within 5 s of raise start
             if (pg2State_ &&
-                (millis() - raiseStartMs_) >= kPg2ClearOnRaiseMs) {
+                (millis() - raiseStartMs_) >= kLoadClearOnRaiseMs) {
                 faultNow(ServiceStatus::Jam);
                 break;
+            }
+            if (!pg1State_) {
+                if (pelletClearSinceMs_ == 0) {
+                    pelletClearSinceMs_ = millis();
+                } else if ((millis() - pelletClearSinceMs_) >= kPelletLostMs) {
+                    faultNow(ServiceStatus::PelletLost);
+                    break;
+                }
+            } else {
+                pelletClearSinceMs_ = 0;
             }
             if (phaseTimedOut(raiseTimeoutMs_)) {
                 faultNow(ServiceStatus::Timeout);
@@ -144,6 +146,7 @@ void DispenserService::update() {
                 setEvent(DispenseEvent::PelletPresented);
                 pelletCount_++;
                 pg3WasOpen_ = pg3State_;
+                pelletClearSinceMs_ = 0;
                 setState(DispenseState::Presented);
             } else {
                 motor2_.runSpeed();
@@ -151,13 +154,28 @@ void DispenserService::update() {
             break;
 
         case DispenseState::Presented:
-            // Rising → AccessAttempt. Blank (after high→low) freezes edge state
-            // so a high that spans blank expiry still fires once.
-            if (!pg3EventBlanked()) {
-                if (pg3State_ && !pg3WasOpen_) {
-                    setEvent(DispenseEvent::AccessAttempt);
+            if (pg3State_ && !pg3WasOpen_) {
+                lastDomeOpenedWithPellet_ = pg1State_;
+                setEvent(DispenseEvent::DomeOpened);
+            }
+            pg3WasOpen_ = pg3State_;
+
+            if (!pg1State_) {
+                if (pelletClearSinceMs_ == 0) {
+                    pelletClearSinceMs_ = millis();
+                } else if ((millis() - pelletClearSinceMs_) >= kPelletTakenConfirmMs) {
+                    if (pendingEvent_ == DispenseEvent::None ||
+                        pendingEvent_ == DispenseEvent::DomeOpened) {
+                        lastTakenWithDomeOpen_ = pg3State_;
+                        takenCount_++;
+                        setEvent(DispenseEvent::PelletTaken);
+                        haltMotors();
+                        setState(DispenseState::Idle);
+                        pelletClearSinceMs_ = 0;
+                    }
                 }
-                pg3WasOpen_ = pg3State_;
+            } else {
+                pelletClearSinceMs_ = 0;
             }
             break;
     }
@@ -169,14 +187,34 @@ bool DispenserService::dispense() {
     }
 
     haltMotors();
+    pelletClearSinceMs_ = 0;
+
+    // Occupancy first — pellet sensor is on the plate at all times.
+    if (pg1State_) {
+        beginOccupiedDispense();
+        return true;
+    }
+
     beginLoweringPhase();
     return true;
+}
+
+void DispenserService::beginOccupiedDispense() {
+    setEvent(DispenseEvent::FeedSkipped);
+    // Already elevated (not at load): stay/return to Presented without motion.
+    if (!pg2State_) {
+        pg3WasOpen_ = pg3State_;
+        setState(DispenseState::Presented);
+        return;
+    }
+    startRaise();
+    setState(DispenseState::Raising);
 }
 
 void DispenserService::abort() {
     haltMotors();
     lastFault_ = ServiceStatus::Ok;
-    pelletDropLatched_ = false;
+    pelletClearSinceMs_ = 0;
     setState(DispenseState::Idle);
 }
 
@@ -217,7 +255,6 @@ void DispenserService::startFeed() {
     motor1_.enableOutputs();
     motor1_.setCurrentPosition(0);
     motionStartMs_ = millis();
-    pelletDropLatched_ = false;
     motor1_.setSpeed(motorSpeed_);
 }
 
@@ -226,6 +263,7 @@ void DispenserService::startRaise() {
     motor2_.setCurrentPosition(0);
     motionStartMs_ = millis();
     raiseStartMs_ = millis();
+    pelletClearSinceMs_ = 0;
     motor2Target_ = raiseSteps_;
     motor2_.setSpeed(motorSpeed_); // UP
 }
@@ -235,23 +273,17 @@ void DispenserService::updatePhotogates() {
 
     bool raw1 = (digitalRead(PIN_PG1) == LOW);
     if (raw1 != pg1Raw_) { pg1Raw_ = raw1; pg1LastChangeMs_ = now; }
-    if ((now - pg1LastChangeMs_) >= kPGDebounceMs) {
-        bool prev = pg1State_;
+    if ((now - pg1LastChangeMs_) >= kSensorDebounceMs) {
         pg1State_ = pg1Raw_;
-        if (pg1State_ && !prev) {
-            pg1OnSinceMs_ = now;
-        } else if (!pg1State_) {
-            pg1OnSinceMs_ = 0;
-        }
     }
 
     bool raw2 = (digitalRead(PIN_PG2) == LOW);
     if (raw2 != pg2Raw_) { pg2Raw_ = raw2; pg2LastChangeMs_ = now; }
-    if ((now - pg2LastChangeMs_) >= kPGDebounceMs) pg2State_ = pg2Raw_;
+    if ((now - pg2LastChangeMs_) >= kSensorDebounceMs) pg2State_ = pg2Raw_;
 
     bool raw3 = (digitalRead(PIN_PG3) == HIGH);
     if (raw3 != pg3Raw_) { pg3Raw_ = raw3; pg3LastChangeMs_ = now; }
-    if ((now - pg3LastChangeMs_) >= kPGDebounceMs) {
+    if ((now - pg3LastChangeMs_) >= kSensorDebounceMs) {
         bool prev = pg3State_;
         pg3State_ = pg3Raw_;
         if (pg3State_ && !prev) {
@@ -264,18 +296,9 @@ void DispenserService::updatePhotogates() {
     }
 }
 
-void DispenserService::checkPg1Jam() {
-    // Drop detector should clear after the pellet falls; held ≥3 s ⇒ jam
-    if (!pg1State_ || pg1OnSinceMs_ == 0) return;
-    if ((millis() - pg1OnSinceMs_) >= kPg1JamMs) {
-        faultNow(ServiceStatus::Jam);
-    }
-}
-
 void DispenserService::checkDomeOpenWarning() {
     if (!pg3State_ || pg3OpenSinceMs_ == 0 || domeWarnLatched_) return;
     if ((millis() - pg3OpenSinceMs_) < kDomeOpenWarnMs) return;
-    // Wait until the event slot is free so we do not drop the warning
     if (pendingEvent_ != DispenseEvent::None) return;
     setEvent(DispenseEvent::DomeOpenWarning);
     domeWarnLatched_ = true;

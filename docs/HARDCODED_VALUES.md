@@ -4,6 +4,7 @@ Living note of firmware constants that may need changing after bench or field tw
 **Update this file when you change a default.** Source of truth remains the code; this is the checklist.
 
 Pins (`VFMPins.h`) and CAN ID opcodes (`ServiceTypes.h`) are omitted unless they carry timing or motion meaning.
+For what these timers guard and where they sit in the cycle, see [DISPENSE_CYCLE.md](DISPENSE_CYCLE.md).
 
 ---
 
@@ -12,13 +13,13 @@ Pins (`VFMPins.h`) and CAN ID opcodes (`ServiceTypes.h`) are omitted unless they
 These are the ones called out most often during bring-up.
 
 
-| Value         | Constant             | Location             | Notes                                                          |
-| ------------- | -------------------- | -------------------- | -------------------------------------------------------------- |
-| **30 s**      | `kDomeOpenWarnMs`    | `DispenserService.h` | PG3 open continuously → `DomeOpenWarning` (non-sticky)         |
-| **5 s**       | `kPg2ClearOnRaiseMs` | `DispenserService.h` | After raise starts, PG2 must clear within this or Fault/`Jam`  |
-| **3 s**       | `kPg1JamMs`          | `DispenserService.h` | PG1 held after drop (must clear before raise) → Jam            |
-| **3 s**       | `kPg3EventBlankMs`   | `DispenserService.h` | After PG3 high→low cycle, suppress further PG3 event-log edges |
-| **700 steps** | `kDefaultRaiseSteps` | `DispenserService.h` | M2 raise travel from PG2 home; bench default for 28BYJ-48      |
+| Value         | Constant                | Location             | Notes                                                                                   |
+| ------------- | ----------------------- | -------------------- | --------------------------------------------------------------------------------------- |
+| **200 ms**    | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while presented → `PelletTaken`. Set from bench data: too short and a reach-in flicker counts as a take |
+| **30 s**      | `kDomeOpenWarnMs`       | `DispenserService.h` | Dome held open continuously → `DomeOpenWarning` (non-sticky)                             |
+| **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
+| **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
+| **700 steps** | `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel from the load position; bench default for 28BYJ-48                      |
 
 
 ---
@@ -34,12 +35,12 @@ Defined in `src/services/DispenserService.h`. Overridable before `begin()` via s
 | ----------- | ------------------------ | -------------------------------------- |
 | 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed (M1/M2)   |
 | 2048 steps  | `kDefaultLowerSteps`     | Max seek-away / approach budget for M2 |
-| 700 steps   | `kDefaultRaiseSteps`     | M2 up travel from PG2 home             |
+| 700 steps   | `kDefaultRaiseSteps`     | M2 up travel from the load position    |
 | 4096 steps  | `kDefaultFeedMaxSteps`   | M1 max steps before feed timeout path  |
 | 8 s         | `kDefaultLowerTimeoutMs` | M2 lower / seek-away phase timeout     |
 | 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout                 |
 | 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                 |
-| 20 ms       | `kPGDebounceMs`          | Photogate debounce (PG1/PG2/PG3)       |
+| 20 ms       | `kSensorDebounceMs`      | Sensor debounce (pellet / load / dome) |
 
 
 Not overrideable via SetConfig CAN yet — only compile-time / setter before begin.
@@ -48,17 +49,17 @@ Not overrideable via SetConfig CAN yet — only compile-time / setter before beg
 
 
 
-## Dispenser — jam / warning / blanking
+## Dispenser — delivery confirmation, jam and warning timers
 
 Same header; **not** runtime-configurable via CAN today.
 
 
-| Value | Constant             | Trigger                                                         |
-| ----- | -------------------- | --------------------------------------------------------------- |
-| 3 s   | `kPg1JamMs`          | PG1 stuck after drop (wait-clear before raise) → Jam            |
-| 5 s   | `kPg2ClearOnRaiseMs` | PG2 still blocked after raise start → Jam                       |
-| 30 s  | `kDomeOpenWarnMs`    | PG3 held open → DomeOpenWarning                                 |
-| 3 s   | `kPg3EventBlankMs`   | After PG3 high→low, blank next `AccessAttempt` / `InputChanged` |
+| Value  | Constant                | Trigger                                                              |
+| ------ | ----------------------- | -------------------------------------------------------------------- |
+| 200 ms | `kPelletTakenConfirmMs` | Pellet sensor clear while presented → `PelletTaken`, cycle completes |
+| 500 ms | `kPelletLostMs`         | Pellet sensor clear during the raise → Fault/`PelletLost`            |
+| 5 s    | `kLoadClearOnRaiseMs`   | Load position sensor still blocked after raise start → Jam           |
+| 30 s   | `kDomeOpenWarnMs`       | Dome held open → `DomeOpenWarning`                                   |
 
 
 ---
@@ -89,7 +90,7 @@ Same header; **not** runtime-configurable via CAN today.
 | 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                         |
 | 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                          |
 | 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                  |
-| 40             | `touchThreshold_`                     | Capacitive presence threshold                                                 |
+| 40             | `touchThreshold_`                     | Capacitive animal-presence threshold                                          |
 | 100 ms         | `flashLedsClear()` delays             | Visual confirm of NVS clear                                                   |
 
 
@@ -103,4 +104,3 @@ Same header; **not** runtime-configurable via CAN today.
 2. Rebuild / flash the node firmware.
 3. Update the corresponding row in this document.
 4. If the value becomes experiment- or site-specific, prefer a setter / `SetConfig` path so nodes do not need a reflash.
-
