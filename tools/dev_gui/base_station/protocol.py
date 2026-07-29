@@ -22,16 +22,14 @@ class CanCmd(IntEnum):
     """Commands sent from base station to a node (CAN ID 0x100 + nodeId)."""
     Ping      = 0x01
     Dispense  = 0x02
-    Recover   = 0x03
+    Recover   = 0x03  # stop motion, clear sticky Fault, return to Idle
     AssignId  = 0x04  # payload byte[0] = new nodeId
     SetConfig = 0x05  # payload TBD
     ReqStatus = 0x06
     ClearId   = 0x07  # clear NVS id; node re-enters discovery
 
 
-# Friendly one-line purpose text for COMMAND log rows. Shared by manual
-# command dispatch (app.py) and experiment-issued commands (gui_controller.py)
-# so both surfaces render identically under the log's COMMAND filter.
+# Friendly one-line purpose text for COMMAND log rows.
 CAN_CMD_PURPOSE = {
     CanCmd.Ping: "identify / request MAC",
     CanCmd.Dispense: "load & present pellet",
@@ -45,51 +43,53 @@ CAN_CMD_PURPOSE = {
 
 class CanEvent(IntEnum):
     """Events sent from a node to the base station (CAN ID 0x300 + nodeId)."""
-    PelletLoaded    = 0x01  # "Loaded" — PG1 detected
+    PelletLoaded    = 0x01  # pellet on plate; raise starting
     PelletPresented = 0x02
-    CatchAttempt    = 0x03
-    Fault           = 0x04  # raw_extra[0] = ServiceStatus (Timeout/Jam)
+    DomeOpened      = 0x03  # raw_extra: count LE16 + pellet_present
+    Fault           = 0x04  # raw_extra[0] = ServiceStatus
     Pong            = 0x05
     InputChanged    = 0x06
-    Lowering        = 0x07  # M2 toward PG2 (incl. SeekingAway)
+    Lowering        = 0x07  # M2 toward load position (incl. SeekingAway)
     Loading         = 0x08  # M1 feeding
-    Raising         = 0x09  # M2 raising pallet
-    DomeOpenWarning = 0x0A  # PG3 open >30 s (non-sticky warning)
+    Raising         = 0x09  # M2 raising plate
+    DomeOpenWarning = 0x0A  # dome open >30 s (non-sticky warning)
+    PelletTaken     = 0x0B  # raw_extra: count LE16 + dome_open
+    FeedSkipped     = 0x0C  # plate occupied on Dispense
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
 CAN_EVENT_DISPLAY_NAME = {
     CanEvent.PelletLoaded: "Loaded",
-    CanEvent.CatchAttempt: "Catch attempt",
     CanEvent.Lowering: "Lowering",
     CanEvent.Loading: "Loading",
     CanEvent.Raising: "Raising",
+    CanEvent.DomeOpened: "DomeOpened",
     CanEvent.DomeOpenWarning: "DomeOpenWarning",
+    CanEvent.PelletTaken: "PelletTaken",
+    CanEvent.FeedSkipped: "FeedSkipped",
 }
 
 
 class InputId(IntEnum):
     """Inputs reported immediately by CanEvent.InputChanged."""
-    PG1      = 0x01
-    PG2      = 0x02
-    PG3      = 0x03
-    Presence = 0x04
+    PG1      = 0x01  # pellet presence on plate
+    PG2      = 0x02  # load position
+    PG3      = 0x03  # dome open
+    Presence = 0x04  # animal presence detection sensor
 
 
 class DispenseState(IntEnum):
     """Dispenser FSM states carried in heartbeat byte 0.
 
-    Loading mirrors firmware Feeding (value 2). CatchAttempt is GUI-only
-    (not in heartbeats); set from CanEvent.CatchAttempt until the next HB.
+    Loading mirrors firmware Feeding (value 2).
     """
     Idle          = 0
-    Lowering      = 1  # M2 down until PG2
+    Lowering      = 1  # M2 down until load position
     Loading       = 2  # M1 feeding pellet (firmware: Feeding)
     Raising       = 3  # M2 up by step count
-    Presented     = 4  # Pellet at top; waits for Recover / next Dispense
-    SeekingAway   = 5  # M2 up until PG2 clears (was Taken)
-    Fault         = 6  # Timeout / jam
-    CatchAttempt  = 7  # GUI overlay after PG3 catch event (HB still Presented)
+    Presented     = 4  # Pellet at top; ends on PelletTaken → Idle
+    SeekingAway   = 5  # M2 up until load sensor clears
+    Fault         = 6  # Timeout / jam / pellet lost
 
 
 class ServiceStatus(IntEnum):
@@ -99,6 +99,7 @@ class ServiceStatus(IntEnum):
     Timeout        = 2
     Jam            = 3
     InvalidData    = 4
+    PelletLost     = 5
 
 
 # ---------------------------------------------------------------------------
@@ -130,21 +131,24 @@ CONFIG_HEARTBEAT_INTERVAL = 0x01  # value = uint16 LE, heartbeat interval in ms
 # Heartbeat payload (mirror of CanService.h HeartbeatPayload)
 # ---------------------------------------------------------------------------
 # byte 0: DispenseState
-# byte 1: pelletCountLo
+# byte 1: pelletCountLo (presented)
 # byte 2: pelletCountHi
 # byte 3: presence (0/1)
 # byte 4: pgBits  [bit2=PG3 | bit1=PG2 | bit0=PG1]
 # byte 5: faultCode (ServiceStatus)
-# byte 6-7: reserved
+# byte 6: takenCountLo
+# byte 7: takenCountHi
 
 @dataclass
 class HeartbeatPayload:
     dispense_state: DispenseState
     presence: bool
-    pg1: bool           # bit 0 of pgBits — pellet in cup
-    pg2: bool           # bit 1 of pgBits — actuator at home/down
-    pg3: bool           # bit 2 of pgBits — dome opened
+    pg1: bool           # bit 0 — pellet present on plate
+    pg2: bool           # bit 1 — at load position
+    pg3: bool           # bit 2 — dome open
     fault_code: ServiceStatus
+    pellets_presented: int = 0
+    pellets_taken: int = 0
 
     @property
     def pg_bits(self) -> int:
@@ -173,6 +177,8 @@ def parse_heartbeat(data: bytes) -> Optional[HeartbeatPayload]:
         fault = ServiceStatus.Ok
 
     pg = data[4]
+    presented = data[1] | (data[2] << 8)
+    taken = (data[6] | (data[7] << 8)) if len(data) >= 8 else 0
     return HeartbeatPayload(
         dispense_state=state,
         presence=bool(data[3]),
@@ -180,6 +186,8 @@ def parse_heartbeat(data: bytes) -> Optional[HeartbeatPayload]:
         pg2=bool(pg & 0x02),
         pg3=bool(pg & 0x04),
         fault_code=fault,
+        pellets_presented=presented,
+        pellets_taken=taken,
     )
 
 
@@ -211,13 +219,31 @@ def parse_event(data: bytes) -> Optional[EventPayload]:
 
 
 def parse_fault_code(event: EventPayload) -> Optional[ServiceStatus]:
-    """Decode Fault event extra byte[0] as ServiceStatus (Timeout/Jam)."""
+    """Decode Fault event extra byte[0] as ServiceStatus."""
     if event.event != CanEvent.Fault or len(event.raw_extra) < 1:
         return None
     try:
         return ServiceStatus(event.raw_extra[0])
     except ValueError:
         return None
+
+
+def parse_event_context(event: EventPayload) -> Optional[dict]:
+    """
+    Decode count LE16 (+ optional context byte) for milestone events.
+
+    Returns dict with pellet_count and optional pellet_present / dome_open.
+    """
+    if len(event.raw_extra) < 2:
+        return None
+    out = {
+        "pellet_count": event.raw_extra[0] | (event.raw_extra[1] << 8),
+    }
+    if event.event == CanEvent.DomeOpened and len(event.raw_extra) >= 3:
+        out["pellet_present"] = bool(event.raw_extra[2])
+    if event.event == CanEvent.PelletTaken and len(event.raw_extra) >= 3:
+        out["dome_open"] = bool(event.raw_extra[2])
+    return out
 
 
 def parse_input_changed(event: EventPayload) -> Optional[InputChangedPayload]:
@@ -290,15 +316,17 @@ def build_assign_frame(mac: bytes, node_id: int) -> tuple[int, bytes]:
 def build_heartbeat_frame(node_id: int, hb: HeartbeatPayload) -> tuple[int, bytes]:
     """Build a heartbeat frame (for the simulator)."""
     arb_id = CAN_STATUS_BASE + node_id
+    presented = int(getattr(hb, "pellets_presented", 0))
+    taken = int(getattr(hb, "pellets_taken", 0))
     data = bytes([
         int(hb.dispense_state),
-        0,                    # pelletCountLo (not displayed)
-        0,                    # pelletCountHi
+        presented & 0xFF,
+        (presented >> 8) & 0xFF,
         int(hb.presence),
         hb.pg_bits,
         int(hb.fault_code),
-        0,                    # reserved
-        0,                    # reserved
+        taken & 0xFF,
+        (taken >> 8) & 0xFF,
     ])
     return arb_id, data
 

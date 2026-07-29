@@ -13,7 +13,7 @@
 // CAN frame reference (250 kbps, 11-bit IDs):
 //   Commands  base->node : 0x100 + nodeId  (0x100 = broadcast)
 //   Heartbeat node->base : 0x200 + nodeId  every ~1 s
-//   Events    node->base : 0x300 + nodeId  on Loaded/Presented/CatchAttempt/Fault
+//   Events    node->base : 0x300 + nodeId  on Loaded/Presented/DomeOpened/PelletTaken/Fault
 //   Discovery node<->base: 0x080-0x083
 
 #include <VFM.h>
@@ -27,7 +27,7 @@ static void printHelp() {
     Serial.println(F("Commands:"));
     Serial.println(F("  id <n>   assign node ID (1-254)"));
     Serial.println(F("  d        dispense pellet"));
-    Serial.println(F("  a        abort motion"));
+    Serial.println(F("  a        recover (stop motion / clear fault)"));
     Serial.println(F("  s        print status"));
     Serial.println(F("  clr      clear NVS node ID (forces first-boot next reset)"));
 }
@@ -85,8 +85,8 @@ static void handleSerialLine(const char *line) {
         if (gVfm.dispenser().dispense()) Serial.println(F("Dispense started."));
         else { Serial.print(F("Cannot dispense – ")); Serial.println(stateStr(gVfm.dispenser().state())); }
     } else if (strcmp(line, "a") == 0) {
-        gVfm.dispenser().abort();
-        Serial.println(F("Aborted."));
+        gVfm.dispenser().recover();
+        Serial.println(F("Recovered."));
     } else if (strcmp(line, "s") == 0) {
         printStatus();
     } else if (strcmp(line, "clr") == 0) {
@@ -108,7 +108,7 @@ void setup() {
     if (!gVfm.begin()) {
         Serial.println(F("WARNING: one or more services failed to initialise"));
     }
-    gVfm.setPresenceThreshold(35000);
+    gVfm.setPresenceThreshold(50000);
     
     // Print MAC UUID
     const uint8_t *m = gVfm.identity().mac();

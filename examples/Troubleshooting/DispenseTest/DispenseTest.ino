@@ -4,21 +4,26 @@
 //
 // Commands:
 //   d          – start a dispense cycle (also ends Presented wait and starts next)
-//   a          – abort current motion / clear Fault / leave Presented
+//   a          – recover: stop motion / clear Fault / leave Presented
 //   s          – print current dispenser state + photogate readings
 //   +          – increase motor speed by 100 steps/s
 //   -          – decrease motor speed by 100 steps/s
 //   r          – print current raiseSteps
-//   r <n>      – set raiseSteps (e.g. "r 700" or "r 1200")
+//   r <n>      – set raiseSteps (e.g. "r 1420" or "r 1200")
 //
-// Defaults match library: raise=700, feed timeout=30 s.
+// Defaults match library: grab=320, raise=1420, seek-away=800, feed timeout=30 s.
+// raiseSteps is measured from the pellet-drop position (kDefaultGrabSteps below
+// the load sensor), not from the load sensor itself.
 
 #include <VFM.h>
 
-static constexpr float    kMotorSpeed    = 500.0f;
-static constexpr long     kLowerSteps    = 2048;
-static constexpr long     kRaiseSteps    = 700;
-static constexpr uint32_t kFeedTimeoutMs = 30000;
+static constexpr float    kMotorSpeed     = 300.0f;
+static constexpr long     kLowerSteps     = 3072;
+static constexpr long     kSeekAwaySteps  = 800;
+static constexpr long     kGrabSteps      = 320;
+static constexpr long     kRaiseSteps     = 1420;
+static constexpr long     kFeedMaxSteps   = 4096;
+static constexpr uint32_t kFeedTimeoutMs  = 30000;
 
 vfm::DispenserService dispenser;
 float currentSpeed     = kMotorSpeed;
@@ -94,8 +99,8 @@ void handleLine(const char *line) {
             break;
         case 'a':
         case 'A':
-            dispenser.abort();
-            Serial.println(F("Aborted."));
+            dispenser.recover();
+            Serial.println(F("Recovered."));
             break;
         case 's':
         case 'S':
@@ -126,14 +131,17 @@ void setup() {
     Serial.begin(115200);
     while (!Serial) {}
     Serial.println(F("VFM DispenseTest"));
-    Serial.println(F("Commands: d=dispense  a=abort  s=status  +=faster  -=slower"));
+    Serial.println(F("Commands: d=dispense  a=recover  s=status  +=faster  -=slower"));
     Serial.println(F("          r         = show raiseSteps"));
-    Serial.println(F("          r <n>     = set raiseSteps (e.g. r 700)"));
-    Serial.println(F("PG3 CatchAttempt keeps Presented until Abort/Dispense"));
+    Serial.println(F("          r <n>     = set raiseSteps (e.g. r 1420)"));
+    Serial.println(F("PelletTaken returns to Idle; DomeOpened reports each dome lift"));
 
     dispenser.setMotorSpeed(kMotorSpeed);
     dispenser.setLowerSteps(kLowerSteps);
+    dispenser.setSeekAwaySteps(kSeekAwaySteps);
+    dispenser.setGrabSteps(kGrabSteps);
     dispenser.setRaiseSteps(kRaiseSteps);
+    dispenser.setFeedMaxSteps(kFeedMaxSteps);
     dispenser.setFeedTimeoutMs(kFeedTimeoutMs);
 
     if (dispenser.begin() != vfm::ServiceStatus::Ok) {
@@ -155,8 +163,15 @@ void loop() {
             Serial.print(F("[Event] PelletPresented  total="));
             Serial.println(dispenser.pelletCount());
             break;
-        case vfm::DispenseEvent::CatchAttempt:
-            Serial.println(F("[Event] CatchAttempt (still Presented)"));
+        case vfm::DispenseEvent::DomeOpened:
+            Serial.println(F("[Event] DomeOpened"));
+            break;
+        case vfm::DispenseEvent::PelletTaken:
+            Serial.print(F("[Event] PelletTaken  taken="));
+            Serial.println(dispenser.takenCount());
+            break;
+        case vfm::DispenseEvent::FeedSkipped:
+            Serial.println(F("[Event] FeedSkipped (plate occupied)"));
             break;
         case vfm::DispenseEvent::DomeOpenWarning:
             Serial.println(F("[Event] DomeOpenWarning (>30s open)"));
@@ -164,8 +179,10 @@ void loop() {
         case vfm::DispenseEvent::Fault:
             Serial.print(F("[Event] FAULT – "));
             Serial.println(
-                dispenser.faultCode() == vfm::ServiceStatus::Timeout ? F("Timeout") :
-                dispenser.faultCode() == vfm::ServiceStatus::Jam     ? F("Jam") : F("?"));
+                dispenser.faultCode() == vfm::ServiceStatus::Timeout    ? F("Timeout") :
+                dispenser.faultCode() == vfm::ServiceStatus::Jam        ? F("Jam") :
+                dispenser.faultCode() == vfm::ServiceStatus::PelletLost ? F("PelletLost") :
+                F("?"));
             break;
         default:
             break;

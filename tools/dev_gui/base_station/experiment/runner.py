@@ -47,9 +47,9 @@ class Experiment:
             for n in ctx.nodes:
                 ctx.dispense(n)
 
-        @exp.on(EventKind.CATCH_ATTEMPT)
-        def attempted(ctx, ev):
-            ctx.log("retrieval_attempt", node=ev.node_id)
+        @exp.on_pellet_taken
+        def taken(ctx, ev):
+            ctx.log("pellet_taken", node=ev.node_id)
 
         exp.end_after(hours=12)
         exp.run(interface="vcan0")
@@ -95,14 +95,17 @@ class Experiment:
 
     # Sugar decorators for the most common event kinds -------------------
 
-    def on_catch_attempt(self, fn: EventCb) -> EventCb:
-        return self.on(EventKind.CATCH_ATTEMPT)(fn)
-
     def on_dome_closed(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.DOME_CLOSED)(fn)
 
     def on_dome_opened(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.DOME_OPENED)(fn)
+
+    def on_pellet_taken(self, fn: EventCb) -> EventCb:
+        return self.on(EventKind.PELLET_TAKEN)(fn)
+
+    def on_feed_skipped(self, fn: EventCb) -> EventCb:
+        return self.on(EventKind.FEED_SKIPPED)(fn)
 
     def on_pellet_presented(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.PELLET_PRESENTED)(fn)

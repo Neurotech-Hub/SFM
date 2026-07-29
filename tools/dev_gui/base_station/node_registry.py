@@ -86,7 +86,7 @@ class NodeState:
             return (220, 50, 50, 255)     # red
         if s == DispenseState.Idle:
             return (60, 200, 80, 255)     # green
-        if s in (DispenseState.Presented, DispenseState.CatchAttempt):
+        if s == DispenseState.Presented:
             return (50, 200, 220, 255)    # cyan
         if s == DispenseState.SeekingAway:
             return (60, 130, 220, 255)    # blue (homing)
@@ -157,9 +157,11 @@ class NodeRegistry:
             CanEvent.Lowering:        DispenseState.Lowering,
             CanEvent.Loading:         DispenseState.Loading,
             CanEvent.PelletLoaded:    DispenseState.Loading,
+            CanEvent.FeedSkipped:     DispenseState.Raising,
             CanEvent.Raising:         DispenseState.Raising,
             CanEvent.PelletPresented: DispenseState.Presented,
-            CanEvent.CatchAttempt:    DispenseState.CatchAttempt,
+            CanEvent.DomeOpened:      DispenseState.Presented,
+            CanEvent.PelletTaken:     DispenseState.Idle,
             CanEvent.Fault:           DispenseState.Fault,
         }
         if event in state_map:

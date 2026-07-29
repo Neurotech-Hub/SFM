@@ -16,7 +16,7 @@ Each node has three optical sensors, named for the job they do.
 | **Dome sensor**          | GPIO44 | pin HIGH (idle LOW)   | The dome is lifted. The dome is spring-returned, so every access is a clean lift-and-release bout                      |
 
 
-All three are debounced in firmware by `kPGDebounceMs` (100 ms) before any logic or reporting acts on them.
+All three are debounced in firmware by `kSensorDebounceMs` (100 ms) before any logic or reporting acts on them.
 
 Two of them are mirrored live on the board LEDs so a bench operator can read the sensors without a serial
 monitor: **LED 10 = pellet sensor**, **LED 9 = dome sensor**, lit when asserted. Both follow the debounced
@@ -117,7 +117,7 @@ Node → base on CAN ID `0x300 + nodeId`. Byte 0 is the event code.
 | `0x01` | `PelletLoaded`    | count LE16                 | A pellet is confirmed on the plate; the raise is starting               |
 | `0x02` | `PelletPresented` | count LE16                 | The plate reached the top; the pellet is available                      |
 | `0x03` | `DomeOpened`      | count LE16, pellet present | The dome was lifted while a pellet was presented                        |
-| `0x04` | `Fault`           | `ServiceStatus`            | Motion or delivery failure; sticky until `Abort`                        |
+| `0x04` | `Fault`           | `ServiceStatus`            | Motion or delivery failure; sticky until `Recover`                      |
 | `0x05` | `Pong`            | —                          | Reply to `Ping`                                                         |
 | `0x06` | `InputChanged`    | input id, active           | A sensor changed state                                                  |
 | `0x07` | `Lowering`        | count LE16                 | Phase entered: seeking the load position                                |
@@ -142,7 +142,7 @@ immediately; heartbeats are the periodic recovery snapshot.
 ## Faults
 
 A fault halts both motors, latches a status code, lights the status LED solid, and holds the node in `Fault`
-until it receives `Abort`.
+until it receives `Recover`.
 
 
 | Code         | Cause                                                                                           |

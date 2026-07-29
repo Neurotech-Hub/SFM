@@ -46,6 +46,7 @@ from .protocol import (
     node_id_from_event_id,
     node_id_from_hb_id,
     parse_event,
+    parse_event_context,
     parse_fault_code,
     parse_input_changed,
     parse_heartbeat,
@@ -92,9 +93,9 @@ def _bnc_out_trigger_items() -> list:
     display_names_set = set(CAN_EVENT_DISPLAY_NAME.values())
     # Start with display names
     names = sorted(display_names_set)
-    # Add raw event names not already in display map (exclude Pong, InputChanged, CatchAttempt)
+    # Add raw event names not already in display map (exclude Pong, InputChanged)
     for ev in CanEvent:
-        if ev.name not in ("Pong", "InputChanged", "CatchAttempt") and ev.name.lower() not in {n.lower() for n in names}:
+        if ev.name not in ("Pong", "InputChanged") and ev.name.lower() not in {n.lower() for n in names}:
             names.append(ev.name)
     names = sorted(set(names))
     return ["any_event"] + names
@@ -1254,16 +1255,24 @@ class SFMApp:
                             details = f"fault={code}"
                         elif ev.event == CanEvent.DomeOpenWarning:
                             details = "PG3 open >30s"
-                        elif ev.event in (
-                            CanEvent.Lowering,
-                            CanEvent.Loading,
-                            CanEvent.PelletLoaded,
-                            CanEvent.Raising,
-                            CanEvent.PelletPresented,
-                            CanEvent.CatchAttempt,
-                        ) and len(ev.raw_extra) >= 2:
-                            pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
-                            details = f"pellet_count={pellet_count}"
+                        else:
+                            ctx = parse_event_context(ev)
+                            if ctx is not None:
+                                details = f"count={ctx['pellet_count']}"
+                                if "pellet_present" in ctx:
+                                    details += f" pellet_present={int(ctx['pellet_present'])}"
+                                if "dome_open" in ctx:
+                                    details += f" dome_open={int(ctx['dome_open'])}"
+                            elif ev.event in (
+                                CanEvent.Lowering,
+                                CanEvent.Loading,
+                                CanEvent.PelletLoaded,
+                                CanEvent.Raising,
+                                CanEvent.PelletPresented,
+                                CanEvent.FeedSkipped,
+                            ) and len(ev.raw_extra) >= 2:
+                                pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
+                                details = f"pellet_count={pellet_count}"
                     self._refresh_tile(node_id)
                     self._maybe_fire_bnc_out(entry_name)
                     if ev.event == CanEvent.PelletPresented:

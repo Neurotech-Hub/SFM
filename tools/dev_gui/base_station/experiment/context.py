@@ -204,7 +204,7 @@ class ExperimentContext:
         """
         Clear a node's halted state and clear its firmware fault.
 
-        Sends ``Recover`` to the node (firmware ``abort()`` resets the fault to
+        Sends ``Recover`` to the node (firmware ``recover()`` resets the fault to
         Idle) and un-latches it so ``dispense`` works again. The runner fires
         ``on_recover`` handlers afterwards so a template can re-arm the node.
         """

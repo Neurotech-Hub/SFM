@@ -205,14 +205,14 @@ class TestParseEvent:
         assert ServiceStatus.PelletLost == 5
 
     def test_parse_event_context_dome_opened(self):
-        from sfm_gui.protocol import parse_event_context
+        from base_station.protocol import parse_event_context
         ev = parse_event(bytes([CanEvent.DomeOpened, 0x02, 0x00, 0x01]))
         ctx = parse_event_context(ev)
         assert ctx["pellet_count"] == 2
         assert ctx["pellet_present"] is True
 
     def test_parse_event_context_pellet_taken(self):
-        from sfm_gui.protocol import parse_event_context
+        from base_station.protocol import parse_event_context
         ev = parse_event(bytes([CanEvent.PelletTaken, 0x07, 0x00, 0x00]))
         ctx = parse_event_context(ev)
         assert ctx["pellet_count"] == 7

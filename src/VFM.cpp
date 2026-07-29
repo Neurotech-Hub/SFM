@@ -14,7 +14,7 @@ VFM::VFM()
 
       presence_(false),
 
-      touchThreshold_(40000),
+      presenceThreshold_(35000),
 
       btnHoldMs_(3000),
 
@@ -80,7 +80,7 @@ bool VFM::begin() {
 
             case CanCmd::Recover:
 
-                dispenser_.abort();
+                dispenser_.recover();
 
                 break;
 
@@ -155,13 +155,13 @@ bool VFM::begin() {
 
     // 6. Touch pin (analog read) and BTN (active LOW, long-press clears NVS ID)
 
-    pinMode(PIN_TOUCH, INPUT);
+    pinMode(PIN_PRESENCE, INPUT);
 
     pinMode(PIN_BTN, INPUT_PULLUP);
 
     // Seed the edge-reporting snapshots from real inputs so startup levels do
     // not generate false InputChanged events.
-    updateTouch();
+    updatePresence();
     reportedPg1_      = dispenser_.pg1();
     reportedPg2_      = dispenser_.pg2();
     reportedPg3_      = dispenser_.pg3();
@@ -202,15 +202,15 @@ void VFM::update() {
 
     leds_.update();
 
-    updateTouch();
+    updatePresence();
 
     updateButton();
 
     handleInputEvents();
 
-    // Milestone events (Loaded / Presented / Catch / Fault) first, then
+    // Milestone events (Loaded / Presented / Dome / Taken / Fault) first, then
     // phase-entry events (Lowering / Loading / Raising) so a same-tick
-    // PG1→Raising transition logs as Loaded then Raising.
+    // load→Raising transition logs as Loaded then Raising.
     handleDispenserEvents();
 
     handleDispensePhaseEvents();
@@ -221,9 +221,9 @@ void VFM::update() {
 
 
 
-    // Once discovery completes, turn status / LED 9 off — unless a Ping
-    // blink is currently active, which takes precedence so the node stays
-    // visually identifiable for its full blink duration.
+    // Once discovery completes, turn the status LED off — unless a Ping blink is
+    // currently active, which takes precedence so the node stays visually
+    // identifiable for its full blink duration.
 
     if (identity_.isEnabled() && !pingBlinkActive_) {
 
@@ -231,11 +231,11 @@ void VFM::update() {
 
         leds_.setStatusLed(false);
 
-        leds_.setLed9BlinkMs(0);
-
-        leds_.setLed9(false);
-
     }
+
+
+
+    updateSensorLeds();
 
 
 
@@ -281,7 +281,11 @@ void VFM::handleDispenserEvents() {
 
         case DispenseEvent::PelletPresented: canEv = CanEvent::PelletPresented; break;
 
-        case DispenseEvent::CatchAttempt:    canEv = CanEvent::CatchAttempt;    break;
+        case DispenseEvent::DomeOpened:      canEv = CanEvent::DomeOpened;      break;
+
+        case DispenseEvent::PelletTaken:     canEv = CanEvent::PelletTaken;     break;
+
+        case DispenseEvent::FeedSkipped:     canEv = CanEvent::FeedSkipped;     break;
 
         case DispenseEvent::DomeOpenWarning: canEv = CanEvent::DomeOpenWarning; break;
 
@@ -305,7 +309,9 @@ void VFM::handleDispenserEvents() {
 
     if (ev == DispenseEvent::PelletLoaded || ev == DispenseEvent::PelletPresented ||
 
-        ev == DispenseEvent::CatchAttempt) {
+        ev == DispenseEvent::DomeOpened || ev == DispenseEvent::PelletTaken ||
+
+        ev == DispenseEvent::FeedSkipped) {
 
         leds_.setStatusLed(false);
 
@@ -314,8 +320,6 @@ void VFM::handleDispenserEvents() {
 
 
     if (ev == DispenseEvent::Fault) {
-
-        // Fault payload: byte[0] unused by count convention — send fault code
 
         uint8_t extra[1] = { static_cast<uint8_t>(dispenser_.faultCode()) };
 
@@ -327,15 +331,40 @@ void VFM::handleDispenserEvents() {
 
 
 
-    // Attach pellet count as two extra bytes in the event payload
+    // count LE16 (+ optional context byte for DomeOpened / PelletTaken)
 
-    uint8_t extra[2];
+    uint8_t extra[3];
 
     uint32_t count = dispenser_.pelletCount();
 
     extra[0] = static_cast<uint8_t>(count & 0xFF);
 
     extra[1] = static_cast<uint8_t>((count >> 8) & 0xFF);
+
+    if (ev == DispenseEvent::DomeOpened) {
+
+        extra[2] = dispenser_.lastDomeOpenedWithPellet() ? 1 : 0;
+
+        can_.sendEvent(canEv, extra, 3);
+
+        return;
+
+    }
+
+    if (ev == DispenseEvent::PelletTaken) {
+
+        // PelletTaken count uses takenCount in the cycle doc sense of
+        // presented count still carried as LE16; context = dome open.
+        count = dispenser_.takenCount();
+        extra[0] = static_cast<uint8_t>(count & 0xFF);
+        extra[1] = static_cast<uint8_t>((count >> 8) & 0xFF);
+        extra[2] = dispenser_.lastTakenWithDomeOpen() ? 1 : 0;
+
+        can_.sendEvent(canEv, extra, 3);
+
+        return;
+
+    }
 
     can_.sendEvent(canEv, extra, 2);
 
@@ -344,9 +373,9 @@ void VFM::handleDispenserEvents() {
 
 // ---------------------------------------------------------------------------
 // Publish dispenser phase entries in real time (not waiting for heartbeat):
-//   Lowering — M2 seeking/approaching PG2
+//   Lowering — M2 seeking/approaching load position
 //   Loading  — M1 feeding (Feeding state)
-//   Raising  — M2 raising after PG1 load
+//   Raising  — M2 raising after load / FeedSkipped
 // Loaded is still sent via PelletLoaded in handleDispenserEvents().
 // ---------------------------------------------------------------------------
 
@@ -417,11 +446,9 @@ void VFM::handleInputEvents() {
         reportedPg2_ = pg2;
         sendInputChanged(InputId::PG2, pg2);
     }
-    if (pg3 != reportedPg3_ && !dispenser_.pg3EventBlanked()) {
-        const bool wasOpen = reportedPg3_;
+    if (pg3 != reportedPg3_) {
         reportedPg3_ = pg3;
         sendInputChanged(InputId::PG3, pg3);
-        if (wasOpen && !pg3) dispenser_.blankPg3Events();  // blank after full cycle
     }
     if (presence_ != reportedPresence_) {
         reportedPresence_ = presence_;
@@ -462,6 +489,12 @@ static HeartbeatPayload buildHeartbeat(const DispenserService &d, bool presence)
                        (d.pg3() ? 0x04 : 0);
 
     p.faultCode      = static_cast<uint8_t>(d.faultCode());
+
+    uint32_t taken     = d.takenCount();
+
+    p.takenCountLo   = static_cast<uint8_t>(taken & 0xFF);
+
+    p.takenCountHi   = static_cast<uint8_t>((taken >> 8) & 0xFF);
 
     return p;
 
@@ -515,15 +548,39 @@ void VFM::updatePingBlink() {
 
 
 
-void VFM::updateTouch() {
+// Live sensor mirrors: LED 10 = pellet present, LED 9 = dome open. Lit means
+// asserted. Both read the debounced states from DispenserService, so the LEDs
+// show what the firmware acts on rather than the raw pin.
+//
+// LED 10 has no other owner and mirrors unconditionally. LED 9 is shared with
+// the boot / discovery blink and the button-hold warning, which keep it until
+// discovery is done and no hold is armed.
 
-    // ESP32-S3 touch sensor is read via touchRead() which returns a raw value;
+void VFM::updateSensorLeds() {
 
-    // lower values typically indicate a touch. Threshold must be bench-tuned.
+    leds_.setLed10(dispenser_.pg1());
 
-    uint32_t val = touchRead(PIN_TOUCH);
+    if (identity_.isEnabled() && !btnArmed_) {
 
-    presence_ = (val > touchThreshold_);
+        leds_.setLed9BlinkMs(0);
+
+        leds_.setLed9(dispenser_.pg3());
+
+    }
+
+}
+
+
+
+void VFM::updatePresence() {
+
+    // ESP32-S3 presence detection sensor (capacitive pad on GPIO5).
+    // touchRead() returns a raw count; presence asserts when raw exceeds
+    // the bench-tuned threshold (idle ~30–35k, presence often 100k+).
+
+    uint32_t val = touchRead(PIN_PRESENCE);
+
+    presence_ = (val > presenceThreshold_);
 
 }
 

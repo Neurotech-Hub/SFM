@@ -3,12 +3,12 @@ free_feeding.py — Free-feeding (continuous reload) experiment template.
 
 Behavior:
   1. On session start, dispense a pellet on every configured node.
-  2. On CatchAttempt (retrieval attempt), log it.
-  3. On dome close (PG3 cleared after being open), wait ``reload_delay_s``
-     then re-dispense that node.
-  4. On Fault (jam / timeout), the faulted node is **halted** (latched) and
-     stops reloading; the other nodes keep free-feeding. The node resumes only
-     after an operator **Recover** (``on_recover`` re-dispenses it).
+  2. On DomeOpened, log the lift (optional pellet_present from event data).
+  3. On PelletTaken, wait ``reload_delay_s`` then re-dispense that node.
+  4. On Fault (jam / timeout / pellet lost), the faulted node is **halted**
+     (latched) and stops reloading; the other nodes keep free-feeding. The
+     node resumes only after an operator **Recover** (``on_recover``
+     re-dispenses it).
   5. End after ``duration`` and/or when total pellets presented reaches
      ``max_pellets``.
 
@@ -45,7 +45,7 @@ def build(
     nodes:
         Node IDs to use. Defaults to [1, 2, 3].
     reload_delay_s:
-        Seconds to wait after dome close before re-dispensing.
+        Seconds to wait after PelletTaken before re-dispensing.
     hours / minutes / seconds:
         Session duration (combined). 0 = no duration limit.
     max_pellets:
@@ -60,17 +60,27 @@ def build(
         for n in ctx.nodes:
             ctx.dispense(n)
 
-    @exp.on_catch_attempt
-    def _attempted(ctx, ev):
-        ctx.incr("retrieval_attempts")
-        ctx.log("retrieval_attempt", node=ev.node_id)
+    @exp.on_dome_opened
+    def _opened(ctx, ev):
+        ctx.incr("dome_openings")
+        ctx.log(
+            "dome_opened",
+            node=ev.node_id,
+            pellet_present=ev.data.get("pellet_present"),
+        )
 
-    @exp.on_dome_closed
+    @exp.on_pellet_taken
     def _reload(ctx, ev):
         if ctx.stop_requested:
             return
         node_id = ev.node_id
-        ctx.log("dome_closed", node=node_id)
+        ctx.incr("pellets_taken")
+        ctx.log(
+            "pellet_taken",
+            node=node_id,
+            dome_open=ev.data.get("dome_open"),
+            total=ctx.counter("pellets_taken"),
+        )
 
         def _do_reload():
             if ctx.stop_requested:
@@ -96,10 +106,10 @@ def build(
     @exp.on_fault
     def _fault(ctx, ev):
         """
-        Jam/timeout on a node = no pellet delivered. The runner has already
-        halted just this node (cancels its reload, makes its dispenses no-ops);
-        the other nodes keep free-feeding. The node stays latched until an
-        operator Recover — we only log here.
+        Jam/timeout/pellet-lost on a node = no pellet delivered. The runner has
+        already halted just this node (cancels its reload, makes its dispenses
+        no-ops); the other nodes keep free-feeding. The node stays latched until
+        an operator Recover — we only log here.
         """
         fault_code = ev.data.get("fault_code")
         ctx.log("fault", node=ev.node_id, fault_code=fault_code)
@@ -115,7 +125,8 @@ def build(
         ctx.log(
             "free_feeding_end",
             pellets=ctx.counter("pellets"),
-            retrieval_attempts=ctx.counter("retrieval_attempts"),
+            pellets_taken=ctx.counter("pellets_taken"),
+            dome_openings=ctx.counter("dome_openings"),
             elapsed_s=round(ctx.elapsed(), 3),
         )
 
