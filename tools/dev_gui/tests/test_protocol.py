@@ -1,11 +1,11 @@
-"""Tests for sfm_gui.protocol — frame encoding/decoding round-trips."""
+"""Tests for base_station.protocol — frame encoding/decoding round-trips."""
 
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from sfm_gui.protocol import (
+from base_station.protocol import (
     CanCmd,
     CanEvent,
     InputId,

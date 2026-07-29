@@ -15,7 +15,7 @@ before clicking "Start Session".
 import argparse
 import sys
 
-from sfm_gui.app import main
+from base_station.app import main
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

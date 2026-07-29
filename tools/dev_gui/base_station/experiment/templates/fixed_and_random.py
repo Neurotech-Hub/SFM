@@ -18,7 +18,7 @@ special handling needed here.
 
 Usage::
 
-    from sfm_gui.experiment.templates.fixed_and_random import build
+    from base_station.experiment.templates.fixed_and_random import build
 
     exp = build(nodes=[1, 2, 3],
                 node_roles={1: "fixed", 2: "random", 3: "off"},

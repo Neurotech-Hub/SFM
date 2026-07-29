@@ -13,7 +13,6 @@ enum class ServiceStatus : uint8_t {
     Timeout,
     Jam,
     InvalidData,
-    PelletLost,   // pellet left the plate during raise
 };
 
 // ---------------------------------------------------------------------------
@@ -21,12 +20,12 @@ enum class ServiceStatus : uint8_t {
 // ---------------------------------------------------------------------------
 enum class DispenseState : uint8_t {
     Idle = 0,
-    Lowering    = 1, // M2 down to the load sensor, then grabSteps_ past it (empty plate only)
-    Feeding     = 2, // M1 until pellet presence asserts
-    Raising     = 3, // M2 up by raiseSteps_ from the pellet-drop position
-    Presented   = 4, // Pellet at top; ends on PelletTaken → Idle
-    SeekingAway = 5, // M2 up by seekAwaySteps_ to clear the load sensor (before approach)
-    Fault       = 6, // sticky until abort()
+    Lowering    = 1, // M2 down until PG2 triggers (home / load position)
+    Feeding     = 2, // M1 feed until PG1; wait PG1 clear before raise
+    Raising     = 3, // M2 up by raiseSteps_ from home
+    Presented   = 4, // Pellet at top; waits until Recover or next Dispense
+    SeekingAway = 5, // M2 up until PG2 clears (was Taken; wire value reused)
+    Fault       = 6, // Timeout / jam; sticky until abort()
 };
 
 // ---------------------------------------------------------------------------
@@ -35,13 +34,11 @@ enum class DispenseState : uint8_t {
 // ---------------------------------------------------------------------------
 enum class DispenseEvent : uint8_t {
     None = 0,
-    PelletLoaded,     // pellet presence asserted; raise starting
-    PelletPresented,  // actuator reached top (increments pelletCount)
-    DomeOpened,       // dome lifted while Presented
-    Fault,            // Timeout / Jam / PelletLost (see faultCode())
-    DomeOpenWarning,  // dome open continuously > kDomeOpenWarnMs
-    PelletTaken,      // pellet presence cleared while Presented → Idle
-    FeedSkipped,      // Dispense with plate already occupied
+    PelletLoaded,     // PG1 drop seen; raise starts after PG1 clears
+    PelletPresented,  // Actuator reached top (also increments pelletCount)
+    CatchAttempt,     // PG3 dome open — not a confirmed take
+    Fault,            // Timeout or Jam (see DispenserService::faultCode())
+    DomeOpenWarning,  // PG3 open continuously >30 s (non-sticky warning)
 };
 
 // ---------------------------------------------------------------------------
@@ -51,7 +48,7 @@ enum class DispenseEvent : uint8_t {
 enum class CanCmd : uint8_t {
     Ping      = 0x01,
     Dispense  = 0x02,
-    Abort     = 0x03,
+    Recover   = 0x03,
     AssignId  = 0x04, // payload byte[1] = new nodeId
     SetConfig = 0x05, // payload TBD
     ReqStatus = 0x06,
@@ -63,27 +60,24 @@ enum class CanCmd : uint8_t {
 // Node -> Base on ID: 0x300 + nodeId
 // ---------------------------------------------------------------------------
 enum class CanEvent : uint8_t {
-    PelletLoaded    = 0x01, // pellet on plate; raise starting
+    PelletLoaded    = 0x01, // "Loaded" — PG1 detected; pellet in cup
     PelletPresented = 0x02,
-    DomeOpened      = 0x03, // dome lift; extra: count LE16 + pellet_present
-    Fault           = 0x04, // payload byte[1] = ServiceStatus
+    CatchAttempt    = 0x03, // was PelletTaken; dome open / catch attempt only
+    Fault           = 0x04, // payload byte[1] = ServiceStatus (Timeout/Jam)
     Pong            = 0x05,
     InputChanged    = 0x06, // payload: InputId(1), active(0/1)
-    Lowering        = 0x07, // M2 toward load position (incl. SeekingAway)
+    Lowering        = 0x07, // M2 moving toward PG2 home (incl. SeekingAway)
     Loading         = 0x08, // M1 running (Feeding state)
-    Raising         = 0x09, // M2 raising plate
-    DomeOpenWarning = 0x0A, // dome open > kDomeOpenWarnMs
-    PelletTaken     = 0x0B, // extra: count LE16 + dome_open
-    FeedSkipped     = 0x0C, // plate occupied on Dispense; lower/feed skipped
+    Raising         = 0x09, // M2 raising pallet after load
+    DomeOpenWarning = 0x0A, // PG3 open >30 s (warning, not sticky Fault)
 };
 
 // Input IDs carried by CanEvent::InputChanged.
-// Wire values: 1 = pellet sensor, 2 = load position, 3 = dome, 4 = animal presence.
 enum class InputId : uint8_t {
-    PG1      = 0x01, // pellet presence on plate
-    PG2      = 0x02, // load position
-    PG3      = 0x03, // dome open
-    Presence = 0x04, // animal presence detection sensor
+    PG1      = 0x01,
+    PG2      = 0x02,
+    PG3      = 0x03,
+    Presence = 0x04,
 };
 
 // ---------------------------------------------------------------------------

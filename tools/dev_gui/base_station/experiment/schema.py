@@ -117,7 +117,7 @@ def resolve_builder(template: str) -> BuilderFn:
     Resolve a template name to a ``build(**kwargs) -> Experiment`` callable.
 
     Looks up builtins first (``free_feeding``), then
-    ``sfm_gui.experiment.templates.<name>.build``.
+    ``base_station.experiment.templates.<name>.build``.
     """
     from .templates import free_feeding as free_feeding_build
     from .templates import fixed_and_random as fixed_and_random_build
@@ -131,7 +131,7 @@ def resolve_builder(template: str) -> BuilderFn:
     if template in builtins:
         return builtins[template]
 
-    mod = importlib.import_module(f"sfm_gui.experiment.templates.{template}")
+    mod = importlib.import_module(f"base_station.experiment.templates.{template}")
     if not hasattr(mod, "build") or not callable(mod.build):
         raise ImportError(f"Template '{template}' has no build() factory")
     return mod.build

@@ -14,7 +14,7 @@ on ``bnc_channel`` (0 = first BNC input, 1 = second).
 
 Usage::
 
-    from sfm_gui.experiment.templates.probability_delivery import build
+    from base_station.experiment.templates.probability_delivery import build
 
     exp = build(nodes=[1, 2, 3], probabilities="20,30,50",
                 trigger="timer", interval_s=10.0)

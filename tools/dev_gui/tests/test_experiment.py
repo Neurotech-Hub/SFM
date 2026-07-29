@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sfm_gui.experiment import EventKind, Experiment, ExperimentContext, NodeEvent
-from sfm_gui.experiment.events import EventNormalizer
-from sfm_gui.experiment.templates.fixed_and_random import build as build_fixed_and_random
-from sfm_gui.experiment.templates.free_feeding import build as build_free_feeding
-from sfm_gui.experiment.templates.probability_delivery import (
+from base_station.experiment import EventKind, Experiment, ExperimentContext, NodeEvent
+from base_station.experiment.events import EventNormalizer
+from base_station.experiment.templates.fixed_and_random import build as build_fixed_and_random
+from base_station.experiment.templates.free_feeding import build as build_free_feeding
+from base_station.experiment.templates.probability_delivery import (
     build as build_probability_delivery,
 )
-from sfm_gui.protocol import (
+from base_station.protocol import (
     CanCmd,
     CanEvent,
     DispenseState,
@@ -664,9 +664,9 @@ def test_wire_bnc_false_skips_io_callbacks() -> None:
 
 
 def test_controller_step_and_on_log() -> None:
-    from sfm_gui.experiment.gui_controller import ExperimentController
-    from sfm_gui.experiment.schema import load_experiment_def, DEFAULT_EXPERIMENTS_DIR
-    from sfm_gui.log_manager import LogManager
+    from base_station.experiment.gui_controller import ExperimentController
+    from base_station.experiment.schema import load_experiment_def, DEFAULT_EXPERIMENTS_DIR
+    from base_station.log_manager import LogManager
 
     ff = load_experiment_def(DEFAULT_EXPERIMENTS_DIR / "free_feeding.json")
     log = LogManager(auto_save=False)
@@ -686,3 +686,40 @@ def test_controller_step_and_on_log() -> None:
     exp_rows = [e for e in log.all_entries() if e.frame_type == "EXPERIMENT"]
     assert any(e.event_name == "session_start" for e in exp_rows)
     assert any(e.event_name == "pellet_presented" for e in exp_rows)
+
+
+def test_experiment_commands_appear_under_command_filter() -> None:
+    """
+    Dispense/Recover commands issued by a running experiment must show up as
+    frame_type='COMMAND' rows (same as a manually-clicked button), so filtering
+    the event log by 'COMMAND' shows every command regardless of origin — not
+    hidden away under a generic 'EXPERIMENT' bucket.
+    """
+    from base_station.experiment.gui_controller import ExperimentController
+    from base_station.experiment.schema import load_experiment_def, DEFAULT_EXPERIMENTS_DIR
+    from base_station.log_manager import LogManager
+
+    ff = load_experiment_def(DEFAULT_EXPERIMENTS_DIR / "free_feeding.json")
+    log = LogManager(auto_save=False)
+    ctrl = ExperimentController()
+    assert ctrl.start(
+        ff,
+        params={"reload_delay_s": 0, "minutes": 0, "max_pellets": 0},
+        nodes=[3],
+        log=log,
+    )
+    assert ctrl.is_running
+    ctrl.step(messages=[], now=0.0)  # let on_start's initial dispense flush through
+
+    command_rows = [e for e in log.all_entries() if e.frame_type == "COMMAND"]
+    assert len(command_rows) == 1
+    row = command_rows[0]
+    assert row.event_name == "Dispense"
+    assert row.node_id == 3
+    assert row.raw_id == 0x103
+    assert row.raw_data == bytes([CanCmd.Dispense.value])
+    assert row.direction == "TX"
+
+    # It must NOT also appear as a generic EXPERIMENT row (no duplication).
+    exp_rows = [e for e in log.all_entries() if e.frame_type == "EXPERIMENT"]
+    assert not any(e.event_name == "command" for e in exp_rows)

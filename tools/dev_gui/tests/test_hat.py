@@ -34,10 +34,10 @@ import time
 from pathlib import Path
 
 # Allow running this script directly (`python tests/test_hat.py`) without
-# installing the sfm_gui package.
+# installing the base_station package.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sfm_gui.io_manager import IOManager  # noqa: E402
+from base_station.io_manager import IOManager  # noqa: E402
 
 RESULTS: list[tuple[str, bool]] = []
 

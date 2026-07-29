@@ -2,14 +2,14 @@ import argparse
 
 import pytest
 
-from sfm_gui.protocol import CanCmd
+from base_station.protocol import CanCmd
 
 
 def test_command_purpose_covers_all_cmds() -> None:
     # Import COMMAND_PURPOSE without requiring a full DearPyGui session beyond
     # the module import (dearpygui must be installed for app.py).
     try:
-        from sfm_gui.app import COMMAND_PURPOSE
+        from base_station.app import COMMAND_PURPOSE
     except ModuleNotFoundError as exc:
         if "dearpygui" in str(exc).lower():
             pytest.skip("dearpygui not installed")
@@ -21,7 +21,7 @@ def test_command_purpose_covers_all_cmds() -> None:
 
 def test_render_callback_wrapper_reschedules_itself(monkeypatch) -> None:
     try:
-        from sfm_gui.app import SFMApp
+        from base_station.app import SFMApp
     except ModuleNotFoundError as exc:
         if "dearpygui" in str(exc).lower():
             pytest.skip("dearpygui not installed")
@@ -33,9 +33,9 @@ def test_render_callback_wrapper_reschedules_itself(monkeypatch) -> None:
 
     calls = []
     monkeypatch.setattr(app, "_on_render", lambda: calls.append("render"))
-    monkeypatch.setattr("sfm_gui.app.dpg.get_frame_count", lambda: 7)
+    monkeypatch.setattr("base_station.app.dpg.get_frame_count", lambda: 7)
     scheduled = []
-    monkeypatch.setattr("sfm_gui.app.dpg.set_frame_callback", lambda frame, cb: scheduled.append((frame, cb)))
+    monkeypatch.setattr("base_station.app.dpg.set_frame_callback", lambda frame, cb: scheduled.append((frame, cb)))
 
     callback = app._make_render_callback()
     callback()

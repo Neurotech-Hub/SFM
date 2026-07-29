@@ -10,31 +10,21 @@ namespace vfm {
 // ---------------------------------------------------------------------------
 // Tunable defaults (override before begin() via setters)
 // ---------------------------------------------------------------------------
-// 28BYJ-48 half-step ≈ 4096 steps/rev.
-// The load sensor (PG2) is not the drop height: M2 descends kDefaultGrabSteps
-// further before M1 turns, and the raise is measured from that drop position.
+// 28BYJ-48 half-step ≈ 4096 steps/rev. Raise ~700 is the current bench default.
 constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
-// M1 runs at half the commanded speed: a slower wheel drops one pellet at a
-// time and gives the plate time to settle before the load confirm window.
-constexpr float    kDefaultFeedSpeedScale  = 0.5f;   // M1 speed = motorSpeed_ * this
-// Approach budget. Worst case is an approach that starts from a seek-away taken
-// at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
-// kDefaultSeekAwaySteps ≈ 1900 steps. 2048 left almost no margin for that path.
-constexpr long     kDefaultLowerSteps      = 3072;   // max approach budget toward PG2
-constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up to clear PG2 before approach
-constexpr long     kDefaultGrabSteps       = 320;    // M2 down past PG2 to the drop position
-constexpr long     kDefaultRaiseSteps      = 1420;   // M2 up travel from the drop position
+constexpr long     kDefaultLowerSteps      = 2048;   // max seek-away / approach budget
+constexpr long     kDefaultRaiseSteps      = 700;    // M2 up travel from PG2 home
 constexpr long     kDefaultFeedMaxSteps    = 4096;   // M1 max steps before timeout
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
 constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)
 constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)
-constexpr uint32_t kSensorDebounceMs       = 20;
-// Delivery / jam / warning timers
-constexpr uint32_t kPelletLoadConfirmMs    = 2000;   // presence held during feed → PelletLoaded
-constexpr uint32_t kPelletTakenConfirmMs   = 200;    // presence clear → PelletTaken
-constexpr uint32_t kPelletLostMs           = 500;    // presence clear during raise → PelletLost
-constexpr uint32_t kLoadClearOnRaiseMs     = 5000;   // load sensor must clear after raise start
-constexpr uint32_t kDomeOpenWarnMs         = 30000;  // dome open → DomeOpenWarning
+constexpr uint32_t kPGDebounceMs           = 20;
+// After a PG3 trigger edge, suppress further PG3 event-log edges for this long.
+constexpr uint32_t kPg3EventBlankMs        = 3000;
+// Jam / warning timers
+constexpr uint32_t kPg1JamMs               = 3000;   // PG1 held after drop → Jam
+constexpr uint32_t kPg2ClearOnRaiseMs      = 5000;   // PG2 must clear after raise start
+constexpr uint32_t kDomeOpenWarnMs         = 30000;  // PG3 open → DomeOpenWarning
 
 // ---------------------------------------------------------------------------
 class DispenserService {
@@ -44,89 +34,81 @@ public:
     ServiceStatus begin();
     void update();
 
-    // Start a dispense cycle from Idle or Presented.
-    // Occupancy is checked first: occupied → FeedSkipped (+ raise if needed).
+    // Start a dispense cycle from Idle or Presented (B2: new Dispense ends
+    // the presented wait). Returns false if busy in motion / Fault.
     bool dispense();
 
-    // Abort any phase, de-energise, return to Idle. Clears sticky Fault.
+    // Abort any phase (including Presented), de-energise, return to Idle.
+    // Also clears sticky Fault.
     void abort();
 
     DispenseState state() const { return state_; }
     uint32_t      pelletCount() const { return pelletCount_; }
-    uint32_t      takenCount() const { return takenCount_; }
     DispenseEvent takeEvent();
 
+    // Sticky fault code while in Fault state (Timeout / Jam); Ok otherwise.
     ServiceStatus faultCode() const { return lastFault_; }
 
-    // Context latched with the last DomeOpened / PelletTaken event.
-    bool lastDomeOpenedWithPellet() const { return lastDomeOpenedWithPellet_; }
-    bool lastTakenWithDomeOpen() const { return lastTakenWithDomeOpen_; }
-
-    // Sensors: PG1/PG2 beam break = pin LOW. PG3 dome open = pin HIGH.
-    bool pg1() const { return pg1State_; } // pellet present on plate
-    bool pg2() const { return pg2State_; } // at load position
+    // Photogate logical state (true = triggered for that gate's role)
+    // PG1/PG2: beam break = pin LOW. PG3: dome open = pin HIGH (idle LOW).
+    bool pg1() const { return pg1State_; } // pellet in cup / drop detect
+    bool pg2() const { return pg2State_; } // actuator at home / down
     bool pg3() const { return pg3State_; } // dome open
+
+    // True while PG3 event edges are suppressed (CatchAttempt / InputChanged).
+    // Blank starts after a completed high→low cycle. Edge latches are frozen
+    // during blank so a high that begins late in the window still fires once after.
+    bool pg3EventBlanked() const {
+        return pg3BlankUntilMs_ != 0 && (int32_t)(millis() - pg3BlankUntilMs_) < 0;
+    }
+
+    void blankPg3Events() {
+        pg3BlankUntilMs_ = millis() + kPg3EventBlankMs;
+    }
 
     void setMotorSpeed(float stepsPerSec) {
         motorSpeed_ = stepsPerSec;
+        // Keep maxSpeed above commanded speed for AccelStepper
         motor1_.setMaxSpeed(motorSpeed_ * 2.0f);
         motor2_.setMaxSpeed(motorSpeed_ * 2.0f);
     }
-    void setFeedSpeedScale(float scale)       { feedSpeedScale_ = scale; }
     void setLowerSteps(long steps)            { lowerSteps_ = steps; }
-    void setSeekAwaySteps(long steps)         { seekAwaySteps_ = steps; }
-    void setGrabSteps(long steps)             { grabSteps_ = steps; }
     void setRaiseSteps(long steps)            { raiseSteps_ = steps; }
     void setFeedMaxSteps(long steps)          { feedMaxSteps_ = steps; }
     void setLowerTimeoutMs(uint32_t ms)       { lowerTimeoutMs_ = ms; }
     void setFeedTimeoutMs(uint32_t ms)        { feedTimeoutMs_ = ms; }
     void setRaiseTimeoutMs(uint32_t ms)       { raiseTimeoutMs_ = ms; }
 
+    // Deprecated alias: sets all three phase timeouts to the same value.
     void setMotionTimeoutMs(uint32_t ms) {
         lowerTimeoutMs_ = feedTimeoutMs_ = raiseTimeoutMs_ = ms;
     }
 
 private:
-    AccelStepper motor1_;
-    AccelStepper motor2_;
+    AccelStepper motor1_; // Pellet feeder (M1)
+    AccelStepper motor2_; // Actuator / elevator (M2)
 
+    // State machine
     DispenseState state_;
     DispenseEvent pendingEvent_;
     uint32_t      pelletCount_;
-    uint32_t      takenCount_;
     ServiceStatus lastFault_;
 
     uint32_t motionStartMs_;
     long     motor2Target_;
-    bool     pg3WasOpen_;
-    bool     grabPhase_; // Lowering sub-phase: descending past PG2 to the drop position
+    bool     pg3WasOpen_;       // edge detect for CatchAttempt / blanking
+    uint32_t pg3BlankUntilMs_;  // millis() deadline; 0 = not blanking
 
-    // M2 travel is measured against the position latched at each phase start,
-    // never by re-zeroing the stepper mid-motion: AccelStepper derives the coil
-    // pattern from currentPosition() & 0x7, so setCurrentPosition() on a moving
-    // motor jumps the commutation phase and the actuator loses steps.
-    long     phaseStartPos_; // M2 position at the start of the current phase
-    long     feedStartPos_;  // M1 position at the start of the feed
+    // Jam / warning timers
+    uint32_t pg1OnSinceMs_;     // when PG1 became true; 0 = currently clear
+    uint32_t raiseStartMs_;     // when Raising began (for PG2 clear check)
+    uint32_t pg3OpenSinceMs_;   // when PG3 became true; 0 = currently closed
+    bool     domeWarnLatched_;  // one-shot DomeOpenWarning per open bout
+    bool     pelletDropLatched_; // Feeding: PG1 seen; wait clear before raise
 
-    // True when the actuator is at or below the load sensor, where a downward
-    // approach can never find PG2. PG2 itself cannot answer this: at the drop
-    // position the flag has already passed out of the beam and reads clear.
-    bool     belowLoad_;
-    bool     approachRetried_; // one seek-away retry per dispense cycle
-
-    uint32_t raiseStartMs_;
-    uint32_t pg3OpenSinceMs_;
-    uint32_t pelletClearSinceMs_; // presence clear timer (raise or presented)
-    uint32_t pelletSeenSinceMs_;  // presence held timer during the feed (0 = not seen)
-    bool     domeWarnLatched_;
-    bool     lastDomeOpenedWithPellet_;
-    bool     lastTakenWithDomeOpen_;
-
+    // Tuning
     float    motorSpeed_;
-    float    feedSpeedScale_;
     long     lowerSteps_;
-    long     seekAwaySteps_;
-    long     grabSteps_;
     long     raiseSteps_;
     long     feedMaxSteps_;
     uint32_t lowerTimeoutMs_;
@@ -138,20 +120,20 @@ private:
     uint32_t pg1LastChangeMs_, pg2LastChangeMs_, pg3LastChangeMs_;
 
     void updatePhotogates();
+    void checkPg1Jam();
     void checkDomeOpenWarning();
     void setState(DispenseState next);
     void setEvent(DispenseEvent ev);
-    void haltMotors();
+    void haltMotors();              // setSpeed(0) + disableOutputs — never stop()
     void faultNow(ServiceStatus code);
     bool phaseTimedOut(uint32_t timeoutMs) const;
 
-    void startSeekAwayFromPg2();
-    void startApproachPg2();
-    void startGrabDescent();
-    void startRaise(long steps);
+    // M2 direction: forward (positive speed) = UP, reverse (negative) = DOWN
+    void startSeekAwayFromPg2();  // up until PG2 clears
+    void startApproachPg2();      // down until PG2 triggers
+    void startRaise();
     void startFeed();
-    void beginLoweringPhase();
-    void beginOccupiedDispense();
+    void beginLoweringPhase();    // enter SeekingAway or Lowering from dispense()
 };
 
 } // namespace vfm

@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sfm_gui.experiment.schema import (
+from base_station.experiment.schema import (
     DEFAULT_EXPERIMENTS_DIR,
     ExperimentDef,
     ExperimentParam,

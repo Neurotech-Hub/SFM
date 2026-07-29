@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from ..log_manager import LogEntry, LogManager
+from ..protocol import CAN_CMD_PURPOSE, CanCmd
 from .context import ExperimentLogEntry
 from .runner import ExperimentRunner
 from .schema import ExperimentDef, build_experiment
@@ -158,6 +159,9 @@ class ExperimentController:
     def _on_experiment_log(self, entry: ExperimentLogEntry) -> None:
         if self._gui_log is None:
             return
+        if entry.name == "command":
+            self._gui_log.add(self._command_log_entry(entry))
+            return
         field_str = " ".join(f"{k}={v}" for k, v in entry.fields.items())
         self._gui_log.add(
             LogEntry(
@@ -170,4 +174,33 @@ class ExperimentController:
                 raw_data=b"",
                 details=field_str,
             )
+        )
+
+    def _command_log_entry(self, entry: ExperimentLogEntry) -> LogEntry:
+        """
+        Render an experiment-issued CAN command (dispense/recover/...) as a
+        COMMAND-type row identical in shape to a manually-issued command, so
+        it appears under the log's COMMAND filter regardless of whether a
+        human clicked a button or a running experiment triggered it.
+        """
+        cmd_name = str(entry.fields.get("cmd", ""))
+        try:
+            cmd = CanCmd[cmd_name]
+        except KeyError:
+            cmd = None
+        payload_hex = entry.fields.get("payload_hex") or ""
+        payload = bytes.fromhex(payload_hex) if payload_hex else b""
+        node_id = entry.node_id
+        broadcast = node_id == 0
+        purpose = CAN_CMD_PURPOSE.get(cmd, cmd_name) if cmd is not None else cmd_name
+        exp_label = self._exp_def.label if self._exp_def else "experiment"
+        return LogEntry(
+            timestamp=entry.timestamp,
+            direction="TX",
+            node_id=node_id,
+            frame_type="COMMAND",
+            event_name=f"{cmd_name} (broadcast)" if broadcast else cmd_name,
+            raw_id=0x100 if broadcast else (0x100 + node_id),
+            raw_data=(bytes([cmd.value]) if cmd is not None else b"") + payload,
+            details=f"{purpose} — {exp_label}",
         )

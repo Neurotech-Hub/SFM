@@ -5,9 +5,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from sfm_gui.discovery_manager import DiscoveryManager
-from sfm_gui.mac_id_registry import MacIdRegistry
-from sfm_gui.protocol import CAN_ID_ANNOUNCE, CAN_ID_ACK, CAN_ID_REJOIN
+from base_station.discovery_manager import DiscoveryManager
+from base_station.mac_id_registry import MacIdRegistry
+from base_station.protocol import CAN_ID_ANNOUNCE, CAN_ID_ACK, CAN_ID_REJOIN
 
 
 MAC_A = bytes.fromhex("AABBCCDDEE01")

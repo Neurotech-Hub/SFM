@@ -1,4 +1,4 @@
-"""Tests for sfm_gui.node_registry."""
+"""Tests for base_station.node_registry."""
 
 import sys
 import os
@@ -6,8 +6,8 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from sfm_gui.node_registry import NodeRegistry, NodeState
-from sfm_gui.protocol import (
+from base_station.node_registry import NodeRegistry, NodeState
+from base_station.protocol import (
     CanEvent,
     InputId,
     DispenseState,
