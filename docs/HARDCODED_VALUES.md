@@ -35,11 +35,12 @@ Defined in `src/services/DispenserService.h`. Overridable before `begin()` via s
 | 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed (M1/M2)   |
 | 2048 steps  | `kDefaultLowerSteps`     | Max seek-away / approach budget for M2 |
 | 700 steps   | `kDefaultRaiseSteps`     | M2 up travel from PG2 home             |
-| 4096 steps  | `kDefaultFeedMaxSteps`   | M1 max steps before feed timeout path  |
+| 500 steps   | `kDefaultFeedBurstSteps` | M1 steps per feed burst (then pauses)  |
+| 1 s         | `kDefaultFeedBurstPauseMs` | Pause after each feed burst (drop settle) |
 | 8 s         | `kDefaultLowerTimeoutMs` | M2 lower / seek-away phase timeout     |
-| 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout                 |
+| 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout (overall Feeding budget) |
 | 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                 |
-| 20 ms       | `kPGDebounceMs`          | Photogate debounce (PG1/PG2/PG3)       |
+| 100 ms      | `kPGDebounceMs`          | Photogate debounce (PG1/PG2/PG3)       |
 
 
 Not overrideable via SetConfig CAN yet — only compile-time / setter before begin.

@@ -16,7 +16,7 @@ Each node has three optical sensors, named for the job they do.
 | **Dome sensor**          | GPIO44 | pin HIGH (idle LOW)   | The dome is lifted. The dome is spring-returned, so every access is a clean lift-and-release bout                      |
 
 
-All three are debounced in firmware by `kSensorDebounceMs` before any logic or reporting acts on them.
+All three are debounced in firmware by `kPGDebounceMs` (100 ms) before any logic or reporting acts on them.
 
 Two of them are mirrored live on the board LEDs so a bench operator can read the sensors without a serial
 monitor: **LED 10 = pellet sensor**, **LED 9 = dome sensor**, lit when asserted. Both follow the debounced

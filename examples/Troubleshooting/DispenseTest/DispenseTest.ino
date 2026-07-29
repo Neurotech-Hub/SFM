@@ -18,7 +18,6 @@
 static constexpr float    kMotorSpeed    = 500.0f;
 static constexpr long     kLowerSteps    = 2048;
 static constexpr long     kRaiseSteps    = 700;
-static constexpr long     kFeedMaxSteps  = 4096;
 static constexpr uint32_t kFeedTimeoutMs = 30000;
 
 vfm::DispenserService dispenser;
@@ -135,7 +134,6 @@ void setup() {
     dispenser.setMotorSpeed(kMotorSpeed);
     dispenser.setLowerSteps(kLowerSteps);
     dispenser.setRaiseSteps(kRaiseSteps);
-    dispenser.setFeedMaxSteps(kFeedMaxSteps);
     dispenser.setFeedTimeoutMs(kFeedTimeoutMs);
 
     if (dispenser.begin() != vfm::ServiceStatus::Ok) {

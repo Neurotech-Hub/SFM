@@ -17,7 +17,7 @@
 
 using namespace vfm;
 
-static constexpr uint32_t kDebounceMs = 20;
+static constexpr uint32_t kDebounceMs = 100;
 static constexpr uint32_t kBannerMs   = 5000;
 static constexpr uint32_t kMonitorMs  = 200;
 

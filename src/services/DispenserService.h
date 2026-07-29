@@ -14,11 +14,12 @@ namespace vfm {
 constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
 constexpr long     kDefaultLowerSteps      = 2048;   // max seek-away / approach budget
 constexpr long     kDefaultRaiseSteps      = 700;    // M2 up travel from PG2 home
-constexpr long     kDefaultFeedMaxSteps    = 4096;   // M1 max steps before timeout
+constexpr long     kDefaultFeedBurstSteps  = 500;    // M1 steps per feed burst
+constexpr uint32_t kDefaultFeedBurstPauseMs = 1000;  // pause after each burst (let pellet drop / PG1 settle)
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
 constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)
 constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)
-constexpr uint32_t kPGDebounceMs           = 20;
+constexpr uint32_t kPGDebounceMs           = 100;
 // After a PG3 trigger edge, suppress further PG3 event-log edges for this long.
 constexpr uint32_t kPg3EventBlankMs        = 3000;
 // Jam / warning timers
@@ -74,7 +75,8 @@ public:
     }
     void setLowerSteps(long steps)            { lowerSteps_ = steps; }
     void setRaiseSteps(long steps)            { raiseSteps_ = steps; }
-    void setFeedMaxSteps(long steps)          { feedMaxSteps_ = steps; }
+    void setFeedBurstSteps(long steps)        { feedBurstSteps_ = steps; }
+    void setFeedBurstPauseMs(uint32_t ms)     { feedBurstPauseMs_ = ms; }
     void setLowerTimeoutMs(uint32_t ms)       { lowerTimeoutMs_ = ms; }
     void setFeedTimeoutMs(uint32_t ms)        { feedTimeoutMs_ = ms; }
     void setRaiseTimeoutMs(uint32_t ms)       { raiseTimeoutMs_ = ms; }
@@ -106,11 +108,17 @@ private:
     bool     domeWarnLatched_;  // one-shot DomeOpenWarning per open bout
     bool     pelletDropLatched_; // Feeding: PG1 seen; wait clear before raise
 
+    // Feeding burst/pause tracking
+    bool     feedPausing_;      // true while M1 is paused between bursts
+    long     feedBurstStartPos_; // motor1 position at the start of the current burst
+    uint32_t feedPauseUntilMs_;  // millis() deadline when the current pause ends
+
     // Tuning
     float    motorSpeed_;
     long     lowerSteps_;
     long     raiseSteps_;
-    long     feedMaxSteps_;
+    long     feedBurstSteps_;
+    uint32_t feedBurstPauseMs_;
     uint32_t lowerTimeoutMs_;
     uint32_t feedTimeoutMs_;
     uint32_t raiseTimeoutMs_;

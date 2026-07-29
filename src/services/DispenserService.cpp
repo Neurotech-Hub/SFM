@@ -25,10 +25,14 @@ DispenserService::DispenserService()
       pg3OpenSinceMs_(0),
       domeWarnLatched_(false),
       pelletDropLatched_(false),
+      feedPausing_(false),
+      feedBurstStartPos_(0),
+      feedPauseUntilMs_(0),
       motorSpeed_(kDefaultMotorSpeed),
       lowerSteps_(kDefaultLowerSteps),
       raiseSteps_(kDefaultRaiseSteps),
-      feedMaxSteps_(kDefaultFeedMaxSteps),
+      feedBurstSteps_(kDefaultFeedBurstSteps),
+      feedBurstPauseMs_(kDefaultFeedBurstPauseMs),
       lowerTimeoutMs_(kDefaultLowerTimeoutMs),
       feedTimeoutMs_(kDefaultFeedTimeoutMs),
       raiseTimeoutMs_(kDefaultRaiseTimeoutMs),
@@ -108,8 +112,7 @@ void DispenserService::update() {
             break;
 
         case DispenseState::Feeding:
-            if (phaseTimedOut(feedTimeoutMs_) ||
-                (labs(motor1_.currentPosition()) >= feedMaxSteps_)) {
+            if (phaseTimedOut(feedTimeoutMs_)) {
                 faultNow(ServiceStatus::Timeout);
                 break;
             }
@@ -119,6 +122,19 @@ void DispenserService::update() {
                     haltMotors();
                     setEvent(DispenseEvent::PelletLoaded);
                     pelletDropLatched_ = true;
+                } else if (feedPausing_) {
+                    // Between bursts: let the pellet drop and PG1 settle before
+                    // running M1 again, so a continuous run can't feed two.
+                    if ((int32_t)(millis() - feedPauseUntilMs_) >= 0) {
+                        feedPausing_ = false;
+                        feedBurstStartPos_ = motor1_.currentPosition();
+                        motor1_.enableOutputs();
+                        motor1_.setSpeed(motorSpeed_);
+                    }
+                } else if (labs(motor1_.currentPosition() - feedBurstStartPos_) >= feedBurstSteps_) {
+                    haltMotors();
+                    feedPausing_ = true;
+                    feedPauseUntilMs_ = millis() + feedBurstPauseMs_;
                 } else {
                     motor1_.runSpeed();
                 }
@@ -218,6 +234,9 @@ void DispenserService::startFeed() {
     motor1_.setCurrentPosition(0);
     motionStartMs_ = millis();
     pelletDropLatched_ = false;
+    feedPausing_ = false;
+    feedBurstStartPos_ = 0;
+    feedPauseUntilMs_ = 0;
     motor1_.setSpeed(motorSpeed_);
 }
 
