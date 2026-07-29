@@ -221,9 +221,9 @@ void VFM::update() {
 
 
 
-    // Once discovery completes, turn status / LED 9 off — unless a Ping
-    // blink is currently active, which takes precedence so the node stays
-    // visually identifiable for its full blink duration.
+    // Once discovery completes, turn the status LED off — unless a Ping blink is
+    // currently active, which takes precedence so the node stays visually
+    // identifiable for its full blink duration.
 
     if (identity_.isEnabled() && !pingBlinkActive_) {
 
@@ -231,11 +231,11 @@ void VFM::update() {
 
         leds_.setStatusLed(false);
 
-        leds_.setLed9BlinkMs(0);
-
-        leds_.setLed9(false);
-
     }
+
+
+
+    updateSensorLeds();
 
 
 
@@ -542,6 +542,30 @@ void VFM::updatePingBlink() {
         pingBlinkUntilMs_ = 0;
         leds_.setStatusLedBlinkMs(0);
         leds_.setStatusLed(false);
+    }
+
+}
+
+
+
+// Live sensor mirrors: LED 10 = pellet present, LED 9 = dome open. Lit means
+// asserted. Both read the debounced states from DispenserService, so the LEDs
+// show what the firmware acts on rather than the raw pin.
+//
+// LED 10 has no other owner and mirrors unconditionally. LED 9 is shared with
+// the boot / discovery blink and the button-hold warning, which keep it until
+// discovery is done and no hold is armed.
+
+void VFM::updateSensorLeds() {
+
+    leds_.setLed10(dispenser_.pg1());
+
+    if (identity_.isEnabled() && !btnArmed_) {
+
+        leds_.setLed9BlinkMs(0);
+
+        leds_.setLed9(dispenser_.pg3());
+
     }
 
 }

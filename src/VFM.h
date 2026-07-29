@@ -102,6 +102,7 @@ private:
     void updatePresence();
     void updateButton();
     void updatePingBlink();
+    void updateSensorLeds();          // LED 9 = dome open, LED 10 = pellet present
     void flashLedsClear();            // visual confirmation of NVS clear
 };
 

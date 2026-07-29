@@ -28,10 +28,12 @@ DispenserService::DispenserService()
       raiseStartMs_(0),
       pg3OpenSinceMs_(0),
       pelletClearSinceMs_(0),
+      pelletSeenSinceMs_(0),
       domeWarnLatched_(false),
       lastDomeOpenedWithPellet_(false),
       lastTakenWithDomeOpen_(false),
       motorSpeed_(kDefaultMotorSpeed),
+      feedSpeedScale_(kDefaultFeedSpeedScale),
       lowerSteps_(kDefaultLowerSteps),
       seekAwaySteps_(kDefaultSeekAwaySteps),
       grabSteps_(kDefaultGrabSteps),
@@ -65,6 +67,7 @@ ServiceStatus DispenserService::begin() {
     pg3WasOpen_ = pg3State_;
     pg3OpenSinceMs_ = pg3State_ ? now : 0;
     pelletClearSinceMs_ = 0;
+    pelletSeenSinceMs_ = 0;
     domeWarnLatched_ = false;
     grabPhase_ = false;
     approachRetried_ = false;
@@ -154,11 +157,29 @@ void DispenserService::update() {
                 break;
             }
             if (pg1State_) {
-                haltMotors();
-                setEvent(DispenseEvent::PelletLoaded);
-                startRaise(raiseSteps_); // from the drop position
-                setState(DispenseState::Raising);
+                if (pelletSeenSinceMs_ == 0) {
+                    // First sighting. Stop the wheel immediately so it cannot
+                    // follow with a second pellet, then hold and confirm.
+                    pelletSeenSinceMs_ = millis();
+                    motor1_.setSpeed(0);
+                    motor1_.disableOutputs();
+                } else if ((millis() - pelletSeenSinceMs_) >= kPelletLoadConfirmMs) {
+                    // Held for the full window: a pellet is genuinely on the plate,
+                    // not a fragment tumbling past the beam.
+                    haltMotors();
+                    pelletSeenSinceMs_ = 0;
+                    setEvent(DispenseEvent::PelletLoaded);
+                    startRaise(raiseSteps_); // from the drop position
+                    setState(DispenseState::Raising);
+                }
             } else {
+                if (pelletSeenSinceMs_ != 0) {
+                    // The sighting did not hold — nothing settled on the plate.
+                    // Re-energise and keep feeding within the same budget.
+                    pelletSeenSinceMs_ = 0;
+                    motor1_.enableOutputs();
+                    motor1_.setSpeed(motorSpeed_ * feedSpeedScale_);
+                }
                 motor1_.runSpeed();
             }
             break;
@@ -265,6 +286,7 @@ void DispenserService::abort() {
     haltMotors();
     lastFault_ = ServiceStatus::Ok;
     pelletClearSinceMs_ = 0;
+    pelletSeenSinceMs_ = 0;
     grabPhase_ = false;
     setState(DispenseState::Idle);
 }
@@ -320,7 +342,8 @@ void DispenserService::startFeed() {
     motor1_.enableOutputs();
     feedStartPos_ = motor1_.currentPosition();
     motionStartMs_ = millis();
-    motor1_.setSpeed(motorSpeed_);
+    pelletSeenSinceMs_ = 0;
+    motor1_.setSpeed(motorSpeed_ * feedSpeedScale_);
 }
 
 void DispenserService::startRaise(long steps) {
@@ -384,6 +407,7 @@ void DispenserService::haltMotors() {
 void DispenserService::faultNow(ServiceStatus code) {
     haltMotors();
     grabPhase_ = false;
+    pelletSeenSinceMs_ = 0;
     lastFault_ = code;
     setEvent(DispenseEvent::Fault);
     setState(DispenseState::Fault);

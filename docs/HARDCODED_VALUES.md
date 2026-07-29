@@ -16,6 +16,8 @@ These are the ones called out most often during bring-up.
 | Value         | Constant                | Location             | Notes                                                                                   |
 | ------------- | ----------------------- | -------------------- | --------------------------------------------------------------------------------------- |
 | **200 ms**    | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while presented → `PelletTaken`. Set from bench data: too short and a reach-in flicker counts as a take |
+| **2 s**       | `kPelletLoadConfirmMs`  | `DispenserService.h` | Pellet sensor held this long during the feed → `PelletLoaded`. M1 stops on the first sighting and holds; if the beam clears before the window elapses the wheel resumes. Rejects a fragment tumbling past the beam |
+| **0.5×**      | `kDefaultFeedSpeedScale`| `DispenserService.h` | M1 runs at this fraction of `motorSpeed_` — half speed, so the wheel drops one pellet at a time |
 | **30 s**      | `kDomeOpenWarnMs`       | `DispenserService.h` | Dome held open continuously → `DomeOpenWarning` (non-sticky)                             |
 | **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
 | **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
@@ -39,7 +41,8 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 
 | Value       | Constant                 | Meaning                                |
 | ----------- | ------------------------ | -------------------------------------- |
-| 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed (M1/M2)      |
+| 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed; M2 runs at this, M1 at `× kDefaultFeedSpeedScale` |
+| 0.5×        | `kDefaultFeedSpeedScale` | M1 feed speed as a fraction of `motorSpeed_`. Kept as a scale, not an absolute, so `setMotorSpeed()` and the bench `+`/`-` keys move both motors together |
 | 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 1900 steps. Exhausting it is not a fault on the first try: the approach backs off by one seek-away and re-approaches, and only faults if that also fails |
 | 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel to clear the load sensor (fixed, not sensor-gated) |
 | 320 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
@@ -64,6 +67,7 @@ Same header; **not** runtime-configurable via CAN today.
 
 | Value  | Constant                | Trigger                                                              |
 | ------ | ----------------------- | -------------------------------------------------------------------- |
+| 2 s    | `kPelletLoadConfirmMs`  | Pellet sensor held during the feed → `PelletLoaded`, raise starts    |
 | 200 ms | `kPelletTakenConfirmMs` | Pellet sensor clear while presented → `PelletTaken`, cycle completes |
 | 500 ms | `kPelletLostMs`         | Pellet sensor clear during the raise → Fault/`PelletLost`            |
 | 5 s    | `kLoadClearOnRaiseMs`   | Load position sensor still blocked after raise start → Jam           |
@@ -98,6 +102,8 @@ Same header; **not** runtime-configurable via CAN today.
 | 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                         |
 | 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                          |
 | 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                  |
+| —              | LED9 after discovery                  | Live dome mirror: lit = dome open. Yields to the button-hold blink            |
+| —              | LED10                                 | Live pellet mirror: lit = pellet on the plate. No other steady owner          |
 | 35000          | `presenceThreshold_`                  | Presence detection sensor threshold (`raw > thr` → animal present)            |
 | 100 ms         | `flashLedsClear()` delays             | Visual confirm of NVS clear                                                   |
 

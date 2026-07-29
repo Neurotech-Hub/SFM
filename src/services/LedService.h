@@ -10,8 +10,10 @@ namespace vfm {
 //
 // Blink channels:
 //   1. Status LED  (PIN_STATUS_LED) – fault / discovery indication
-//   2. LED 9       (PIN_LED_IO_9)   – boot / discovery / button-hold warning
-//   3. LED 10      (PIN_LED_IO_10)  – optional blink; used for clear confirm flash
+//   2. LED 9       (PIN_LED_IO_9)   – boot / discovery / button-hold warning,
+//                                     then a live dome-open mirror once enabled
+//   3. LED 10      (PIN_LED_IO_10)  – live pellet-present mirror; also the clear
+//                                     confirm flash
 //
 // All LEDs are digital (on/off). RGB or PWM extensions can be added later.
 class LedService {

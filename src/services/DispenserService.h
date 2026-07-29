@@ -14,6 +14,9 @@ namespace vfm {
 // The load sensor (PG2) is not the drop height: M2 descends kDefaultGrabSteps
 // further before M1 turns, and the raise is measured from that drop position.
 constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
+// M1 runs at half the commanded speed: a slower wheel drops one pellet at a
+// time and gives the plate time to settle before the load confirm window.
+constexpr float    kDefaultFeedSpeedScale  = 0.5f;   // M1 speed = motorSpeed_ * this
 // Approach budget. Worst case is an approach that starts from a seek-away taken
 // at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
 // kDefaultSeekAwaySteps ≈ 1900 steps. 2048 left almost no margin for that path.
@@ -27,6 +30,7 @@ constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)
 constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)
 constexpr uint32_t kSensorDebounceMs       = 20;
 // Delivery / jam / warning timers
+constexpr uint32_t kPelletLoadConfirmMs    = 2000;   // presence held during feed → PelletLoaded
 constexpr uint32_t kPelletTakenConfirmMs   = 200;    // presence clear → PelletTaken
 constexpr uint32_t kPelletLostMs           = 500;    // presence clear during raise → PelletLost
 constexpr uint32_t kLoadClearOnRaiseMs     = 5000;   // load sensor must clear after raise start
@@ -68,6 +72,7 @@ public:
         motor1_.setMaxSpeed(motorSpeed_ * 2.0f);
         motor2_.setMaxSpeed(motorSpeed_ * 2.0f);
     }
+    void setFeedSpeedScale(float scale)       { feedSpeedScale_ = scale; }
     void setLowerSteps(long steps)            { lowerSteps_ = steps; }
     void setSeekAwaySteps(long steps)         { seekAwaySteps_ = steps; }
     void setGrabSteps(long steps)             { grabSteps_ = steps; }
@@ -112,11 +117,13 @@ private:
     uint32_t raiseStartMs_;
     uint32_t pg3OpenSinceMs_;
     uint32_t pelletClearSinceMs_; // presence clear timer (raise or presented)
+    uint32_t pelletSeenSinceMs_;  // presence held timer during the feed (0 = not seen)
     bool     domeWarnLatched_;
     bool     lastDomeOpenedWithPellet_;
     bool     lastTakenWithDomeOpen_;
 
     float    motorSpeed_;
+    float    feedSpeedScale_;
     long     lowerSteps_;
     long     seekAwaySteps_;
     long     grabSteps_;
