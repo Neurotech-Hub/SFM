@@ -87,6 +87,7 @@ except ImportError:
 
     class ServiceStatus(IntEnum):
         Ok=0; NotInitialized=1; Timeout=2; Jam=3; InvalidData=4; PelletLost=5
+        FeedTimeout=6; ActuatorTimeout=7
 
     from dataclasses import dataclass as _dataclass
 
@@ -414,7 +415,9 @@ class NodeSimulator:
             if self._fault_rate > 0 and random.random() < self._fault_rate:
                 node.dispense_state = DispenseState.Fault
                 node.fault_code = (
-                    ServiceStatus.Timeout if random.random() < 0.5 else ServiceStatus.Jam
+                    ServiceStatus.FeedTimeout
+                    if random.random() < 0.5
+                    else ServiceStatus.ActuatorTimeout
                 )
                 node.phase = SimNodePhase.Enabled
                 self._send_event(node, CanEvent.Fault, bytes([int(node.fault_code)]))

@@ -10,10 +10,11 @@ namespace vfm {
 enum class ServiceStatus : uint8_t {
     Ok = 0,
     NotInitialized,
-    Timeout,
     Jam,
     InvalidData,
-    PelletLost,   // pellet left the plate during raise
+    PelletLost,       // pellet left the plate during raise
+    FeedTimeout,      // M1: no pellet confirmed — hopper empty / need refill
+    ActuatorTimeout,  // M2: never reached load/raise target — sensor or motor
 };
 
 // ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ enum class DispenseEvent : uint8_t {
     PelletLoaded,     // pellet presence asserted; raise starting
     PelletPresented,  // actuator reached top (increments pelletCount)
     DomeOpened,       // dome lifted while Presented
-    Fault,            // Timeout / Jam / PelletLost (see faultCode())
+    Fault,            // FeedTimeout / ActuatorTimeout / Jam / PelletLost (see faultCode())
     DomeOpenWarning,  // dome open continuously > kDomeOpenWarnMs
     PelletTaken,      // pellet presence cleared while Presented → Idle
     FeedSkipped,      // Dispense with plate already occupied

@@ -125,6 +125,18 @@ class TestNodeRegistry:
         assert node.dispense_state == DispenseState.Fault
         assert node.fault_code == ServiceStatus.PelletLost
 
+    def test_fault_event_feed_timeout(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.Fault, fault_code=ServiceStatus.FeedTimeout)
+        assert reg.get(1).fault_code == ServiceStatus.FeedTimeout
+
+    def test_fault_event_actuator_timeout(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.Fault, fault_code=ServiceStatus.ActuatorTimeout)
+        assert reg.get(1).fault_code == ServiceStatus.ActuatorTimeout
+
     def test_feed_skipped_maps_to_raising(self):
         reg = NodeRegistry(1)
         reg.update_from_heartbeat(1, make_hb())

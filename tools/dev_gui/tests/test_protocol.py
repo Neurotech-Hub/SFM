@@ -186,6 +186,17 @@ class TestParseEvent:
         assert ev is not None
         assert parse_fault_code(ev) == ServiceStatus.Timeout
 
+    def test_fault_payload_feed_and_actuator_timeout(self):
+        from base_station.protocol import fault_user_message
+        assert ServiceStatus.FeedTimeout == 6
+        assert ServiceStatus.ActuatorTimeout == 7
+        feed = parse_event(bytes([CanEvent.Fault, ServiceStatus.FeedTimeout]))
+        act = parse_event(bytes([CanEvent.Fault, ServiceStatus.ActuatorTimeout]))
+        assert parse_fault_code(feed) == ServiceStatus.FeedTimeout
+        assert parse_fault_code(act) == ServiceStatus.ActuatorTimeout
+        assert "pellet" in fault_user_message(ServiceStatus.FeedTimeout).lower()
+        assert "actuator" in fault_user_message(ServiceStatus.ActuatorTimeout).lower()
+
     def test_fault_payload_jam(self):
         ev = parse_event(bytes([CanEvent.Fault, ServiceStatus.Jam]))
         assert parse_fault_code(ev) == ServiceStatus.Jam

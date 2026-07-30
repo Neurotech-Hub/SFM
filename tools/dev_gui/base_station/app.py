@@ -43,6 +43,7 @@ from .protocol import (
     CanEvent,
     classify_frame,
     format_mac,
+    fault_user_message,
     node_id_from_event_id,
     node_id_from_hb_id,
     parse_event,
@@ -1219,6 +1220,8 @@ class SFMApp:
                                f"presence={int(hb.presence)} "
                                f"pg={''.join(str(int(b)) for b in [hb.pg1,hb.pg2,hb.pg3])} "
                                f"fault={hb.fault_code.name}")
+                    if hb.fault_code.value != 0:
+                        details += f" ({fault_user_message(hb.fault_code)})"
 
         elif ftype == "EVENT":
             node_id = node_id_from_event_id(arb_id)
@@ -1252,7 +1255,8 @@ class SFMApp:
                         entry_name = CAN_EVENT_DISPLAY_NAME.get(ev.event, ev.event.name)
                         if ev.event == CanEvent.Fault:
                             code = fault_code.name if fault_code is not None else "unknown"
-                            details = f"fault={code}"
+                            details = f"fault={code} — {fault_user_message(fault_code)}"
+                            entry_name = f"Fault: {code}"
                         elif ev.event == CanEvent.DomeOpenWarning:
                             details = "PG3 open >30s"
                         else:
@@ -1435,9 +1439,13 @@ class SFMApp:
             col = (100, 220, 120, 255) if val else (160, 165, 175, 255)
             dpg.configure_item(pg_tag, default_value=f"PG{label}: {sym}", color=col)
 
-        # Fault (Timeout / Jam when sticky Fault)
-        fault_str = node.fault_code.name
-        fault_col = _COLOR_RED if node.fault_code.value != 0 else (160, 165, 175, 255)
+        # Fault (FeedTimeout / ActuatorTimeout / Jam / PelletLost when sticky)
+        if node.fault_code.value != 0:
+            fault_str = f"{node.fault_code.name}: {fault_user_message(node.fault_code)}"
+            fault_col = _COLOR_RED
+        else:
+            fault_str = "OK"
+            fault_col = (160, 165, 175, 255)
         dpg.configure_item(tags["fault_text"], default_value=fault_str, color=fault_col)
 
         # Dome open warning (amber, non-sticky)

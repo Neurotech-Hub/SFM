@@ -89,17 +89,42 @@ class DispenseState(IntEnum):
     Raising       = 3  # M2 up by step count
     Presented     = 4  # Pellet at top; ends on PelletTaken → Idle
     SeekingAway   = 5  # M2 up until load sensor clears
-    Fault         = 6  # Timeout / jam / pellet lost
+    Fault         = 6  # FeedTimeout / ActuatorTimeout / jam / pellet lost
 
 
 class ServiceStatus(IntEnum):
-    """Fault codes carried in heartbeat byte 5."""
-    Ok             = 0
-    NotInitialized = 1
-    Timeout        = 2
-    Jam            = 3
-    InvalidData    = 4
-    PelletLost     = 5
+    """Fault codes carried in heartbeat byte 5 / Fault event extra."""
+    Ok              = 0
+    NotInitialized  = 1
+    Timeout         = 2  # legacy/generic; prefer FeedTimeout or ActuatorTimeout
+    Jam             = 3
+    InvalidData     = 4
+    PelletLost      = 5
+    FeedTimeout     = 6  # M1: no pellet confirmed — refill hopper
+    ActuatorTimeout = 7  # M2: never reached target — sensor or motor
+
+
+# Short, user-facing explanations for the base-station UI / logs.
+SERVICE_STATUS_USER_MESSAGE = {
+    ServiceStatus.Ok: "OK",
+    ServiceStatus.NotInitialized: "Not initialized",
+    ServiceStatus.Timeout: "Timeout (unspecified phase)",
+    ServiceStatus.Jam: "Jam — load sensor still blocked during raise",
+    ServiceStatus.InvalidData: "Invalid data",
+    ServiceStatus.PelletLost: "Pellet lost from the plate during raise",
+    ServiceStatus.FeedTimeout: "Out of pellets — refill the hopper (M1 feed timed out)",
+    ServiceStatus.ActuatorTimeout: (
+        "Actuator fault — plate did not reach position "
+        "(check load sensor or M2 motor)"
+    ),
+}
+
+
+def fault_user_message(code: Optional[ServiceStatus]) -> str:
+    """Translate a ServiceStatus into simple language for operators."""
+    if code is None:
+        return "Unknown fault"
+    return SERVICE_STATUS_USER_MESSAGE.get(code, code.name)
 
 
 # ---------------------------------------------------------------------------

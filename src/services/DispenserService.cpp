@@ -98,7 +98,7 @@ void DispenserService::update() {
             // Fixed travel, PG2 not consulted: parked at the drop position PG2 may
             // already read clear, and a sensor-gated seek would skip the move.
             if (phaseTimedOut(lowerTimeoutMs_)) {
-                faultNow(ServiceStatus::Timeout);
+                faultNow(ServiceStatus::ActuatorTimeout);
                 break;
             }
             if ((motor2_.currentPosition() - phaseStartPos_) >= seekAwaySteps_) {
@@ -122,7 +122,7 @@ void DispenserService::update() {
                     // it into the stop. Back off once and re-approach before
                     // calling it a fault.
                     if (approachRetried_) {
-                        faultNow(ServiceStatus::Timeout);
+                        faultNow(ServiceStatus::ActuatorTimeout);
                     } else {
                         approachRetried_ = true;
                         belowLoad_ = true;
@@ -132,7 +132,7 @@ void DispenserService::update() {
                     break;
                 }
             } else if (phaseTimedOut(lowerTimeoutMs_)) {
-                faultNow(ServiceStatus::Timeout);
+                faultNow(ServiceStatus::ActuatorTimeout);
                 break;
             }
             if (grabPhase_) {
@@ -153,7 +153,7 @@ void DispenserService::update() {
         case DispenseState::Feeding:
             if (phaseTimedOut(feedTimeoutMs_) ||
                 (labs(motor1_.currentPosition() - feedStartPos_) >= feedMaxSteps_)) {
-                faultNow(ServiceStatus::Timeout);
+                faultNow(ServiceStatus::FeedTimeout);
                 break;
             }
             if (pg1State_) {
@@ -201,7 +201,7 @@ void DispenserService::update() {
                 pelletClearSinceMs_ = 0;
             }
             if (phaseTimedOut(raiseTimeoutMs_)) {
-                faultNow(ServiceStatus::Timeout);
+                faultNow(ServiceStatus::ActuatorTimeout);
                 break;
             }
             if (motor2_.currentPosition() >= motor2Target_) {

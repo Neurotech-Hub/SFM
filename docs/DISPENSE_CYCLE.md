@@ -85,13 +85,14 @@ it cannot follow with a second pellet, and starts a `kPelletLoadConfirmMs` hold.
 broken for that whole window to count: a fragment tumbling past clears the beam early, and the wheel simply
 resumes feeding within the same budget. Once the window elapses the node reports `PelletLoaded` and begins the
 raise in the same tick. If no pellet is confirmed within `kDefaultFeedTimeoutMs` — an empty hopper or a wheel
-jam — the node faults with `Timeout`.
+jam — the node faults with `FeedTimeout` (refill the hopper).
 
 **Raising.** M2 lifts the plate by `kDefaultRaiseSteps` from the drop position — the grab descent back plus
 the presentation height above the load sensor. Two checks run during travel:
 the load position sensor must clear within `kLoadClearOnRaiseMs` (otherwise `Jam`), and the pellet sensor must
 stay asserted. A pellet that falls off in transit clears the sensor for `kPelletLostMs` and faults with
-`PelletLost`, so an empty plate is never presented as if it held a pellet.
+`PelletLost`, so an empty plate is never presented as if it held a pellet. If the raise travel itself exceeds
+`kDefaultRaiseTimeoutMs`, the fault is `ActuatorTimeout` (sensor or M2 motor).
 
 **Presented.** The pellet is available to the animal. The node stays here, watching two things:
 
@@ -145,11 +146,12 @@ A fault halts both motors, latches a status code, lights the status LED solid, a
 until it receives `Recover`.
 
 
-| Code         | Cause                                                                                           |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| `Timeout`    | A motion phase exceeded its budget — no pellet loaded, or the actuator never reached its target |
-| `Jam`        | The load position sensor did not clear after the raise started; the plate is obstructed         |
-| `PelletLost` | The pellet left the plate during the raise                                                      |
+| Code               | Cause                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `FeedTimeout`      | M1 never confirmed a pellet on the plate — hopper empty / refill pellets                                   |
+| `ActuatorTimeout`  | M2 never reached its target (seek / lower / raise) — load-sensor issue or motor stuck                      |
+| `Jam`              | The load position sensor did not clear after the raise started; the plate is obstructed                    |
+| `PelletLost`       | The pellet left the plate during the raise                                                                 |
 
 
 

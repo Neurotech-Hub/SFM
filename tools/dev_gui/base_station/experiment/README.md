@@ -258,7 +258,7 @@ Register with `@exp.on(EventKind.X)` or the sugar decorators. Handlers receive
 | `@exp.on_pellet_presented` | `PELLET_PRESENTED` | `pellet_count` |
 | `@exp.on_catch_attempt` | `CATCH_ATTEMPT` | |
 | `@exp.on_dome_opened` / `@exp.on_dome_closed` | `DOME_OPENED` / `DOME_CLOSED` | derived from PG3 |
-| `@exp.on_fault` | `FAULT` | `fault_code` (Timeout / Jam) |
+| `@exp.on_fault` | `FAULT` | `fault_code` (`FeedTimeout` / `ActuatorTimeout` / `Jam` / `PelletLost`) |
 | `@exp.on_recover` | `NODE_RECOVERED` | fired when an operator recovers a node |
 | `@exp.on_bnc_in` | `BNC_IN` | `channel` (0/1), `edge` ("rising"/"falling"), `high` |
 | `@exp.on_presence_changed` | `PRESENCE_CHANGED` | |

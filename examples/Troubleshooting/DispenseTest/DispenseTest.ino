@@ -11,6 +11,10 @@
 //   r          – print current raiseSteps
 //   r <n>      – set raiseSteps (e.g. "r 1420" or "r 1200")
 //
+// LED mirrors (debounced sensor state):
+//   LED 10 = pellet present (PG1)
+//   LED 9  = dome open (PG3)
+//
 // Defaults match library: grab=320, raise=1420, seek-away=800, feed timeout=30 s.
 // raiseSteps is measured from the pellet-drop position (kDefaultGrabSteps below
 // the load sensor), not from the load sensor itself.
@@ -26,6 +30,7 @@ static constexpr long     kFeedMaxSteps   = 4096;
 static constexpr uint32_t kFeedTimeoutMs  = 30000;
 
 vfm::DispenserService dispenser;
+vfm::LedService       leds;
 float currentSpeed     = kMotorSpeed;
 long  currentRaiseSteps = kRaiseSteps;
 
@@ -135,6 +140,11 @@ void setup() {
     Serial.println(F("          r         = show raiseSteps"));
     Serial.println(F("          r <n>     = set raiseSteps (e.g. r 1420)"));
     Serial.println(F("PelletTaken returns to Idle; DomeOpened reports each dome lift"));
+    Serial.println(F("LEDs: 10=pellet present  9=dome open"));
+
+    if (leds.begin() != vfm::ServiceStatus::Ok) {
+        Serial.println(F("ERROR: leds.begin() failed"));
+    }
 
     dispenser.setMotorSpeed(kMotorSpeed);
     dispenser.setLowerSteps(kLowerSteps);
@@ -154,6 +164,10 @@ void setup() {
 
 void loop() {
     dispenser.update();
+
+    // Live sensor mirrors (same mapping as VFM::updateSensorLeds).
+    leds.setLed10(dispenser.pg1());
+    leds.setLed9(dispenser.pg3());
 
     switch (dispenser.takeEvent()) {
         case vfm::DispenseEvent::PelletLoaded:
@@ -179,9 +193,11 @@ void loop() {
         case vfm::DispenseEvent::Fault:
             Serial.print(F("[Event] FAULT – "));
             Serial.println(
-                dispenser.faultCode() == vfm::ServiceStatus::Timeout    ? F("Timeout") :
-                dispenser.faultCode() == vfm::ServiceStatus::Jam        ? F("Jam") :
-                dispenser.faultCode() == vfm::ServiceStatus::PelletLost ? F("PelletLost") :
+                dispenser.faultCode() == vfm::ServiceStatus::FeedTimeout     ? F("FeedTimeout (out of pellets / refill hopper)") :
+                dispenser.faultCode() == vfm::ServiceStatus::ActuatorTimeout ? F("ActuatorTimeout (sensor or M2 position)") :
+                dispenser.faultCode() == vfm::ServiceStatus::Timeout         ? F("Timeout") :
+                dispenser.faultCode() == vfm::ServiceStatus::Jam             ? F("Jam") :
+                dispenser.faultCode() == vfm::ServiceStatus::PelletLost      ? F("PelletLost") :
                 F("?"));
             break;
         default:
