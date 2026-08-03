@@ -67,8 +67,8 @@ from .protocol import (
 # Constants
 # ---------------------------------------------------------------------------
 
-WINDOW_W = 1280
-WINDOW_H = 960        
+WINDOW_W = 1920
+WINDOW_H = 1280        
 TILE_W   = 320
 TILE_H   = 320
 LOG_ROWS = 18        # visible rows in the log table before scroll

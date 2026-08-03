@@ -17,11 +17,11 @@
 // there — so find the grab depth first, then zero, then jog up.
 //   1. home     – drive DOWN until PG2 triggers → loading position (pos=0)
 //   2. d <n>    – jog DOWN n steps (IGNORES PG2) until M1 can drop a pellet
-//                 cleanly; that n is kDefaultGrabSteps (bench value: 320)
+//                 cleanly; that n is kDefaultGrabSteps (bench value: 280)
 //   3. z        – zero here, at the pellet-drop position
 //   4. u <n>    – jog UP n steps toward the presentation dome, repeating until
 //                 the height looks right; 's' then reads out kDefaultRaiseSteps
-//                 measured from the DROP position (bench value: 1420)
+//                 measured from the DROP position (bench value: 1600)
 //   5. home     – return to PG2 loading position when done
 //
 // Commands (line-based; Enter required):

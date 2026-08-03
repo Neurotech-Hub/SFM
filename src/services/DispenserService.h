@@ -19,11 +19,11 @@ constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
 constexpr float    kDefaultFeedSpeedScale  = 0.5f;   // M1 speed = motorSpeed_ * this
 // Approach budget. Worst case is an approach that starts from a seek-away taken
 // at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
-// kDefaultSeekAwaySteps ≈ 1900 steps. 2048 left almost no margin for that path.
+// kDefaultSeekAwaySteps ≈ 2120 steps. 2048 left almost no margin for that path.
 constexpr long     kDefaultLowerSteps      = 3072;   // max approach budget toward PG2
 constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up to clear PG2 before approach
-constexpr long     kDefaultGrabSteps       = 320;    // M2 down past PG2 to the drop position
-constexpr long     kDefaultRaiseSteps      = 1420;   // M2 up travel from the drop position
+constexpr long     kDefaultGrabSteps       = 280;    // M2 down past PG2 to the drop position
+constexpr long     kDefaultRaiseSteps      = 1600;   // M2 up travel from the drop position
 constexpr long     kDefaultFeedMaxSteps    = 4096;   // M1 max steps before timeout
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
 constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)

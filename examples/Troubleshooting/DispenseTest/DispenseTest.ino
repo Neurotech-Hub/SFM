@@ -9,13 +9,13 @@
 //   +          – increase motor speed by 100 steps/s
 //   -          – decrease motor speed by 100 steps/s
 //   r          – print current raiseSteps
-//   r <n>      – set raiseSteps (e.g. "r 1420" or "r 1200")
+//   r <n>      – set raiseSteps (e.g. "r 1600" or "r 1200")
 //
 // LED mirrors (debounced sensor state):
 //   LED 10 = pellet present (PG1)
 //   LED 9  = dome open (PG3)
 //
-// Defaults match library: grab=320, raise=1420, seek-away=800, feed timeout=30 s.
+// Defaults match library: grab=280, raise=1600, seek-away=800, feed timeout=30 s.
 // raiseSteps is measured from the pellet-drop position (kDefaultGrabSteps below
 // the load sensor), not from the load sensor itself.
 
@@ -24,8 +24,8 @@
 static constexpr float    kMotorSpeed     = 300.0f;
 static constexpr long     kLowerSteps     = 3072;
 static constexpr long     kSeekAwaySteps  = 800;
-static constexpr long     kGrabSteps      = 320;
-static constexpr long     kRaiseSteps     = 1420;
+static constexpr long     kGrabSteps      = 280;
+static constexpr long     kRaiseSteps     = 1600;
 static constexpr long     kFeedMaxSteps   = 4096;
 static constexpr uint32_t kFeedTimeoutMs  = 30000;
 
@@ -138,7 +138,7 @@ void setup() {
     Serial.println(F("VFM DispenseTest"));
     Serial.println(F("Commands: d=dispense  a=recover  s=status  +=faster  -=slower"));
     Serial.println(F("          r         = show raiseSteps"));
-    Serial.println(F("          r <n>     = set raiseSteps (e.g. r 1420)"));
+    Serial.println(F("          r <n>     = set raiseSteps (e.g. r 1600)"));
     Serial.println(F("PelletTaken returns to Idle; DomeOpened reports each dome lift"));
     Serial.println(F("LEDs: 10=pellet present  9=dome open"));
 
