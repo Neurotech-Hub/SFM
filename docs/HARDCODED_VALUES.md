@@ -22,7 +22,7 @@ These are the ones called out most often during bring-up.
 | **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
 | **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
 | **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past** the load position sensor by this much before M1 turns. The sensor is not the drop height — the plate has to sit this far below it for the pellet to land cleanly. PG2 is ignored during this descent |
-| **1600 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 280 + 1320 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from PG2 home |
+| **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 280 + 1200 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from PG2 home |
 | **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel to clear the load sensor before the approach. Fixed travel, not sensor-gated: at the drop position PG2 may already read clear, and a sensor-gated seek would skip the move and then lower into the floor |
 
 
@@ -43,13 +43,12 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | ----------- | ------------------------ | -------------------------------------- |
 | 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed; M2 runs at this, M1 at `× kDefaultFeedSpeedScale` |
 | 0.5×        | `kDefaultFeedSpeedScale` | M1 feed speed as a fraction of `motorSpeed_`. Kept as a scale, not an absolute, so `setMotorSpeed()` and the bench `+`/`-` keys move both motors together |
-| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2120 steps. Exhausting it is not a fault on the first try: the approach backs off by one seek-away and re-approaches, and only faults if that also fails |
+| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2000 steps. Exhausting it is not a fault on the first try: the approach backs off by one seek-away and re-approaches, and only faults if that also fails |
 | 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel to clear the load sensor (fixed, not sensor-gated) |
 | 280 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
-| 1600 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
-| 4096 steps  | `kDefaultFeedMaxSteps`   | M1 max steps before feed timeout path     |
+| 1480 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
 | 8 s         | `kDefaultLowerTimeoutMs` | M2 seek-away / approach / grab-descent timeout (re-armed per sub-phase) |
-| 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout                    |
+| 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout |
 | 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                    |
 | 100 ms      | `kSensorDebounceMs`      | Sensor debounce (pellet / load / dome)    |
 

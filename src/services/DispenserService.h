@@ -19,12 +19,11 @@ constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
 constexpr float    kDefaultFeedSpeedScale  = 0.5f;   // M1 speed = motorSpeed_ * this
 // Approach budget. Worst case is an approach that starts from a seek-away taken
 // at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
-// kDefaultSeekAwaySteps ≈ 2120 steps. 2048 left almost no margin for that path.
+// kDefaultSeekAwaySteps ≈ 2000 steps. 2048 left almost no margin for that path.
 constexpr long     kDefaultLowerSteps      = 3072;   // max approach budget toward PG2
 constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up to clear PG2 before approach
 constexpr long     kDefaultGrabSteps       = 280;    // M2 down past PG2 to the drop position
-constexpr long     kDefaultRaiseSteps      = 1600;   // M2 up travel from the drop position
-constexpr long     kDefaultFeedMaxSteps    = 4096;   // M1 max steps before timeout
+constexpr long     kDefaultRaiseSteps      = 1480;   // M2 up travel from the drop position
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
 constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)
 constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)
@@ -77,7 +76,6 @@ public:
     void setSeekAwaySteps(long steps)         { seekAwaySteps_ = steps; }
     void setGrabSteps(long steps)             { grabSteps_ = steps; }
     void setRaiseSteps(long steps)            { raiseSteps_ = steps; }
-    void setFeedMaxSteps(long steps)          { feedMaxSteps_ = steps; }
     void setLowerTimeoutMs(uint32_t ms)       { lowerTimeoutMs_ = ms; }
     void setFeedTimeoutMs(uint32_t ms)        { feedTimeoutMs_ = ms; }
     void setRaiseTimeoutMs(uint32_t ms)       { raiseTimeoutMs_ = ms; }
@@ -106,7 +104,6 @@ private:
     // pattern from currentPosition() & 0x7, so setCurrentPosition() on a moving
     // motor jumps the commutation phase and the actuator loses steps.
     long     phaseStartPos_; // M2 position at the start of the current phase
-    long     feedStartPos_;  // M1 position at the start of the feed
 
     // True when the actuator is at or below the load sensor, where a downward
     // approach can never find PG2. PG2 itself cannot answer this: at the drop
@@ -128,7 +125,6 @@ private:
     long     seekAwaySteps_;
     long     grabSteps_;
     long     raiseSteps_;
-    long     feedMaxSteps_;
     uint32_t lowerTimeoutMs_;
     uint32_t feedTimeoutMs_;
     uint32_t raiseTimeoutMs_;

@@ -108,7 +108,7 @@ void setup() {
     if (!gVfm.begin()) {
         Serial.println(F("WARNING: one or more services failed to initialise"));
     }
-    gVfm.setPresenceThreshold(50000);
+    gVfm.setPresenceThreshold(36000);
     
     // Print MAC UUID
     const uint8_t *m = gVfm.identity().mac();

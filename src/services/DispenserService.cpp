@@ -22,7 +22,6 @@ DispenserService::DispenserService()
       pg3WasOpen_(false),
       grabPhase_(false),
       phaseStartPos_(0),
-      feedStartPos_(0),
       belowLoad_(false),
       approachRetried_(false),
       raiseStartMs_(0),
@@ -38,7 +37,6 @@ DispenserService::DispenserService()
       seekAwaySteps_(kDefaultSeekAwaySteps),
       grabSteps_(kDefaultGrabSteps),
       raiseSteps_(kDefaultRaiseSteps),
-      feedMaxSteps_(kDefaultFeedMaxSteps),
       lowerTimeoutMs_(kDefaultLowerTimeoutMs),
       feedTimeoutMs_(kDefaultFeedTimeoutMs),
       raiseTimeoutMs_(kDefaultRaiseTimeoutMs),
@@ -72,7 +70,6 @@ ServiceStatus DispenserService::begin() {
     grabPhase_ = false;
     approachRetried_ = false;
     phaseStartPos_ = motor2_.currentPosition();
-    feedStartPos_  = motor1_.currentPosition();
     // Height is unknown at boot. PG2 asserted proves the load position; clear is
     // ambiguous (above or below), and the approach's seek-away retry recovers
     // from a cold start left at the drop position.
@@ -151,8 +148,7 @@ void DispenserService::update() {
             break;
 
         case DispenseState::Feeding:
-            if (phaseTimedOut(feedTimeoutMs_) ||
-                (labs(motor1_.currentPosition() - feedStartPos_) >= feedMaxSteps_)) {
+            if (phaseTimedOut(feedTimeoutMs_)) {
                 faultNow(ServiceStatus::FeedTimeout);
                 break;
             }
@@ -340,7 +336,6 @@ void DispenserService::startGrabDescent() {
 
 void DispenserService::startFeed() {
     motor1_.enableOutputs();
-    feedStartPos_ = motor1_.currentPosition();
     motionStartMs_ = millis();
     pelletSeenSinceMs_ = 0;
     motor1_.setSpeed(motorSpeed_ * feedSpeedScale_);

@@ -21,7 +21,7 @@
 //   3. z        – zero here, at the pellet-drop position
 //   4. u <n>    – jog UP n steps toward the presentation dome, repeating until
 //                 the height looks right; 's' then reads out kDefaultRaiseSteps
-//                 measured from the DROP position (bench value: 1600)
+//                 measured from the DROP position (bench value: 1480)
 //   5. home     – return to PG2 loading position when done
 //
 // Commands (line-based; Enter required):
