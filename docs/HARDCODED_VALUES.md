@@ -23,7 +23,7 @@ These are the ones called out most often during bring-up.
 | **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
 | **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past** the load position sensor by this much before M1 turns. The sensor is not the drop height — the plate has to sit this far below it for the pellet to land cleanly. The load position sensor is ignored during this descent |
 | **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 280 + 1200 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from the load position sensor |
-| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel to clear the load sensor before the approach. Fixed travel, not sensor-gated: at the drop position the load position sensor may already read clear, and a sensor-gated seek would skip the move and then lower into the floor |
+| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel cap to clear the load sensor before the approach. When Seeking starts with the load sensor asserted, motion stops at sensor-clear **or** this step count, whichever comes first. A fixed (non-gated) seek is used only when the node already knows the plate is at drop depth (`belowLoad_`) |
 
 
 ---
@@ -43,8 +43,8 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | ----------- | ------------------------ | -------------------------------------- |
 | 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed; M2 runs at this, M1 at `× kDefaultFeedSpeedScale` |
 | 0.5×        | `kDefaultFeedSpeedScale` | M1 feed speed as a fraction of `motorSpeed_`. Kept as a scale, not an absolute, so `setMotorSpeed()` and the bench `+`/`-` keys move both motors together |
-| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2000 steps. Exhausting it is not a fault on the first try: the approach backs off by one seek-away and re-approaches, and only faults if that also fails |
-| 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel to clear the load sensor (fixed, not sensor-gated) |
+| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2000 steps. Exhausting it retries only when the load sensor is asserted or the plate is already known to be at drop depth; otherwise it faults (a blind seek-up after `PelletLost` can drive into the stop) |
+| 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel cap to clear the load sensor (sensor-clear or this many steps, whichever first, when seek starts on the sensor) |
 | 280 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
 | 1480 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
 | 8 s         | `kDefaultLowerTimeoutMs` | M2 seek-away / approach / grab-descent timeout (re-armed per sub-phase) |
@@ -53,6 +53,22 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 
 
 Not overrideable via SetConfig CAN yet — only compile-time / setter before begin.
+
+---
+
+## Dispenser — no-feed dispense
+
+Same header. Unlike the motion defaults above, the dwell is **runtime-configurable per command**
+(`DispenseNoFeed` payload, uint16 LE ms) — these are just the default and clamp bounds when the base
+station omits or over/under-shoots it.
+
+
+| Value  | Constant             | Meaning                                                              |
+| ------ | -------------------- | --------------------------------------------------------------------- |
+| 6 s    | `kDefaultNoFeedDwellMs` | Dwell at the drop position (M1 idle) before raising, when the command carries no dwell payload |
+| 500 ms | `kNoFeedDwellMinMs`  | Commanded dwell is clamped to this floor                              |
+| 60 s   | `kNoFeedDwellMaxMs`  | Commanded dwell is clamped to this ceiling                            |
+
 
 ---
 

@@ -116,10 +116,10 @@ class TestNodeRegistry:
     def test_fault_event(self):
         reg = NodeRegistry(1)
         reg.update_from_heartbeat(1, make_hb())
-        reg.update_from_event(1, CanEvent.Fault, fault_code=ServiceStatus.Timeout)
+        reg.update_from_event(1, CanEvent.Fault, fault_code=ServiceStatus.ActuatorTimeout)
         node = reg.get(1)
         assert node.dispense_state == DispenseState.Fault
-        assert node.fault_code == ServiceStatus.Timeout
+        assert node.fault_code == ServiceStatus.ActuatorTimeout
 
     def test_fault_event_jam(self):
         reg = NodeRegistry(1)

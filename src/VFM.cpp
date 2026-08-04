@@ -80,6 +80,24 @@ bool VFM::begin() {
 
                 break;
 
+            case CanCmd::DispenseNoFeed: {
+
+                // payload/len EXCLUDE the command byte (see dispatchRx()).
+                uint16_t dwellMs = kDefaultNoFeedDwellMs;
+
+                if (len >= 2) {
+
+                    dwellMs = static_cast<uint16_t>(payload[0]) |
+                              (static_cast<uint16_t>(payload[1]) << 8);
+
+                }
+
+                dispenser_.dispenseNoFeed(dwellMs);
+
+                break;
+
+            }
+
             case CanCmd::AssignId:
 
                 if (len >= 1 && payload[0] > 0) {
@@ -285,6 +303,8 @@ void VFM::handleDispenserEvents() {
 
         case DispenseEvent::FeedSkipped:     canEv = CanEvent::FeedSkipped;     break;
 
+        case DispenseEvent::NoFeedPresented: canEv = CanEvent::NoFeedPresented; break;
+
         case DispenseEvent::DomeOpenWarning: canEv = CanEvent::DomeOpenWarning; break;
 
         case DispenseEvent::Fault:
@@ -309,7 +329,7 @@ void VFM::handleDispenserEvents() {
 
         ev == DispenseEvent::DomeOpened || ev == DispenseEvent::PelletTaken ||
 
-        ev == DispenseEvent::FeedSkipped) {
+        ev == DispenseEvent::FeedSkipped || ev == DispenseEvent::NoFeedPresented) {
 
         leds_.setStatusLed(false);
 
@@ -398,6 +418,10 @@ void VFM::handleDispensePhaseEvents() {
 
         case DispenseState::Loading:
             sendPhaseEvent(CanEvent::Loading);
+            break;
+
+        case DispenseState::Dwelling:
+            sendPhaseEvent(CanEvent::Dwelling);
             break;
 
         case DispenseState::Raising:

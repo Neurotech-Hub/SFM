@@ -20,13 +20,14 @@ from typing import Optional
 
 class CanCmd(IntEnum):
     """Commands sent from base station to a node (CAN ID 0x100 + nodeId)."""
-    Ping      = 0x01
-    Dispense  = 0x02
-    Recover   = 0x03  # stop motion, clear sticky Fault, return to Idle
-    AssignId  = 0x04  # payload byte[0] = new nodeId
-    SetConfig = 0x05  # payload TBD
-    ReqStatus = 0x06
-    ClearId   = 0x07  # clear NVS id; node re-enters discovery
+    Ping           = 0x01
+    Dispense       = 0x02
+    Recover        = 0x03  # stop motion, clear sticky Fault, return to Idle
+    AssignId       = 0x04  # payload byte[0] = new nodeId
+    SetConfig      = 0x05  # payload TBD
+    ReqStatus      = 0x06
+    ClearId        = 0x07  # clear NVS id; node re-enters discovery
+    DispenseNoFeed = 0x08  # dispense motion with no pellet; payload = dwell ms LE16 (optional)
 
 
 # Friendly one-line purpose text for COMMAND log rows.
@@ -38,7 +39,13 @@ CAN_CMD_PURPOSE = {
     CanCmd.SetConfig: "set config",
     CanCmd.ReqStatus: "request heartbeat now",
     CanCmd.ClearId: "wipe stored ID",
+    CanCmd.DispenseNoFeed: "run dispense motion, deliver no pellet",
 }
+
+# Dwell time (ms) the node holds at the drop position on a no-feed dispense.
+DEFAULT_NO_FEED_DWELL_MS = 6000
+NO_FEED_DWELL_MIN_MS = 500
+NO_FEED_DWELL_MAX_MS = 60000
 
 
 class CanEvent(IntEnum):
@@ -55,7 +62,9 @@ class CanEvent(IntEnum):
     DomeOpenWarning = 0x0A  # dome open >30 s (non-sticky warning)
     PelletTaken     = 0x0B  # raw_extra: count LE16 + dome_open
     FeedSkipped     = 0x0C  # plate occupied on Dispense
-    Seeking         = 0x0D  # M2 clearing the load sensor before Lowering
+    Seeking         = 0x0D  # M2 clearing the load sensor before Lowering (clear or step cap)
+    NoFeedPresented = 0x0E  # no-feed raise complete; raw_extra: count LE16 (NOT incremented)
+    Dwelling        = 0x0F  # phase: holding at the drop position, M1 idle
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
@@ -70,6 +79,8 @@ CAN_EVENT_DISPLAY_NAME = {
     CanEvent.DomeOpenWarning: "DomeOpenWarning",
     CanEvent.PelletTaken: "PelletTaken",
     CanEvent.FeedSkipped: "FeedSkipped",
+    CanEvent.NoFeedPresented: "NoFeedPresented",
+    CanEvent.Dwelling: "Dwelling",
 }
 
 
@@ -88,27 +99,33 @@ class DispenseState(IntEnum):
     Loading       = 2  # M1 loading pellet
     Raising       = 3  # M2 up by step count
     Loaded        = 4  # Pellet at top; ends on PelletTaken → Idle
-    Seeking       = 5  # M2 up until load sensor clears
+    Seeking       = 5  # M2 up until load sensor clears or seekAwaySteps_
     Fault         = 6  # FeedTimeout / ActuatorTimeout / jam / pellet lost
+    Dwelling      = 7  # no-feed: holding at the drop position, M1 idle
 
 
 class ServiceStatus(IntEnum):
-    """Fault codes carried in heartbeat byte 5 / Fault event extra."""
+    """
+    Fault codes carried in heartbeat byte 5 / Fault event extra.
+
+    Mirror of src/services/ServiceTypes.h ServiceStatus. Must match exactly —
+    these are wire values, not just labels (see commit 4861a97, which dropped
+    the firmware's ``Timeout`` member without updating this mirror; every code
+    >= 2 decoded one fault low until this was fixed).
+    """
     Ok              = 0
     NotInitialized  = 1
-    Timeout         = 2  # legacy/generic; prefer FeedTimeout or ActuatorTimeout
-    Jam             = 3
-    InvalidData     = 4
-    PelletLost      = 5
-    FeedTimeout     = 6  # M1: no pellet confirmed — refill hopper
-    ActuatorTimeout = 7  # M2: never reached target — sensor or motor
+    Jam             = 2
+    InvalidData     = 3
+    PelletLost      = 4       # pellet left the plate during raise
+    FeedTimeout     = 5       # M1: no pellet confirmed — refill hopper
+    ActuatorTimeout = 6       # M2: never reached target — sensor or motor
 
 
 # Short, user-facing explanations for the base-station UI / logs.
 SERVICE_STATUS_USER_MESSAGE = {
     ServiceStatus.Ok: "OK",
     ServiceStatus.NotInitialized: "Not initialized",
-    ServiceStatus.Timeout: "Timeout (unspecified phase)",
     ServiceStatus.Jam: "Jam — load sensor still blocked during raise",
     ServiceStatus.InvalidData: "Invalid data",
     ServiceStatus.PelletLost: "Pellet lost from the plate during raise",
@@ -333,6 +350,16 @@ def build_setconfig_heartbeat(interval_ms: int) -> bytes:
     """
     interval_ms = max(0, min(int(interval_ms), 0xFFFF))
     return bytes([CONFIG_HEARTBEAT_INTERVAL]) + struct.pack("<H", interval_ms)
+
+
+def build_dispense_no_feed(dwell_ms: int = DEFAULT_NO_FEED_DWELL_MS) -> bytes:
+    """
+    Build the payload (after the DispenseNoFeed command byte): dwell time,
+    uint16 LE ms. Clamped to [NO_FEED_DWELL_MIN_MS, NO_FEED_DWELL_MAX_MS] —
+    clamp rather than reject, so a bad parameter can't brick a trial.
+    """
+    ms = max(NO_FEED_DWELL_MIN_MS, min(int(dwell_ms), NO_FEED_DWELL_MAX_MS))
+    return struct.pack("<H", ms)
 
 
 def build_assign_frame(mac: bytes, node_id: int) -> tuple[int, bytes]:

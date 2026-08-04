@@ -31,6 +31,7 @@ from __future__ import annotations
 import random
 from typing import Any, Dict, Iterable, Optional, Sequence, Set, Union
 
+from .. import kit
 from ..runner import Experiment
 
 NodeSpec = Union[str, Iterable[int], None]
@@ -117,59 +118,30 @@ def build(
     seed:
         Optional RNG seed for reproducible runs (tests). Falsy = nondeterministic.
     """
-    node_list = list(nodes) if nodes else [1, 2, 3]
-    exp = Experiment(nodes=node_list, name=name)
+    exp = kit.session(name, nodes, hours=hours, minutes=minutes, seconds=seconds, max_pellets=max_pellets)
     rng = random.Random(seed) if seed else random.Random()
     prob = max(0.0, min(1.0, float(random_prob)))
-    roles = _resolve_roles(node_roles, fixed_nodes, node_list)
+    roles = _resolve_roles(node_roles, fixed_nodes, exp.nodes)
 
-    def _cycle(ctx) -> None:
-        ctx.incr("cycles")
-        for n in ctx.nodes:
+    def _cycle(control) -> None:
+        for n in control.nodes:
             role = roles.get(n, OFF)
             if role == FIXED:
-                ctx.dispense(n)
+                control.dispense(n)
             elif role == RANDOM and rng.random() < prob:
-                ctx.log("random_dispense", node=n)
-                ctx.dispense(n)
+                control.log("random_dispense", node=n)
+                control.dispense(n)
 
     @exp.on_start
-    def _start(ctx):
-        ctx.log(
+    def _log_start(control):
+        control.log(
             "fixed_and_random_start",
-            nodes=ctx.nodes, roles=roles,
+            nodes=control.nodes, roles=roles,
             trigger=trigger, random_prob=prob,
         )
-        if trigger == "timer":
-            _cycle(ctx)  # fire an immediate first cycle
-            ctx.every(max(0.001, float(interval_s)), lambda: _cycle(ctx))
 
-    @exp.on_bnc_in
-    def _bnc(ctx, ev):
-        if trigger != "bnc":
-            return
-        if ev.data.get("edge") != "rising":
-            return
-        if ev.data.get("channel") not in (None, bnc_channel):
-            return
-        _cycle(ctx)
+    kit.on_trigger(exp, trigger, interval_s, bnc_channel, _cycle)
+    kit.log_faults(exp)
+    kit.log_cycle_summary(exp, "fixed_and_random_end")
 
-    @exp.on_fault
-    def _fault(ctx, ev):
-        ctx.log("fault", node=ev.node_id, fault_code=ev.data.get("fault_code"))
-
-    @exp.on_recover
-    def _recovered(ctx, ev):
-        ctx.log("recovered", node=ev.node_id)
-
-    @exp.on_end
-    def _end(ctx):
-        ctx.log(
-            "fixed_and_random_end",
-            cycles=ctx.counter("cycles"),
-            pellets=ctx.counter("pellets"),
-            elapsed_s=round(ctx.elapsed(), 3),
-        )
-
-    exp.end_after(hours=hours, minutes=minutes, seconds=seconds, pellets=max_pellets)
     return exp
