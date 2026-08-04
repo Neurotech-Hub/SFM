@@ -313,7 +313,7 @@ def test_fault_halts_only_that_node_session_continues() -> None:
             EventKind.FAULT,
             node_id=1,
             timestamp=2.0,
-            data={"fault_code": ServiceStatus.Timeout},
+            data={"fault_code": ServiceStatus.FeedTimeout},
         )
     )
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
+from .. import kit
 from ..runner import Experiment
 
 
@@ -51,90 +52,82 @@ def build(
     max_pellets:
         End when this many pellets reach `Loaded` (None = no cap).
     """
-    node_list = list(nodes) if nodes else [1, 2, 3]
-    exp = Experiment(nodes=node_list, name=name)
+    exp = kit.session(name, nodes, hours=hours, minutes=minutes, seconds=seconds, max_pellets=max_pellets)
 
     @exp.on_start
-    def _start(ctx):
-        ctx.log("free_feeding_start", nodes=ctx.nodes, reload_delay_s=reload_delay_s)
-        for n in ctx.nodes:
-            ctx.dispense(n)
+    def _start(control):
+        control.log("free_feeding_start", nodes=control.nodes, reload_delay_s=reload_delay_s)
+        for n in control.nodes:
+            control.dispense(n)
 
     @exp.on_dome_opened
-    def _opened(ctx, ev):
-        ctx.incr("dome_openings")
-        ctx.log(
+    def _opened(control, event):
+        control.incr("dome_openings")
+        control.log(
             "dome_opened",
-            node=ev.node_id,
-            pellet_present=ev.data.get("pellet_present"),
+            node=event.node_id,
+            pellet_present=event.data.get("pellet_present"),
         )
 
     @exp.on_pellet_taken
-    def _reload(ctx, ev):
-        if ctx.stop_requested:
+    def _reload(control, event):
+        if control.stop_requested:
             return
-        node_id = ev.node_id
-        ctx.incr("pellets_taken")
-        ctx.log(
+        node_id = event.node_id
+        control.incr("pellets_taken")
+        control.log(
             "pellet_taken",
             node=node_id,
-            dome_open=ev.data.get("dome_open"),
-            total=ctx.counter("pellets_taken"),
+            dome_open=event.data.get("dome_open"),
+            total=control.counter("pellets_taken"),
         )
 
         def _do_reload():
-            if ctx.stop_requested:
+            if control.stop_requested:
                 return
-            ctx.log("reload_dispense", node=node_id)
-            ctx.dispense(node_id)
+            control.log("reload_dispense", node=node_id)
+            control.dispense(node_id)
 
         if reload_delay_s <= 0:
             _do_reload()
         else:
             # Node-scoped so a fault on this node cancels its pending reload.
-            ctx.after(reload_delay_s, _do_reload, node=node_id)
+            control.after(reload_delay_s, _do_reload, node=node_id)
 
     @exp.on_loaded
-    def _loaded(ctx, ev):
+    def _loaded(control, event):
         # Runner already incr("pellets"); just log for the experiment CSV.
-        ctx.log(
+        control.log(
             "loaded",
-            node=ev.node_id,
-            total=ctx.counter("pellets"),
+            node=event.node_id,
+            total=control.counter("pellets"),
         )
 
     @exp.on_fault
-    def _fault(ctx, ev):
+    def _fault(control, event):
         """
         Jam/timeout/pellet-lost on a node = no pellet delivered. The runner has
         already halted just this node (cancels its reload, makes its dispenses
         no-ops); the other nodes keep free-feeding. The node stays latched until
         an operator Recover — we only log here.
         """
-        fault_code = ev.data.get("fault_code")
-        ctx.log("fault", node=ev.node_id, fault_code=fault_code)
+        fault_code = event.data.get("fault_code")
+        control.log("fault", node=event.node_id, fault_code=fault_code)
 
     @exp.on_recover
-    def _recovered(ctx, ev):
+    def _recovered(control, event):
         """Operator cleared the fault — resume this node's dispense cycle."""
-        ctx.log("recovered", node=ev.node_id)
-        ctx.dispense(ev.node_id)
+        control.log("recovered", node=event.node_id)
+        control.dispense(event.node_id)
 
     @exp.on_end
-    def _end(ctx):
-        ctx.log(
+    def _end(control):
+        control.log(
             "free_feeding_end",
-            pellets=ctx.counter("pellets"),
-            pellets_taken=ctx.counter("pellets_taken"),
-            dome_openings=ctx.counter("dome_openings"),
-            elapsed_s=round(ctx.elapsed(), 3),
+            pellets=control.counter("pellets"),
+            pellets_taken=control.counter("pellets_taken"),
+            dome_openings=control.counter("dome_openings"),
+            elapsed_s=round(control.elapsed(), 3),
         )
 
-    exp.end_after(hours=hours, minutes=minutes, seconds=seconds, pellets=max_pellets)
     return exp
-
-
-# Alias matching the plan's "free_feeding" naming.
-def free_feeding(*args, **kwargs) -> Experiment:
-    """Alias for :func:`build`."""
-    return build(*args, **kwargs)

@@ -8,7 +8,7 @@ thin layers over this same API.
 """
 
 from .events import EventKind, NodeEvent
-from .context import ExperimentContext
+from .context import ExperimentContext, ExperimentControl
 from .runner import Experiment, ExperimentRunner
 from .schema import ExperimentDef, ExperimentParam, load_experiment_defs, build_experiment
 from .gui_controller import ExperimentController
@@ -16,7 +16,8 @@ from .gui_controller import ExperimentController
 __all__ = [
     "EventKind",
     "NodeEvent",
-    "ExperimentContext",
+    "ExperimentContext",  # old name, kept as an alias for ExperimentControl
+    "ExperimentControl",
     "Experiment",
     "ExperimentRunner",
     "ExperimentDef",

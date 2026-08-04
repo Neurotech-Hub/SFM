@@ -1,20 +1,25 @@
 """
-context.py — User-facing ExperimentContext passed into callbacks.
+context.py — ExperimentControl (the `control` argument) passed into every
+@exp.on_* callback and @exp.script generator.
 
 Provides actions (dispense, recover, BNC pulse), timers (after / every),
-named counters, elapsed time, and experiment-level logging.
+named counters, elapsed time, per-node sensor state, and experiment-level
+logging.
 """
 
 from __future__ import annotations
 
 import csv
+import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar, Union
 
-from ..protocol import CanCmd, build_setconfig_heartbeat
+from ..protocol import CanCmd, build_dispense_no_feed, build_setconfig_heartbeat
+from .events import EventKind, NodeEvent
+from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind
 
 if TYPE_CHECKING:
     from ..can_manager import CanManager
@@ -22,6 +27,37 @@ if TYPE_CHECKING:
 
 
 TimerCallback = Callable[[], None]
+T = TypeVar("T")
+
+# Events that count as "the animal did something" for quiet_for(). Deliberately
+# excludes HEARTBEAT (arrives every ~5s regardless of activity) and the node's
+# own phase events (SEEKING/LOWERING/LOADING/RAISING/DWELLING/ON_PLATE/LOADED/
+# NO_FEED_PRESENTED), which are caused by our own dispense command, not the
+# animal.
+_ACTIVITY_KINDS = frozenset(
+    {
+        EventKind.PG_CHANGED,
+        EventKind.DOME_OPENED,
+        EventKind.DOME_CLOSED,
+        EventKind.PRESENCE_CHANGED,
+        EventKind.PELLET_TAKEN,
+        EventKind.BNC_IN,
+    }
+)
+
+
+@dataclass
+class _NodeView:
+    """Per-node sensor snapshot, mirrored from the normalized event stream."""
+
+    pellet: bool = False
+    load_position: bool = False
+    dome_open: bool = False
+    presence: bool = False
+    online: bool = False
+    last_event_ts: float = 0.0
+    last_activity_ts: float = 0.0
+    last_kind: Optional[EventKind] = None
 
 
 @dataclass
@@ -47,9 +83,11 @@ class ExperimentLogEntry:
         return datetime.fromtimestamp(self.timestamp).isoformat(timespec="milliseconds")
 
 
-class ExperimentContext:
+class ExperimentControl:
     """
-    Surface available to user callbacks.
+    Surface available to user callbacks and @exp.script generators — the
+    ``control`` argument (an ``event`` argument follows it in @exp.on_*
+    callbacks).
 
     Constructed by ExperimentRunner and passed as the first argument to
     every registered handler. Actions go through CanManager / IOManager;
@@ -72,6 +110,7 @@ class ExperimentContext:
         io: Optional["IOManager"] = None,
         log_dir: Optional[str] = None,
         session_name: str = "experiment",
+        seed: Optional[int] = None,
     ) -> None:
         self.nodes: List[int] = list(nodes)
         self._can = can
@@ -97,6 +136,25 @@ class ExperimentContext:
         self._stop_requested: bool = False
         self._stop_reason: str = ""
 
+        # Hook for ScriptScheduler: fired from halt_node() so a pending
+        # `wait_for(..., node=X)` in a @exp.script aborts when X faults.
+        self.on_node_halted: Optional[Callable[[int], None]] = None
+
+        # Per-node sensor mirror, fed by observe_event() from every dispatched
+        # NodeEvent (not from EventNormalizer._NodeTrack, which only sees real
+        # CAN frames and is blind to runner.inject() — the mechanism tests and
+        # @exp.script development both rely on).
+        self._node_views: Dict[int, _NodeView] = {}
+
+        # Reproducible RNG for @exp.script tasks (control.chance/pick/shuffled).
+        # A seed is always generated and logged, even if the author didn't
+        # supply one, so every session can be replayed after the fact.
+        self.seed: int = int(seed) if seed is not None else random.randrange(2**32)
+        self._rng = random.Random(self.seed)
+
+        # Trial counter for @exp.script tasks (control.next_trial() / .trial).
+        self._trial: int = 0
+
     # ------------------------------------------------------------------
     # Lifecycle (called by runner)
     # ------------------------------------------------------------------
@@ -114,6 +172,10 @@ class ExperimentContext:
         """Mark session start and open the experiment CSV if configured."""
         self._now = now if now is not None else time.time()
         self._start_time = self._now
+        # Seed each node's activity timestamp at session start so quiet_for(N)
+        # is False for the first N seconds rather than trivially true at t=0.
+        for n in self.nodes:
+            self._view(n).last_activity_ts = self._now
         self._open_csv()
 
     def end(self) -> None:
@@ -146,9 +208,17 @@ class ExperimentContext:
     # Actions
     # ------------------------------------------------------------------
 
-    def dispense(self, node: int) -> bool:
+    def dispense(self, node: int, *, feed: bool = True, dwell_s: float = 6.0) -> bool:
         """
-        Send Dispense to one node.
+        Send Dispense (or, with ``feed=False``, DispenseNoFeed) to one node.
+
+        DispenseNoFeed runs the identical dispense motion — lower, seek the
+        load position, raise — but M1 never turns: the node holds at the drop
+        position for ``dwell_s`` seconds (default 6s, matching the time a fed
+        cycle spends loading) before raising an empty plate. Use it to run a
+        module through the motions with no pellet — e.g. so a two-armed task
+        can activate both arms every trial and the animal can't use sound or
+        vibration alone to find the baited one.
 
         No-op (logged) while the node is halted by a fault — templates can keep
         calling ``dispense(n)`` unconditionally; a faulted node simply stops
@@ -157,7 +227,11 @@ class ExperimentContext:
         if node in self._halted:
             self.log("dispense_skipped_halted", node=node)
             return False
-        return self._send(node, CanCmd.Dispense)
+        if feed:
+            return self._send(node, CanCmd.Dispense)
+        return self._send(
+            node, CanCmd.DispenseNoFeed, build_dispense_no_feed(int(dwell_s * 1000))
+        )
 
     def recover(self, node: int) -> bool:
         """Send Recover to one node."""
@@ -199,6 +273,8 @@ class ExperimentContext:
         self._halted.add(node_id)
         self.cancel_node_timers(node_id)
         self.log("node_halted", node=node_id)
+        if self.on_node_halted is not None:
+            self.on_node_halted(node_id)
 
     def recover_node(self, node_id: int) -> None:
         """
@@ -301,6 +377,177 @@ class ExperimentContext:
         return max(0.0, self._now - self._start_time)
 
     # ------------------------------------------------------------------
+    # Sequential scripts (@exp.script) — awaitables
+    # ------------------------------------------------------------------
+    #
+    # These are pure constructors: they build an _Await and do nothing else.
+    # All arming happens in ScriptScheduler at the moment the object comes
+    # back out of a `yield` — constructing one without yielding it is
+    # harmless.
+
+    def wait_for(
+        self,
+        kind: Union[str, EventKind],
+        node: Union[int, Sequence[int], None] = None,
+        timeout: Optional[float] = None,
+    ) -> _Await:
+        """
+        Wait for the next matching event.
+
+        ``kind`` is an EventKind or its lower-case name (e.g. "pellet_taken").
+        ``node`` restricts to one node id or a list of ids; omit for any node.
+        """
+        ek = kind if isinstance(kind, EventKind) else _resolve_event_kind(str(kind))
+        nodes = _as_node_tuple(node)
+        return _Await(
+            kind=_AwaitKind.EVENT,
+            event_kind=ek,
+            nodes=nodes,
+            timeout=timeout,
+            label=f"{ek.name.lower()}{_node_suffix(nodes)}",
+        )
+
+    def wait_until(
+        self,
+        predicate: Callable[["ExperimentControl"], bool],
+        timeout: Optional[float] = None,
+        node: Union[int, Sequence[int], None] = None,
+    ) -> _Await:
+        """
+        Wait until ``predicate(control)`` returns True (polled every tick).
+
+        Pass ``node`` only if this condition should also abort when that node
+        faults; otherwise it is purely time/state-driven.
+        """
+        return _Await(
+            kind=_AwaitKind.UNTIL,
+            predicate=predicate,
+            nodes=_as_node_tuple(node),
+            timeout=timeout,
+            label=getattr(predicate, "__name__", "condition"),
+        )
+
+    def wait(self, seconds: float) -> _Await:
+        """Wait a fixed duration on the runner clock."""
+        s = float(seconds)
+        if s <= 0:
+            return _Await(kind=_AwaitKind.TICK, label="tick")
+        return _Await(kind=_AwaitKind.DELAY, seconds=s, label=f"wait({s:g}s)")
+
+    # ------------------------------------------------------------------
+    # Sequential scripts (@exp.script) — per-node state
+    # ------------------------------------------------------------------
+
+    def observe_event(self, ev: NodeEvent) -> None:
+        """
+        Mirror one dispatched NodeEvent into per-node sensor state.
+
+        Called by the runner for every event in a dispatch batch (real CAN,
+        simulator, or runner.inject() — all three go through this, unlike
+        EventNormalizer._NodeTrack which only sees real CAN frames).
+        """
+        if ev.node_id == 0:
+            return
+        view = self._view(ev.node_id)
+        view.last_event_ts = ev.timestamp
+        if ev.kind in _ACTIVITY_KINDS:
+            view.last_activity_ts = ev.timestamp
+        view.last_kind = ev.kind
+
+        if ev.kind is EventKind.PG_CHANGED:
+            gate = ev.data.get("gate")
+            active = bool(ev.data.get("active"))
+            if gate == "pellet":
+                view.pellet = active
+            elif gate == "load_position":
+                view.load_position = active
+            elif gate == "dome":
+                view.dome_open = active
+        elif ev.kind is EventKind.DOME_OPENED:
+            view.dome_open = True
+        elif ev.kind is EventKind.DOME_CLOSED:
+            view.dome_open = False
+        elif ev.kind is EventKind.PRESENCE_CHANGED:
+            view.presence = bool(ev.data.get("active"))
+        elif ev.kind is EventKind.ON_PLATE:
+            view.pellet = True
+        elif ev.kind is EventKind.PELLET_TAKEN:
+            view.pellet = False
+        elif ev.kind in (EventKind.NODE_ONLINE, EventKind.HEARTBEAT):
+            view.online = True
+            if ev.kind is EventKind.HEARTBEAT:
+                view.pellet = bool(ev.data.get("pellet", view.pellet))
+                view.load_position = bool(ev.data.get("load_position", view.load_position))
+                view.dome_open = bool(ev.data.get("dome_open", view.dome_open))
+                view.presence = bool(ev.data.get("mouse_presence", view.presence))
+        elif ev.kind is EventKind.NODE_OFFLINE:
+            view.online = False
+
+    def quiet_for(self, seconds: float, node: Union[int, Sequence[int], None] = None) -> bool:
+        """True if no activity (PG/dome/presence/pellet-taken/BNC) on the
+        given node(s) — or all session nodes, if omitted — for ``seconds``."""
+        cutoff = self._now - max(0.0, float(seconds))
+        targets = self._node_list(node)
+        return all(self._view(n).last_activity_ts <= cutoff for n in targets)
+
+    def domes_closed(self, nodes: Union[int, Sequence[int], None] = None) -> bool:
+        targets = self._node_list(nodes)
+        return all(not self._view(n).dome_open for n in targets)
+
+    def dome_open(self, node: int) -> bool:
+        return self._view(node).dome_open
+
+    def pellet_on_plate(self, node: int) -> bool:
+        return self._view(node).pellet
+
+    def is_online(self, node: int) -> bool:
+        return self._view(node).online
+
+    def _node_list(self, node: Union[int, Sequence[int], None]) -> List[int]:
+        if node is None:
+            return self.nodes
+        if isinstance(node, int):
+            return [node]
+        return list(node)
+
+    def _view(self, node_id: int) -> _NodeView:
+        view = self._node_views.get(node_id)
+        if view is None:
+            view = _NodeView()
+            self._node_views[node_id] = view
+        return view
+
+    # ------------------------------------------------------------------
+    # Sequential scripts (@exp.script) — trials + RNG
+    # ------------------------------------------------------------------
+
+    def next_trial(self) -> int:
+        """Advance and return the trial counter (also mirrored in counter('trials'))."""
+        self._trial += 1
+        self.set_counter("trials", self._trial)
+        self.log("trial", trial=self._trial)
+        return self._trial
+
+    @property
+    def trial(self) -> int:
+        """Current trial number (0 before the first next_trial() call)."""
+        return self._trial
+
+    def chance(self, p: float) -> bool:
+        """True with probability ``p`` (session-seeded RNG; see .seed)."""
+        return self._rng.random() < max(0.0, min(1.0, float(p)))
+
+    def pick(self, seq: Sequence[T]) -> T:
+        """Pick one item uniformly at random (session-seeded RNG)."""
+        return self._rng.choice(list(seq))
+
+    def shuffled(self, seq: Iterable[T]) -> List[T]:
+        """Return a shuffled copy of ``seq`` (session-seeded RNG)."""
+        out = list(seq)
+        self._rng.shuffle(out)
+        return out
+
+    # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
 
@@ -375,3 +622,7 @@ class ExperimentContext:
             self._csv_file.close()
             self._csv_file = None
             self._csv_writer = None
+
+
+# Old name, kept as an alias — existing code and tests import ExperimentContext.
+ExperimentContext = ExperimentControl

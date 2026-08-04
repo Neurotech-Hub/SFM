@@ -21,13 +21,17 @@ DispenserService::DispenserService()
       motor2Target_(0),
       pg3WasOpen_(false),
       grabPhase_(false),
+      noFeed_(false),
       phaseStartPos_(0),
       belowLoad_(false),
       approachRetried_(false),
+      seekUntilClear_(false),
       raiseStartMs_(0),
       pg3OpenSinceMs_(0),
       pelletClearSinceMs_(0),
       pelletSeenSinceMs_(0),
+      dwellStartMs_(0),
+      dwellMs_(kDefaultNoFeedDwellMs),
       domeWarnLatched_(false),
       lastDomeOpenedWithPellet_(false),
       lastTakenWithDomeOpen_(false),
@@ -71,8 +75,7 @@ ServiceStatus DispenserService::begin() {
     approachRetried_ = false;
     phaseStartPos_ = motor2_.currentPosition();
     // Height is unknown at boot. An asserted load sensor proves the load position; clear is
-    // ambiguous (above or below), and the approach's seek-away retry recovers
-    // from a cold start left at the drop position.
+
     belowLoad_ = pg2State_;
     lastFault_ = ServiceStatus::Ok;
 
@@ -92,17 +95,25 @@ void DispenserService::update() {
             break;
 
         case DispenseState::Seeking:
-            // Fixed travel, load sensor not consulted: at the drop position it may
-            // already read clear, and a sensor-gated seek would skip the move.
+            // Cap at seekAwaySteps_. When entered from the load sensor (pg2
+            // asserted), also stop as soon as the beam clears — whichever first.
+            // Fixed-only seeks (seekUntilClear_ false) are for a known drop
+            // position where the sensor is already clear.
             if (phaseTimedOut(lowerTimeoutMs_)) {
                 faultNow(ServiceStatus::ActuatorTimeout);
                 break;
             }
-            if ((motor2_.currentPosition() - phaseStartPos_) >= seekAwaySteps_) {
-                startApproachPg2();
-                setState(DispenseState::Lowering);
-            } else {
-                motor2_.runSpeed();
+            {
+                const long traveled =
+                    motor2_.currentPosition() - phaseStartPos_;
+                const bool hitCap = traveled >= seekAwaySteps_;
+                const bool cleared = seekUntilClear_ && !pg2State_;
+                if (hitCap || cleared) {
+                    startApproachPg2();
+                    setState(DispenseState::Lowering);
+                } else {
+                    motor2_.runSpeed();
+                }
             }
             break;
 
@@ -115,15 +126,14 @@ void DispenserService::update() {
                     startGrabDescent(); // no halt; grab branch runs this same tick
                 } else if (phaseTimedOut(lowerTimeoutMs_) ||
                            labs(motor2_.currentPosition() - phaseStartPos_) >= lowerSteps_) {
-                    // The actuator started below the sensor and this approach drove
-                    // it into the stop. Back off once and re-approach before
-                    // calling it a fault.
-                    if (approachRetried_) {
+                    // Approach missed the load sensor (beam still clear). Only
+                    // raise to seek when we already know the plate is at drop
+                    // depth.
+                    if (approachRetried_ || !belowLoad_) {
                         faultNow(ServiceStatus::ActuatorTimeout);
                     } else {
                         approachRetried_ = true;
-                        belowLoad_ = true;
-                        startSeekAwayFromPg2();
+                        startSeekAwayFromPg2(false);
                         setState(DispenseState::Seeking);
                     }
                     break;
@@ -137,13 +147,31 @@ void DispenserService::update() {
                 // The load sensor is deliberately ignored here (same as ActuatorCalTest 'd <n>').
                 if (labs(motor2_.currentPosition() - phaseStartPos_) >= grabSteps_) {
                     haltMotors();
-                    startFeed();
-                    setState(DispenseState::Loading);
+                    if (noFeed_) {
+                        // No-feed cycle: M1 never runs. Hold here for the
+                        // commanded dwell so the acoustic/vibration signature
+                        // matches a fed dispense, then raise identically.
+                        startDwell();
+                        setState(DispenseState::Dwelling);
+                    } else {
+                        startFeed();
+                        setState(DispenseState::Loading);
+                    }
                 } else {
                     motor2_.runSpeed();
                 }
             } else {
                 motor2_.runSpeed();
+            }
+            break;
+
+        case DispenseState::Dwelling:
+            // Motors already halted by the grab-descent hand-off. Nothing is
+            // being loaded, so no PG1 guard and no feed budget apply here —
+            // dwellMs_ is itself the bound (clamped at command time).
+            if ((millis() - dwellStartMs_) >= dwellMs_) {
+                startRaise(raiseSteps_); // identical travel to a fed cycle
+                setState(DispenseState::Raising);
             }
             break;
 
@@ -185,20 +213,27 @@ void DispenserService::update() {
                 // Beam cleared → plate is above the load sensor again.
                 belowLoad_ = false;
             }
+            // Motion guard: still valid on a no-feed raise. The plate must
+            // clear the load sensor whether or not it carries a pellet.
             if (pg2State_ &&
                 (millis() - raiseStartMs_) >= kLoadClearOnRaiseMs) {
                 faultNow(ServiceStatus::Jam);
                 break;
             }
-            if (!pg1State_) {
-                if (pelletClearSinceMs_ == 0) {
-                    pelletClearSinceMs_ = millis();
-                } else if ((millis() - pelletClearSinceMs_) >= kPelletLostMs) {
-                    faultNow(ServiceStatus::PelletLost);
-                    break;
+            // Pellet guard: only meaningful when a pellet was loaded. A
+            // no-feed raise ALWAYS has PG1 clear, so running this would
+            // fault every cycle.
+            if (!noFeed_) {
+                if (!pg1State_) {
+                    if (pelletClearSinceMs_ == 0) {
+                        pelletClearSinceMs_ = millis();
+                    } else if ((millis() - pelletClearSinceMs_) >= kPelletLostMs) {
+                        faultNow(ServiceStatus::PelletLost);
+                        break;
+                    }
+                } else {
+                    pelletClearSinceMs_ = 0;
                 }
-            } else {
-                pelletClearSinceMs_ = 0;
             }
             if (phaseTimedOut(raiseTimeoutMs_)) {
                 faultNow(ServiceStatus::ActuatorTimeout);
@@ -206,8 +241,16 @@ void DispenserService::update() {
             }
             if (motor2_.currentPosition() >= motor2Target_) {
                 haltMotors();
-                setEvent(DispenseEvent::Loaded);
-                pelletCount_++;
+                if (noFeed_) {
+                    // No pellet was delivered: do NOT emit Loaded and do NOT
+                    // touch pelletCount_, so the base station's `pellets`
+                    // counter (and end_after(pellets=...)) does not move for
+                    // an unrewarded cycle.
+                    setEvent(DispenseEvent::NoFeedPresented);
+                } else {
+                    setEvent(DispenseEvent::Loaded);
+                    pelletCount_++;
+                }
                 pg3WasOpen_ = pg3State_;
                 pelletClearSinceMs_ = 0;
                 belowLoad_ = false; // the raise completed; plate is above the load sensor
@@ -219,10 +262,20 @@ void DispenserService::update() {
 
         case DispenseState::Loaded:
             if (pg3State_ && !pg3WasOpen_) {
-                lastDomeOpenedWithPellet_ = pg1State_;
+                lastDomeOpenedWithPellet_ = pg1State_; // false on a no-feed cycle
                 setEvent(DispenseEvent::DomeOpened);
             }
             pg3WasOpen_ = pg3State_;
+
+            if (noFeed_) {
+                // Empty plate: there is no pellet to take, so the
+                // presence-clear timer must not run and PelletTaken must
+                // never fire. Dome bouts are still reported above (and
+                // DomeOpenWarning still runs — checkDomeOpenWarning() is
+                // outside this switch). The cycle ends on the next
+                // Dispense/DispenseNoFeed (both accept Loaded) or Recover.
+                break;
+            }
 
             if (!pg1State_) {
                 if (pelletClearSinceMs_ == 0) {
@@ -252,6 +305,7 @@ bool DispenserService::dispense() {
 
     haltMotors();
     pelletClearSinceMs_ = 0;
+    noFeed_ = false; // clear any stale flag from a preceding no-feed cycle
 
     // Occupancy first — pellet sensor is on the plate at all times.
     if (pg1State_) {
@@ -259,6 +313,31 @@ bool DispenserService::dispense() {
         return true;
     }
 
+    beginLoweringPhase();
+    return true;
+}
+
+bool DispenserService::dispenseNoFeed(uint16_t dwellMs) {
+    if (state_ != DispenseState::Idle && state_ != DispenseState::Loaded) {
+        return false;
+    }
+
+    haltMotors();
+    pelletClearSinceMs_ = 0;
+
+    // Occupancy first, same as dispense(). A real pellet is already on the
+    // plate: present it honestly as a normal FeedSkipped cycle rather than
+    // silently discarding it — noFeed_ MUST be cleared here, otherwise the
+    // Raising/Loaded no-feed branches would run with a real pellet
+    // aboard and disable both PelletLost and PelletTaken for it.
+    if (pg1State_) {
+        noFeed_ = false;
+        beginOccupiedDispense();
+        return true;
+    }
+
+    noFeed_  = true;
+    dwellMs_ = constrain(dwellMs, kNoFeedDwellMinMs, kNoFeedDwellMaxMs);
     beginLoweringPhase();
     return true;
 }
@@ -288,10 +367,13 @@ void DispenserService::recover() {
     pelletClearSinceMs_ = 0;
     pelletSeenSinceMs_ = 0;
     grabPhase_ = false;
-    // Re-anchor height guess from the sensor: asserted ⇒ at load; clear is
-    // treated as not-below so the next Dispense approaches down (approach
-    // retry still covers a plate left at drop depth).
-    belowLoad_ = pg2State_;
+    noFeed_ = false;
+    // Asserted load sensor ⇒ at load. Clear does not prove elevated: the drop
+    // position also reads clear, so preserve belowLoad_ when the beam is open.
+    // (PelletLost mid-raise already cleared belowLoad_ when the sensor opened.)
+    if (pg2State_) {
+        belowLoad_ = true;
+    }
     setState(DispenseState::Idle);
 }
 
@@ -307,13 +389,16 @@ void DispenserService::beginLoweringPhase() {
     grabPhase_ = false;
     approachRetried_ = false;
 
-    // Seek only when the load sensor actually detects the plate. A clear sensor
-    // is ambiguous (above or below), so approach down first; a miss at drop depth
-    // is recovered by the one-shot seek-away retry inside Lowering.
-    // Do not use belowLoad_ here: a PelletLost mid-raise leaves that flag set
-    // even though the plate is already above the sensor.
+    // Seek-up only when safe:
+    //   - load sensor asserted → at load position; raise until clear or cap
+    //   - belowLoad_ known → at drop depth (sensor already clear); fixed raise
+    // A clear sensor with unknown height means approach down. Never invent a
+    // seek from "maybe below" — that is what smashed the stop after PelletLost.
     if (pg2State_) {
-        startSeekAwayFromPg2();
+        startSeekAwayFromPg2(true);
+        setState(DispenseState::Seeking);
+    } else if (belowLoad_) {
+        startSeekAwayFromPg2(false);
         setState(DispenseState::Seeking);
     } else {
         startApproachPg2();
@@ -321,7 +406,8 @@ void DispenserService::beginLoweringPhase() {
     }
 }
 
-void DispenserService::startSeekAwayFromPg2() {
+void DispenserService::startSeekAwayFromPg2(bool untilClear) {
+    seekUntilClear_ = untilClear;
     motor2_.enableOutputs();
     phaseStartPos_ = motor2_.currentPosition();
     motionStartMs_ = millis();
@@ -352,6 +438,12 @@ void DispenserService::startFeed() {
     motionStartMs_ = millis();
     pelletSeenSinceMs_ = 0;
     motor1_.setSpeed(motorSpeed_ * feedSpeedScale_);
+}
+
+void DispenserService::startDwell() {
+    dwellStartMs_      = millis();
+    motionStartMs_     = dwellStartMs_;
+    pelletSeenSinceMs_ = 0;
 }
 
 void DispenserService::startRaise(long steps) {
@@ -415,6 +507,7 @@ void DispenserService::haltMotors() {
 void DispenserService::faultNow(ServiceStatus code) {
     haltMotors();
     grabPhase_ = false;
+    noFeed_ = false;
     pelletSeenSinceMs_ = 0;
     lastFault_ = code;
     setEvent(DispenseEvent::Fault);

@@ -108,17 +108,13 @@ from base_station.experiment import Experiment, EventKind
 exp = Experiment(nodes=[1, 2, 3], name="my_task")
 
 @exp.on_start
-def start(ctx):
-    for n in ctx.nodes:
-        ctx.dispense(n)
+def start(control):
+    for n in control.nodes:
+        control.dispense(n)
 
-@exp.on_catch_attempt
-def attempted(ctx, ev):
-    ctx.log("retrieval_attempt", node=ev.node_id)
-
-@exp.on_dome_closed
-def reload(ctx, ev):
-    ctx.after(2.0, lambda: ctx.dispense(ev.node_id))
+@exp.on_pellet_taken
+def reload(control, event):
+    control.after(2.0, lambda: control.dispense(event.node_id))
 
 exp.end_after(hours=12)
 # exp.run(interface="vcan0")   # or: save as my_task.py and use the CLI
@@ -135,17 +131,21 @@ A script may expose either `exp = Experiment(...)` or
 
 | Name | Module | Behavior |
 |------|--------|----------|
-| `free_feeding` | `base_station.experiment.templates.free_feeding` | Dispense on all nodes at start; on dome close, wait `reload_delay` and re-dispense; end on duration and/or pellet cap |
+| `free_feeding` | `base_station.experiment.templates.free_feeding` | Dispense on all nodes at start; after each pellet taken, wait `reload_delay_s` and re-dispense; end on duration and/or pellet cap |
+| `fixed_and_random` | `base_station.experiment.templates.fixed_and_random` | Per-node role (off/fixed/random) on a timer or BNC trigger |
+| `probability_delivery` | `base_station.experiment.templates.probability_delivery` | Each trigger delivers on one node, chosen by weighted random draw |
+| `two_armed_bandit` | `base_station.experiment.templates.two_armed_bandit` | Two-armed bandit: both arms move each trial, only one delivers, reward probability flips every `block_size` trials |
 
 ### API surface
 
-- **Events** (`EventKind`): `ON_PLATE`, `LOADED`, `CATCH_ATTEMPT`,
+- **Events** (`EventKind`): `ON_PLATE`, `LOADED`, `PELLET_TAKEN`,
   `FAULT`, phase events, `PRESENCE_CHANGED`, `PG_CHANGED`, plus derived
   `DOME_OPENED` / `DOME_CLOSED`, `NODE_ONLINE` / `NODE_OFFLINE`, and
   base-station `BNC_IN`, `SESSION_START`, `SESSION_END`.
-- **Context actions**: `dispense`, `recover`, `broadcast_dispense`,
-  `broadcast_recover`, `bnc_pulse`, `set_heartbeat_interval`, `after` / `every` timers,
-  named `counter` / `incr`, `log`.
+- **Control actions**: `dispense` (pass `feed=False` for a no-pellet motion-only
+  cycle), `recover`, `broadcast_dispense`, `broadcast_recover`, `bnc_pulse`,
+  `set_heartbeat_interval`, `after` / `every` timers, named `counter` / `incr`, `log`.
+- **Sequential tasks**: `@exp.script` — see `base_station/experiment/README.md` §5.
 - **Lifecycle**: `start_when(condition)`, `end_after(hours=…, pellets=…)`,
   `end_when(condition)`.
 - **Hosting**: `exp.run(interface=…)` (blocking) or
@@ -199,10 +199,15 @@ tools/dev_gui/
     ├── app.py                # DearPyGui screens + render loop
     └── experiment/           # Headless event-driven task engine
         ├── events.py         # EventKind + CAN → NodeEvent normalizer
-        ├── context.py        # Actions, timers, counters, experiment CSV
+        ├── context.py        # ExperimentControl: actions, timers, counters, experiment CSV
+        ├── script.py         # @exp.script sequential-generator scheduler
         ├── runner.py         # Experiment API + tick loop
+        ├── kit.py            # Shared template boilerplate (session/trigger/fault logging)
         └── templates/
-            └── free_feeding.py
+            ├── free_feeding.py
+            ├── fixed_and_random.py
+            ├── probability_delivery.py
+            └── two_armed_bandit.py
 ```
 
 ## Persistent MAC ↔ Node ID map
