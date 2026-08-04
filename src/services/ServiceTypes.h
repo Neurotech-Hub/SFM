@@ -43,8 +43,9 @@ enum class DispenseState : uint8_t {
     Loading  = 2, // M1 until the pellet sensor asserts
     Raising  = 3, // M2 up by raiseSteps_ from the pellet-drop position
     Loaded   = 4, // plate at top, ready for the mouse; ends on PelletTaken → Idle
-    Seeking  = 5, // M2 up by seekAwaySteps_ to clear the load sensor (before approach)
+    Seeking  = 5, // M2 up until load sensor clears or seekAwaySteps_ (before approach)
     Fault    = 6, // sticky until recover()
+    Dwelling = 7, // no-feed: holding at the drop position, M1 idle
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,7 @@ enum class DispenseEvent : uint8_t {
     DomeOpenWarning,  // dome open continuously > kDomeOpenWarnMs
     PelletTaken,      // pellet sensor cleared while Loaded → Idle
     FeedSkipped,      // Dispense with plate already occupied
+    NoFeedPresented,  // no-feed raise complete; empty plate at the top (pelletCount NOT incremented)
 };
 
 // ---------------------------------------------------------------------------
@@ -67,13 +69,14 @@ enum class DispenseEvent : uint8_t {
 // Base -> Node on ID: 0x100 + nodeId   (0x100 = broadcast to all nodes)
 // ---------------------------------------------------------------------------
 enum class CanCmd : uint8_t {
-    Ping      = 0x01,
-    Dispense  = 0x02,
-    Recover   = 0x03, // stop motion, clear sticky Fault, return to Idle
-    AssignId  = 0x04, // payload byte[1] = new nodeId
-    SetConfig = 0x05, // payload TBD
-    ReqStatus = 0x06,
-    ClearId   = 0x07, // clear NVS id; re-enter discovery (broadcast-friendly)
+    Ping           = 0x01,
+    Dispense       = 0x02,
+    Recover        = 0x03, // stop motion, clear sticky Fault, return to Idle
+    AssignId       = 0x04, // payload byte[1] = new nodeId
+    SetConfig      = 0x05, // payload TBD
+    ReqStatus      = 0x06,
+    ClearId        = 0x07, // clear NVS id; re-enter discovery (broadcast-friendly)
+    DispenseNoFeed = 0x08, // full dispense motion, M1 never runs; payload = dwell ms LE16 (optional)
 };
 
 // ---------------------------------------------------------------------------
@@ -93,7 +96,9 @@ enum class CanEvent : uint8_t {
     DomeOpenWarning = 0x0A, // dome open > kDomeOpenWarnMs
     PelletTaken     = 0x0B, // extra: count LE16 + dome_open
     FeedSkipped     = 0x0C, // plate occupied on Dispense; lower/load skipped
-    Seeking         = 0x0D, // M2 clearing the load sensor before Lowering
+    Seeking         = 0x0D, // M2 clearing the load sensor before Lowering (clear or step cap)
+    NoFeedPresented = 0x0E, // no-feed raise complete; extra: count LE16 (NOT incremented)
+    Dwelling        = 0x0F, // phase: holding at the drop position, M1 idle
 };
 
 // Input IDs carried by CanEvent::InputChanged.

@@ -26,6 +26,7 @@ from __future__ import annotations
 import random
 from typing import Any, List, Optional, Sequence
 
+from .. import kit
 from ..runner import Experiment
 
 
@@ -98,54 +99,25 @@ def build(
     seed:
         Optional RNG seed for reproducible runs (tests). Falsy = nondeterministic.
     """
-    node_list = list(nodes) if nodes else [1, 2, 3]
-    exp = Experiment(nodes=node_list, name=name)
+    exp = kit.session(name, nodes, hours=hours, minutes=minutes, seconds=seconds, max_pellets=max_pellets)
     rng = random.Random(seed) if seed else random.Random()
-    weights = _weights_for_nodes(probabilities, node_list)
+    weights = _weights_for_nodes(probabilities, exp.nodes)
 
-    def _cycle(ctx) -> None:
-        ctx.incr("cycles")
+    def _cycle(control) -> None:
         # Weighted pick of a single node from the current node list.
-        target = rng.choices(ctx.nodes, weights=weights[: len(ctx.nodes)], k=1)[0]
-        ctx.log("probability_pick", node=target)
-        ctx.dispense(target)
+        target = rng.choices(control.nodes, weights=weights[: len(control.nodes)], k=1)[0]
+        control.log("probability_pick", node=target)
+        control.dispense(target)
 
     @exp.on_start
-    def _start(ctx):
-        ctx.log(
+    def _log_start(control):
+        control.log(
             "probability_delivery_start",
-            nodes=ctx.nodes, weights=weights, trigger=trigger,
-        )
-        if trigger == "timer":
-            _cycle(ctx)  # fire an immediate first cycle
-            ctx.every(max(0.001, float(interval_s)), lambda: _cycle(ctx))
-
-    @exp.on_bnc_in
-    def _bnc(ctx, ev):
-        if trigger != "bnc":
-            return
-        if ev.data.get("edge") != "rising":
-            return
-        if ev.data.get("channel") not in (None, bnc_channel):
-            return
-        _cycle(ctx)
-
-    @exp.on_fault
-    def _fault(ctx, ev):
-        ctx.log("fault", node=ev.node_id, fault_code=ev.data.get("fault_code"))
-
-    @exp.on_recover
-    def _recovered(ctx, ev):
-        ctx.log("recovered", node=ev.node_id)
-
-    @exp.on_end
-    def _end(ctx):
-        ctx.log(
-            "probability_delivery_end",
-            cycles=ctx.counter("cycles"),
-            pellets=ctx.counter("pellets"),
-            elapsed_s=round(ctx.elapsed(), 3),
+            nodes=control.nodes, weights=weights, trigger=trigger,
         )
 
-    exp.end_after(hours=hours, minutes=minutes, seconds=seconds, pellets=max_pellets)
+    kit.on_trigger(exp, trigger, interval_s, bnc_channel, _cycle)
+    kit.log_faults(exp)
+    kit.log_cycle_summary(exp, "probability_delivery_end")
+
     return exp

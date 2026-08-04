@@ -32,17 +32,17 @@ def run_custom_inline() -> None:
     exp = Experiment(nodes=[1, 2, 3], name="my_task")
 
     @exp.on_start
-    def _start(ctx):
-        for n in ctx.nodes:
-            ctx.dispense(n)
+    def _start(control):
+        for n in control.nodes:
+            control.dispense(n)
 
-    @exp.on_dome_closed
-    def _reload(ctx, ev):
-        ctx.after(30.0, lambda: ctx.dispense(ev.node_id), node=ev.node_id)
+    @exp.on_pellet_taken
+    def _reload(control, event):
+        control.after(30.0, lambda: control.dispense(event.node_id), node=event.node_id)
 
     @exp.on_recover
-    def _recover(ctx, ev):
-        ctx.dispense(ev.node_id)
+    def _recover(control, event):
+        control.dispense(event.node_id)
 
     exp.end_after(minutes=10)
     exp.run(interface=INTERFACE, use_io=False)

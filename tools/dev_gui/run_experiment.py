@@ -264,16 +264,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     print(f"Starting '{exp.name}' on {args.interface} nodes={exp.nodes}  (Ctrl+C to stop)")
-    ctx = exp.run(
+    control = exp.run(
         interface=args.interface,
         bitrate=args.bitrate,
         log_dir=args.log_dir,
         use_io=not args.no_io,
         poll_hz=args.poll_hz,
     )
-    print(f"Session ended. pellets={ctx.counter('pellets')} elapsed={ctx.elapsed():.1f}s")
-    if ctx.log_path:
-        print(f"Log: {ctx.log_path}")
+    print(f"Session ended. pellets={control.counter('pellets')} elapsed={control.elapsed():.1f}s")
+    if control.log_path:
+        print(f"Log: {control.log_path}")
     return 0
 
 

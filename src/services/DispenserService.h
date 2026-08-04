@@ -21,7 +21,7 @@ constexpr float    kDefaultFeedSpeedScale  = 0.5f;   // M1 speed = motorSpeed_ *
 // at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
 // kDefaultSeekAwaySteps ≈ 2000 steps. 2048 left almost no margin for that path.
 constexpr long     kDefaultLowerSteps      = 3072;   // max approach budget toward load position
-constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up to clear load sensor before approach
+constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up cap to clear load sensor (stop early when clear)
 constexpr long     kDefaultGrabSteps       = 280;    // M2 down past load sensor to drop position
 constexpr long     kDefaultRaiseSteps      = 1480;   // M2 up travel from the drop position
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
@@ -34,6 +34,10 @@ constexpr uint32_t kPelletTakenConfirmMs   = 200;    // pellet sensor clear → 
 constexpr uint32_t kPelletLostMs           = 500;    // pellet sensor clear during raise → PelletLost
 constexpr uint32_t kLoadClearOnRaiseMs     = 5000;   // load sensor must clear after raise start
 constexpr uint32_t kDomeOpenWarnMs         = 30000;  // dome open → DomeOpenWarning
+// No-feed dispense: dwell at the drop position (M1 idle) before raising.
+constexpr uint32_t kDefaultNoFeedDwellMs   = 6000;
+constexpr uint32_t kNoFeedDwellMinMs       = 500;
+constexpr uint32_t kNoFeedDwellMaxMs       = 60000;
 
 // ---------------------------------------------------------------------------
 class DispenserService {
@@ -46,6 +50,12 @@ public:
     // Start a dispense cycle from Idle or Loaded.
     // Occupancy is checked first: occupied → FeedSkipped (+ raise if needed).
     bool dispense();
+
+    // Same motion as dispense(), but M1 never runs: holds at the drop position
+    // for dwellMs, then raises to an empty Presented. Occupancy is checked
+    // first, same as dispense() — an occupied plate is presented normally
+    // (FeedSkipped), never silently re-presented as empty.
+    bool dispenseNoFeed(uint16_t dwellMs = kDefaultNoFeedDwellMs);
 
     // Recover from any phase: de-energise, return to Idle. Clears sticky Fault.
     void recover();
@@ -98,6 +108,7 @@ private:
     long     motor2Target_;
     bool     pg3WasOpen_;
     bool     grabPhase_; // Lowering sub-phase: descending past load sensor to drop position
+    bool     noFeed_;    // this cycle runs the motion but never turns M1
 
     // M2 travel is measured against the position latched at each phase start,
     // never by re-zeroing the stepper mid-motion: AccelStepper derives the coil
@@ -110,11 +121,17 @@ private:
     // position the flag has already passed out of the beam and reads clear.
     bool     belowLoad_;
     bool     approachRetried_; // one seek-away retry per dispense cycle
+    // Seeking exit: when true, stop as soon as the load sensor clears (or at
+    // seekAwaySteps_). When false, fixed travel — only used when belowLoad_ is
+    // already known (plate at drop depth, sensor already clear).
+    bool     seekUntilClear_;
 
     uint32_t raiseStartMs_;
     uint32_t pg3OpenSinceMs_;
     uint32_t pelletClearSinceMs_; // pellet sensor clear timer (Raising or Loaded)
     uint32_t pelletSeenSinceMs_;  // pellet sensor held timer during Loading (0 = not seen)
+    uint32_t dwellStartMs_;       // millis() at Dwelling entry
+    uint32_t dwellMs_;            // commanded dwell for this no-feed cycle
     bool     domeWarnLatched_;
     bool     lastDomeOpenedWithPellet_;
     bool     lastTakenWithDomeOpen_;
@@ -141,11 +158,12 @@ private:
     void faultNow(ServiceStatus code);
     bool phaseTimedOut(uint32_t timeoutMs) const;
 
-    void startSeekAwayFromPg2();
+    void startSeekAwayFromPg2(bool untilClear);
     void startApproachPg2();
     void startGrabDescent();
     void startRaise(long steps);
     void startFeed();
+    void startDwell();
     void beginLoweringPhase();
     void beginOccupiedDispense();
 };

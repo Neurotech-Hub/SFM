@@ -1276,15 +1276,17 @@ class SFMApp:
                                 CanEvent.Lowering,
                                 CanEvent.Loading,
                                 CanEvent.OnPlate,
+                                CanEvent.Dwelling,
                                 CanEvent.Raising,
                                 CanEvent.Loaded,
                                 CanEvent.FeedSkipped,
+                                CanEvent.NoFeedPresented,
                             ) and len(ev.raw_extra) >= 2:
                                 pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
                                 details = f"pellet_count={pellet_count}"
                     self._refresh_tile(node_id)
                     self._maybe_fire_bnc_out(entry_name)
-                    if ev.event == CanEvent.Loaded:
+                    if ev.event in (CanEvent.Loaded, CanEvent.NoFeedPresented):
                         self._arm_chained_schedules(node_id)
 
         elif ftype == "DISCOVERY":
