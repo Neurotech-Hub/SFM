@@ -235,11 +235,11 @@ surface — see [`context.py`](context.py).
 | `ctx.stop(reason="...")` | End the whole session as soon as possible (cancels all timers). |
 | `ctx.nodes` | The node IDs this session runs on. |
 
-The engine auto-increments the `"pellets"` counter on every **`PELLET_PRESENTED`**
+The engine auto-increments the `"pellets"` counter on every **`LOADED`**
 event (a fully delivered pellet). For a per-node tally, keep your own counter:
 
 ```python
-@exp.on_pellet_presented
+@exp.on_loaded
 def _p(ctx, ev):
     ctx.incr(f"pellets_{ev.node_id}")
 ```
@@ -254,10 +254,10 @@ Register with `@exp.on(EventKind.X)` or the sugar decorators. Handlers receive
 | Sugar decorator | EventKind | `ev.data` notes |
 |-----------------|-----------|-----------------|
 | `@exp.on_start` / `@exp.on_end` | `SESSION_START` / `SESSION_END` | `(ctx)` only — no `ev`. |
-| `@exp.on_pellet_loaded` | `PELLET_LOADED` | `pellet_count` |
-| `@exp.on_pellet_presented` | `PELLET_PRESENTED` | `pellet_count` |
+| `@exp.on_on_plate` | `ON_PLATE` | `pellet_count` |
+| `@exp.on_loaded` | `LOADED` | `pellet_count` |
 | `@exp.on_catch_attempt` | `CATCH_ATTEMPT` | |
-| `@exp.on_dome_opened` / `@exp.on_dome_closed` | `DOME_OPENED` / `DOME_CLOSED` | derived from PG3 |
+| `@exp.on_dome_opened` / `@exp.on_dome_closed` | `DOME_OPENED` / `DOME_CLOSED` | derived from the dome sensor |
 | `@exp.on_fault` | `FAULT` | `fault_code` (`FeedTimeout` / `ActuatorTimeout` / `Jam` / `PelletLost`) |
 | `@exp.on_recover` | `NODE_RECOVERED` | fired when an operator recovers a node |
 | `@exp.on_bnc_in` | `BNC_IN` | `channel` (0/1), `edge` ("rising"/"falling"), `high` |
@@ -322,7 +322,7 @@ def _edge(ctx, ev):
 ```
 
 **BNC OUT** — set the BNC OUT **Trigger** in the GUI to a CAN event name (e.g.
-`PelletPresented`) and it pulses whenever that event arrives from any node, during
+`Loaded`) and it pulses whenever that event arrives from any node, during
 manual use *and* during an experiment. To pulse from template code directly, call
 `ctx.bnc_pulse(width_us)` (e.g. on each dispense).
 

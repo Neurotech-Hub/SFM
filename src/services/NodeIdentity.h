@@ -8,8 +8,7 @@
 
 namespace vfm {
 
-// NVS namespace / key used to persist the node ID
-constexpr char kNvsNamespace[] = "vfm";
+// NVS key used to persist the node ID (namespace kNvsNamespace)
 constexpr char kNvsKeyNodeId[] = "nodeId";
 
 // Timeouts for the discovery FSM

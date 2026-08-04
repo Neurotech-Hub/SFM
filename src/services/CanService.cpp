@@ -77,7 +77,7 @@ void CanService::sendHeartbeat(const HeartbeatPayload &p) {
     msg.data[1] = p.pelletCountLo;
     msg.data[2] = p.pelletCountHi;
     msg.data[3] = p.presence;
-    msg.data[4] = p.pgBits;
+    msg.data[4] = p.sensorBits;
     msg.data[5] = p.faultCode;
     msg.data[6] = p.takenCountLo;
     msg.data[7] = p.takenCountHi;

@@ -22,6 +22,7 @@
 #include "services/CanService.h"
 #include "services/NodeIdentity.h"
 #include "services/LedService.h"
+#include "services/PresenceService.h"
 
 namespace vfm {
 
@@ -42,14 +43,27 @@ public:
     CanService       &can()         { return can_; }
     NodeIdentity     &identity()    { return identity_; }
     LedService       &leds()        { return leds_; }
+    PresenceService  &presence()    { return presence_; }
 
-    // Presence detection sensor (ESP32 touchRead on PIN_PRESENCE / GPIO5).
-    // Raw value above the threshold asserts animal presence.
-    bool presenceDetected() const   { return presence_; }
+    // Mouse presence on the capacitive pad, debounced by kSensorDebounceMs.
+    bool     mousePresent() const       { return presence_.present(); }
+    bool     presenceDetected() const   { return mousePresent(); } // compatibility alias
+    uint32_t presenceRaw() const       { return presence_.raw(); }
+    uint32_t presenceThreshold() const { return presence_.threshold(); }
 
-    // Override the presence detection threshold (default 35000).
-    // Higher = less sensitive (raw must rise further above idle).
-    void setPresenceThreshold(uint16_t t) { presenceThreshold_ = t; }
+    // Runtime-only threshold override for sketches; does not touch the value
+    // stored in NVS, so a hardcoded sketch default cannot clobber a
+    // calibration. Use presence().saveThreshold() to persist.
+    void setPresenceThreshold(uint32_t t) { presence_.setThreshold(t); }
+
+    // Recalibrate the presence pad against its idle noise (same as a short
+    // press of PIN_BTN). The pad must stay clear for kPresenceCalMs.
+    bool startPresenceCalibration()   { return presence_.startCalibration(); }
+    bool presenceCalibrating() const  { return presence_.calibrating(); }
+
+    // Calibration notifications, re-latched after VFM has driven the LEDs so a
+    // sketch can report the result. Returns None when there is nothing new.
+    PresenceEvent takePresenceEvent();
 
     // Force an immediate heartbeat regardless of the heartbeat timer.
     void sendHeartbeatNow();
@@ -66,26 +80,28 @@ private:
     CanService       can_;
     NodeIdentity     identity_;
     LedService       leds_;
-
-    bool     presence_;
-    uint16_t presenceThreshold_;
+    PresenceService  presence_;
 
     // Last input states published through CanEvent::InputChanged. These let
     // the GUI react immediately instead of waiting for the next heartbeat.
-    bool reportedPg1_      = false;
-    bool reportedPg2_      = false;
-    bool reportedPg3_      = false;
+    bool reportedPellet_       = false;
+    bool reportedLoadPosition_ = false;
+    bool reportedDomeOpen_     = false;
     bool reportedPresence_ = false;
 
-    // Last dispenser FSM state published as a phase event (Lowering / Loading /
-    // Raising). Heartbeats still carry the full state snapshot for recovery.
+    // Last dispenser FSM state published as a phase event (Seeking / Lowering /
+    // Loading / Raising). Heartbeats still carry the full state snapshot.
     DispenseState lastReportedDispenseState_ = DispenseState::Idle;
 
-    // Button (PIN_BTN, active LOW) long-press state
+    // Button (PIN_BTN, active LOW): short click recalibrates presence, long
+    // hold clears the NVS node ID.
+    static constexpr uint32_t kBtnClickMinMs = 50; // shorter = contact bounce
     uint32_t btnHoldMs_       = 1000; // required hold duration
     uint32_t btnPressStartMs_ = 0;    // millis() when button first went LOW
     bool     btnWasPressed_   = false;
     bool     btnArmed_        = false; // true once hold threshold reached
+
+    PresenceEvent pendingPresenceEvent_ = PresenceEvent::None;
 
     // Status LED blink triggered by a received Ping (visual "which node" aid)
     static constexpr uint32_t kPingBlinkMs         = 1500; // total blink duration
@@ -99,7 +115,7 @@ private:
     void sendInputChanged(InputId input, bool active);
     void sendPhaseEvent(CanEvent ev);
     void sendHeartbeatIfDue();
-    void updatePresence();
+    void handlePresenceEvents();
     void updateButton();
     void updatePingBlink();
     void updateSensorLeds();          // LED 9 = dome open, LED 10 = pellet present

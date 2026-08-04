@@ -107,11 +107,11 @@ class Experiment:
     def on_feed_skipped(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.FEED_SKIPPED)(fn)
 
-    def on_pellet_presented(self, fn: EventCb) -> EventCb:
-        return self.on(EventKind.PELLET_PRESENTED)(fn)
+    def on_loaded(self, fn: EventCb) -> EventCb:
+        return self.on(EventKind.LOADED)(fn)
 
-    def on_pellet_loaded(self, fn: EventCb) -> EventCb:
-        return self.on(EventKind.PELLET_LOADED)(fn)
+    def on_on_plate(self, fn: EventCb) -> EventCb:
+        return self.on(EventKind.ON_PLATE)(fn)
 
     def on_fault(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.FAULT)(fn)
@@ -153,7 +153,7 @@ class Experiment:
 
         Duration uses ``hours`` + ``minutes`` + ``seconds``. Pellet count
         tracks the ``pellets`` counter (incremented by templates on
-        PELLET_PRESENTED, or manually via ``ctx.incr("pellets")``).
+        LOADED, or manually via ``ctx.incr("pellets")``).
         """
         total = float(hours) * 3600.0 + float(minutes) * 60.0 + float(seconds)
         if total > 0:
@@ -472,8 +472,8 @@ class ExperimentRunner:
         for ev in events:
             if self.ctx.stop_requested:
                 break
-            # Auto-count pellets presented for end_after(pellets=...).
-            if ev.kind == EventKind.PELLET_PRESENTED:
+            # Auto-count Loaded milestones for end_after(pellets=...).
+            if ev.kind == EventKind.LOADED:
                 self.ctx.incr("pellets")
             # Sticky per-node fault: halt just this node (cancel its timers,
             # make its dispenses no-ops) before user handlers run. The rest of

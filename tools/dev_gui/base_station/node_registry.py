@@ -41,11 +41,11 @@ class NodeState:
     # Dispenser / sensor state (from heartbeat)
     dispense_state: DispenseState = DispenseState.Idle
     presence: bool = False
-    pg1: bool = False                       # pellet in cup
-    pg2: bool = False                       # actuator at home/down
-    pg3: bool = False                       # dome opened
+    pellet: bool = False                    # pellet on plate
+    load_position: bool = False             # actuator at load position
+    dome_open: bool = False                 # dome opened
     fault_code: ServiceStatus = ServiceStatus.Ok
-    dome_open_warning: bool = False         # PG3 open >30 s (from DomeOpenWarning)
+    dome_open_warning: bool = False         # dome sensor open >30 s
 
     # Connectivity
     last_heartbeat_time: Optional[float] = None
@@ -63,18 +63,18 @@ class NodeState:
         return time.time() - self.last_heartbeat_time
 
     @property
-    def pg_bits(self) -> int:
-        return (int(self.pg1) << 0) | (int(self.pg2) << 1) | (int(self.pg3) << 2)
+    def sensor_bits(self) -> int:
+        return (
+            (int(self.pellet) << 0)
+            | (int(self.load_position) << 1)
+            | (int(self.dome_open) << 2)
+        )
 
     @property
     def status_label(self) -> str:
         if not self.online:
             return "OFFLINE"
-        # SeekingAway groups with LOWERING for the tile.
-        labels = {
-            DispenseState.SeekingAway: "LOWERING",
-        }
-        return labels.get(self.dispense_state, self.dispense_state.name.upper())
+        return self.dispense_state.name.upper()
 
     @property
     def status_color(self) -> tuple[int, int, int, int]:
@@ -86,9 +86,9 @@ class NodeState:
             return (220, 50, 50, 255)     # red
         if s == DispenseState.Idle:
             return (60, 200, 80, 255)     # green
-        if s == DispenseState.Presented:
+        if s == DispenseState.Loaded:
             return (50, 200, 220, 255)    # cyan
-        if s == DispenseState.SeekingAway:
+        if s == DispenseState.Seeking:
             return (60, 130, 220, 255)    # blue (homing)
         # Lowering / Loading / Raising
         return (60, 130, 220, 255)        # blue
@@ -131,10 +131,10 @@ class NodeRegistry:
         """Apply a decoded heartbeat payload to the node's state."""
         node = self._get_or_create(node_id)
         node.dispense_state = hb.dispense_state
-        node.presence = hb.presence
-        node.pg1 = hb.pg1
-        node.pg2 = hb.pg2
-        node.pg3 = hb.pg3
+        node.presence = hb.mouse_presence
+        node.pellet = hb.pellet
+        node.load_position = hb.load_position
+        node.dome_open = hb.dome_open
         node.fault_code = hb.fault_code
         node.last_heartbeat_time = time.time()
         node.online = True
@@ -154,13 +154,14 @@ class NodeRegistry:
         # Mirror dispense state transitions from events for better responsiveness
         # (the next heartbeat will confirm the actual state anyway)
         state_map = {
+            CanEvent.Seeking:         DispenseState.Seeking,
             CanEvent.Lowering:        DispenseState.Lowering,
             CanEvent.Loading:         DispenseState.Loading,
-            CanEvent.PelletLoaded:    DispenseState.Loading,
+            CanEvent.OnPlate:         DispenseState.Loading,
             CanEvent.FeedSkipped:     DispenseState.Raising,
             CanEvent.Raising:         DispenseState.Raising,
-            CanEvent.PelletPresented: DispenseState.Presented,
-            CanEvent.DomeOpened:      DispenseState.Presented,
+            CanEvent.Loaded:          DispenseState.Loaded,
+            CanEvent.DomeOpened:      DispenseState.Loaded,
             CanEvent.PelletTaken:     DispenseState.Idle,
             CanEvent.Fault:           DispenseState.Fault,
         }
@@ -175,15 +176,15 @@ class NodeRegistry:
         """Apply an immediate InputChanged event without waiting for heartbeat."""
         node = self._get_or_create(node_id)
         node.online = True
-        if input_id == InputId.PG1:
-            node.pg1 = active
-        elif input_id == InputId.PG2:
-            node.pg2 = active
-        elif input_id == InputId.PG3:
-            node.pg3 = active
+        if input_id == InputId.Pellet:
+            node.pellet = active
+        elif input_id == InputId.LoadPosition:
+            node.load_position = active
+        elif input_id == InputId.Dome:
+            node.dome_open = active
             if not active:
                 node.dome_open_warning = False
-        elif input_id == InputId.Presence:
+        elif input_id == InputId.MousePresence:
             node.presence = active
 
     def clear_fault(self, node_id: int) -> None:

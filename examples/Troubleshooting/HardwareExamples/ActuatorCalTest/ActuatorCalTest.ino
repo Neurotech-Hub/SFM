@@ -7,30 +7,30 @@
 //   Default speed = kDefaultMotorSpeed (500 steps/s)
 //   setMaxSpeed(speed * 2)
 //
-// PG2 (GPIO45, active LOW / INPUT_PULLUP): pellet loading / home position.
-// If GPIO45 is unusable on your board, change kPg2Pin below to PIN_PGX (GPIO6).
+// Load position sensor (GPIO45, active LOW / INPUT_PULLUP).
+// If GPIO45 is unusable, change kLoadPositionPin below to PIN_PGX (GPIO6).
 //
 // Open Serial Monitor at 115200 baud.
 //
-// Typical calibration flow. NOTE the order: PG2 is only a reference point, the
+// Typical calibration flow. NOTE the order: the load sensor is only a reference point, the
 // firmware feeds kDefaultGrabSteps BELOW it, and raiseSteps is measured from
 // there — so find the grab depth first, then zero, then jog up.
-//   1. home     – drive DOWN until PG2 triggers → loading position (pos=0)
-//   2. d <n>    – jog DOWN n steps (IGNORES PG2) until M1 can drop a pellet
+//   1. home     – drive DOWN until the load sensor triggers → loading position (pos=0)
+//   2. d <n>    – jog DOWN n steps (IGNORES load sensor) until M1 can drop a pellet
 //                 cleanly; that n is kDefaultGrabSteps (bench value: 280)
 //   3. z        – zero here, at the pellet-drop position
 //   4. u <n>    – jog UP n steps toward the presentation dome, repeating until
 //                 the height looks right; 's' then reads out kDefaultRaiseSteps
 //                 measured from the DROP position (bench value: 1480)
-//   5. home     – return to PG2 loading position when done
+//   5. home     – return to the load position when done
 //
 // Commands (line-based; Enter required):
-//   home        drive down to PG2 and zero (loading position)
+//   home        drive down to the load sensor and zero (loading position)
 //   u [n]       jog UP n steps   (default 50) – finds raiseSteps
-//   d [n]       jog DOWN n steps (default 50) – ignores PG2, finds grab depth
+//   d [n]       jog DOWN n steps (default 50) – ignores load sensor, finds grab depth
 //   x           abort motion, de-energise
 //   z           zero position here (without moving)
-//   s           print status (pos, raiseSteps candidate, PG2, speed)
+//   s           print status (pos, raiseSteps candidate, load sensor, speed)
 //   + / -       speed ±50 steps/s
 //   h / help    this help
 
@@ -44,12 +44,12 @@ static constexpr float    kDefaultSpeed = kDefaultMotorSpeed; // 500
 static constexpr float    kMinSpeed     = 100.0f;
 static constexpr float    kMaxSpeed     = 800.0f;
 static constexpr long     kDefaultJog   = 50;
-static constexpr uint32_t kDebounceMs   = kSensorDebounceMs; // 20
+static constexpr uint32_t kDebounceMs   = kSensorDebounceMs; // 100
 static constexpr uint32_t kHomeTimeoutMs = kDefaultLowerTimeoutMs; // 8000
 static constexpr long     kHomeMaxSteps  = kDefaultLowerSteps;     // 2048
 
-// PG2 pin: library default is PIN_PG2 (45). Use PIN_PGX if you bodged to GPIO6.
-static constexpr uint8_t kPg2Pin = PIN_PG2;
+// Load sensor pin: library default is PIN_PG2 (45); PIN_PGX is the bring-up alternate.
+static constexpr uint8_t kLoadPositionPin = PIN_PG2;
 
 AccelStepper motor2(AccelStepper::HALF4WIRE,
                     PIN_M2_A1, PIN_M2_A3, PIN_M2_A2, PIN_M2_A4);
@@ -59,7 +59,7 @@ enum class Mode : uint8_t { Idle, Homing, JogUp, JogDown };
 float    speed        = kDefaultSpeed;
 Mode     mode         = Mode::Idle;
 long     remaining    = 0;   // steps left in current jog
-long     position     = 0;   // signed: 0 = last PG2 home, + = above home (UP)
+long     position     = 0;   // signed: 0 = last load position, + = above (UP)
 bool     pg2Raw       = false;
 bool     pg2State     = false;
 uint32_t pg2LastChangeMs = 0;
@@ -78,7 +78,7 @@ void haltMotor() {
 
 void updatePg2() {
     uint32_t now = millis();
-    bool raw = (digitalRead(kPg2Pin) == LOW); // active LOW
+    bool raw = (digitalRead(kLoadPositionPin) == LOW); // active LOW
     if (raw != pg2Raw) {
         pg2Raw = raw;
         pg2LastChangeMs = now;
@@ -93,7 +93,7 @@ void printStatus() {
     Serial.print(position);
     Serial.print(F("  raiseSteps="));
     Serial.print(position > 0 ? position : 0);
-    Serial.print(F("  PG2="));
+    Serial.print(F("  load_position="));
     Serial.print(pg2State ? F("TRIGGERED(home)") : F("clear"));
     Serial.print(F("  speed="));
     Serial.print(speed, 0);
@@ -108,9 +108,9 @@ void printStatus() {
 
 void printHelp() {
     Serial.println(F("Commands:"));
-    Serial.println(F("  home     DOWN until PG2 → loading pos (zero)"));
+    Serial.println(F("  home     DOWN until load sensor → loading pos (zero)"));
     Serial.println(F("  u [n]    jog UP n steps (default 50) → find raiseSteps"));
-    Serial.println(F("  d [n]    jog DOWN n steps (default 50) – IGNORES PG2 → grab depth"));
+    Serial.println(F("  d [n]    jog DOWN n steps (default 50) – IGNORES load sensor → grab depth"));
     Serial.println(F("  x        abort + de-energise"));
     Serial.println(F("  z        zero position here"));
     Serial.println(F("  s        status"));
@@ -125,18 +125,18 @@ void startHome() {
         motor2.setCurrentPosition(0);
         position = 0;
         haltMotor();
-        Serial.println(F("[CAL] Already on PG2 – zeroed (loading position)"));
+        Serial.println(F("[CAL] Already at load sensor – zeroed (loading position)"));
         printStatus();
         return;
     }
 
     motor2.enableOutputs();
     motor2.setCurrentPosition(0);
-    motor2.setSpeed(-speed); // DOWN toward PG2
+    motor2.setSpeed(-speed); // DOWN toward load position
     remaining = kHomeMaxSteps;
     homeStartMs = millis();
     mode = Mode::Homing;
-    Serial.println(F("[CAL] Homing DOWN to PG2..."));
+    Serial.println(F("[CAL] Homing DOWN to load position..."));
 }
 
 void startJog(long steps, bool up) {
@@ -160,7 +160,7 @@ void startJog(long steps, bool up) {
     Serial.print(steps);
     Serial.println(F(" steps"));
     if (!up) {
-        Serial.println(F("[CAL] DOWN ignores PG2 (grab-depth calibration) – 'z' to zero here"));
+        Serial.println(F("[CAL] DOWN ignores load sensor (grab-depth calibration) – 'z' to zero here"));
     }
 }
 
@@ -170,7 +170,7 @@ void runMotion() {
     if (mode == Mode::Homing) {
         if ((millis() - homeStartMs) >= kHomeTimeoutMs || remaining <= 0) {
             haltMotor();
-            Serial.println(F("[CAL] ERROR: home timeout – PG2 not seen"));
+            Serial.println(F("[CAL] ERROR: home timeout – load sensor not seen"));
             printStatus();
             return;
         }
@@ -181,7 +181,7 @@ void runMotion() {
             position = 0;
             remaining = 0;
             mode = Mode::Idle;
-            Serial.println(F("[CAL] PG2 hit – at loading position (pos=0)"));
+            Serial.println(F("[CAL] Load sensor hit – at loading position (pos=0)"));
             printStatus();
             return;
         }
@@ -205,7 +205,7 @@ void runMotion() {
         return;
     }
 
-    // JogDown intentionally does NOT stop on PG2
+    // JogDown intentionally does NOT stop on the load sensor.
     if (motor2.runSpeed()) {
         remaining--;
         if (mode == Mode::JogUp) {
@@ -268,15 +268,15 @@ void setup() {
     while (!Serial && millis() < 3000) {}
 
     Serial.println(F("\n===== VFM ActuatorCalTest (M2) ====="));
-    Serial.println(F("M2 = actuator GPIO40-43  |  PG2 = loading home"));
-    Serial.print(F("PG2 pin=GPIO")); Serial.println(kPg2Pin);
+    Serial.println(F("M2 = actuator GPIO40-43  |  load sensor = loading home"));
+    Serial.print(F("Load sensor pin=GPIO")); Serial.println(kLoadPositionPin);
     Serial.print(F("Speed=")); Serial.print(kDefaultSpeed, 0);
     Serial.print(F(" steps/s  (library kDefaultMotorSpeed)"));
     Serial.print(F("  raise default=")); Serial.println(kDefaultRaiseSteps);
     printHelp();
 
-    pinMode(kPg2Pin, INPUT_PULLUP);
-    pg2Raw = (digitalRead(kPg2Pin) == LOW);
+    pinMode(kLoadPositionPin, INPUT_PULLUP);
+    pg2Raw = (digitalRead(kLoadPositionPin) == LOW);
     pg2State = pg2Raw;
     pg2LastChangeMs = millis();
 

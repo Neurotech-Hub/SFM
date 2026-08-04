@@ -31,7 +31,7 @@ class LogEntry:
     direction: str                  # "TX" or "RX"
     node_id: int                    # 0 = broadcast / discovery
     frame_type: str                 # "COMMAND", "EVENT", "HEARTBEAT", "DISCOVERY", "UNKNOWN"
-    event_name: str                 # Human-readable name e.g. "Dispense", "PelletLoaded"
+    event_name: str                 # Human-readable name e.g. "Dispense", "OnPlate"
     raw_id: int                     # CAN arbitration ID
     raw_data: bytes                 # CAN payload
     details: str = ""               # Extra human-readable context

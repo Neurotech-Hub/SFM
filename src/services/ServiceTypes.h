@@ -5,6 +5,19 @@
 namespace vfm {
 
 // ---------------------------------------------------------------------------
+// Persistent storage (NVS) — one namespace shared by every service that
+// stores a value. Keys live next to the service that owns them.
+// ---------------------------------------------------------------------------
+constexpr char kNvsNamespace[] = "vfm";
+
+// ---------------------------------------------------------------------------
+// Debounce applied to every sensor input before any logic or reporting acts on
+// it: pellet, load position, dome, and animal presence all use this window, so
+// one bout produces one trigger event and one clear event.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kSensorDebounceMs = 100;
+
+// ---------------------------------------------------------------------------
 // General service status (returned from begin() and error paths)
 // ---------------------------------------------------------------------------
 enum class ServiceStatus : uint8_t {
@@ -19,15 +32,19 @@ enum class ServiceStatus : uint8_t {
 
 // ---------------------------------------------------------------------------
 // Dispenser state machine states
+//
+// User-facing cycle (events mirror these phases):
+//   Seeking (conditional) → Lowering → Loading → Raising → Loaded
+// Loaded means the plate is at the top and ready for the mouse to take.
 // ---------------------------------------------------------------------------
 enum class DispenseState : uint8_t {
-    Idle = 0,
-    Lowering    = 1, // M2 down to the load sensor, then grabSteps_ past it (empty plate only)
-    Feeding     = 2, // M1 until pellet presence asserts
-    Raising     = 3, // M2 up by raiseSteps_ from the pellet-drop position
-    Presented   = 4, // Pellet at top; ends on PelletTaken → Idle
-    SeekingAway = 5, // M2 up by seekAwaySteps_ to clear the load sensor (before approach)
-    Fault       = 6, // sticky until recover()
+    Idle     = 0,
+    Lowering = 1, // M2 down to the load sensor, then grabSteps_ past it (empty plate only)
+    Loading  = 2, // M1 until the pellet sensor asserts
+    Raising  = 3, // M2 up by raiseSteps_ from the pellet-drop position
+    Loaded   = 4, // plate at top, ready for the mouse; ends on PelletTaken → Idle
+    Seeking  = 5, // M2 up by seekAwaySteps_ to clear the load sensor (before approach)
+    Fault    = 6, // sticky until recover()
 };
 
 // ---------------------------------------------------------------------------
@@ -36,12 +53,12 @@ enum class DispenseState : uint8_t {
 // ---------------------------------------------------------------------------
 enum class DispenseEvent : uint8_t {
     None = 0,
-    PelletLoaded,     // pellet presence asserted; raise starting
-    PelletPresented,  // actuator reached top (increments pelletCount)
-    DomeOpened,       // dome lifted while Presented
+    OnPlate,          // pellet sensor confirmed during Loading; raise starting
+    Loaded,           // plate reached the top — ready for the mouse (increments pelletCount)
+    DomeOpened,       // dome lifted while Loaded
     Fault,            // FeedTimeout / ActuatorTimeout / Jam / PelletLost (see faultCode())
     DomeOpenWarning,  // dome open continuously > kDomeOpenWarnMs
-    PelletTaken,      // pellet presence cleared while Presented → Idle
+    PelletTaken,      // pellet sensor cleared while Loaded → Idle
     FeedSkipped,      // Dispense with plate already occupied
 };
 
@@ -64,27 +81,28 @@ enum class CanCmd : uint8_t {
 // Node -> Base on ID: 0x300 + nodeId
 // ---------------------------------------------------------------------------
 enum class CanEvent : uint8_t {
-    PelletLoaded    = 0x01, // pellet on plate; raise starting
-    PelletPresented = 0x02,
-    DomeOpened      = 0x03, // dome lift; extra: count LE16 + pellet_present
+    OnPlate         = 0x01, // pellet on plate during Loading; raise starting
+    Loaded          = 0x02, // plate at top — ready for the mouse
+    DomeOpened      = 0x03, // dome lift; extra: count LE16 + pellet_on_plate
     Fault           = 0x04, // payload byte[1] = ServiceStatus
     Pong            = 0x05,
     InputChanged    = 0x06, // payload: InputId(1), active(0/1)
-    Lowering        = 0x07, // M2 toward load position (incl. SeekingAway)
-    Loading         = 0x08, // M1 running (Feeding state)
+    Lowering        = 0x07, // M2 toward load position
+    Loading         = 0x08, // M1 running (Loading state)
     Raising         = 0x09, // M2 raising plate
     DomeOpenWarning = 0x0A, // dome open > kDomeOpenWarnMs
     PelletTaken     = 0x0B, // extra: count LE16 + dome_open
-    FeedSkipped     = 0x0C, // plate occupied on Dispense; lower/feed skipped
+    FeedSkipped     = 0x0C, // plate occupied on Dispense; lower/load skipped
+    Seeking         = 0x0D, // M2 clearing the load sensor before Lowering
 };
 
 // Input IDs carried by CanEvent::InputChanged.
-// Wire values: 1 = pellet sensor, 2 = load position, 3 = dome, 4 = animal presence.
+// Wire values: 1 = pellet sensor, 2 = load position, 3 = dome, 4 = mouse presence.
 enum class InputId : uint8_t {
-    PG1      = 0x01, // pellet presence on plate
-    PG2      = 0x02, // load position
-    PG3      = 0x03, // dome open
-    Presence = 0x04, // animal presence detection sensor
+    Pellet        = 0x01, // pellet sensor — pellet on plate
+    LoadPosition  = 0x02, // load-position sensor
+    Dome          = 0x03, // dome open/close sensor
+    MousePresence = 0x04, // capacitive mouse-presence pad
 };
 
 // ---------------------------------------------------------------------------

@@ -43,23 +43,26 @@ CAN_CMD_PURPOSE = {
 
 class CanEvent(IntEnum):
     """Events sent from a node to the base station (CAN ID 0x300 + nodeId)."""
-    PelletLoaded    = 0x01  # pellet on plate; raise starting
-    PelletPresented = 0x02
+    OnPlate         = 0x01  # pellet sensor confirmed during Loading; raise starting
+    Loaded          = 0x02  # plate at top; ready for the mouse
     DomeOpened      = 0x03  # raw_extra: count LE16 + pellet_present
     Fault           = 0x04  # raw_extra[0] = ServiceStatus
     Pong            = 0x05
     InputChanged    = 0x06
-    Lowering        = 0x07  # M2 toward load position (incl. SeekingAway)
-    Loading         = 0x08  # M1 feeding
+    Lowering        = 0x07  # M2 toward load position
+    Loading         = 0x08  # M1 loading a pellet
     Raising         = 0x09  # M2 raising plate
     DomeOpenWarning = 0x0A  # dome open >30 s (non-sticky warning)
     PelletTaken     = 0x0B  # raw_extra: count LE16 + dome_open
     FeedSkipped     = 0x0C  # plate occupied on Dispense
+    Seeking         = 0x0D  # M2 clearing the load sensor before Lowering
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
 CAN_EVENT_DISPLAY_NAME = {
-    CanEvent.PelletLoaded: "Loaded",
+    CanEvent.OnPlate: "OnPlate",
+    CanEvent.Loaded: "Loaded",
+    CanEvent.Seeking: "Seeking",
     CanEvent.Lowering: "Lowering",
     CanEvent.Loading: "Loading",
     CanEvent.Raising: "Raising",
@@ -72,23 +75,20 @@ CAN_EVENT_DISPLAY_NAME = {
 
 class InputId(IntEnum):
     """Inputs reported immediately by CanEvent.InputChanged."""
-    PG1      = 0x01  # pellet presence on plate
-    PG2      = 0x02  # load position
-    PG3      = 0x03  # dome open
-    Presence = 0x04  # animal presence detection sensor
+    Pellet        = 0x01  # pellet sensor — pellet on plate
+    LoadPosition  = 0x02  # load-position sensor
+    Dome          = 0x03  # dome open/close sensor
+    MousePresence = 0x04  # capacitive mouse-presence pad
 
 
 class DispenseState(IntEnum):
-    """Dispenser FSM states carried in heartbeat byte 0.
-
-    Loading mirrors firmware Feeding (value 2).
-    """
+    """Dispenser FSM states carried in heartbeat byte 0."""
     Idle          = 0
     Lowering      = 1  # M2 down until load position
-    Loading       = 2  # M1 feeding pellet (firmware: Feeding)
+    Loading       = 2  # M1 loading pellet
     Raising       = 3  # M2 up by step count
-    Presented     = 4  # Pellet at top; ends on PelletTaken → Idle
-    SeekingAway   = 5  # M2 up until load sensor clears
+    Loaded        = 4  # Pellet at top; ends on PelletTaken → Idle
+    Seeking       = 5  # M2 up until load sensor clears
     Fault         = 6  # FeedTimeout / ActuatorTimeout / jam / pellet lost
 
 
@@ -158,8 +158,8 @@ CONFIG_HEARTBEAT_INTERVAL = 0x01  # value = uint16 LE, heartbeat interval in ms
 # byte 0: DispenseState
 # byte 1: pelletCountLo (presented)
 # byte 2: pelletCountHi
-# byte 3: presence (0/1)
-# byte 4: pgBits  [bit2=PG3 | bit1=PG2 | bit0=PG1]
+# byte 3: mouse presence (0/1)
+# byte 4: sensor bits  [bit2=dome open | bit1=load position | bit0=pellet]
 # byte 5: faultCode (ServiceStatus)
 # byte 6: takenCountLo
 # byte 7: takenCountHi
@@ -167,17 +167,21 @@ CONFIG_HEARTBEAT_INTERVAL = 0x01  # value = uint16 LE, heartbeat interval in ms
 @dataclass
 class HeartbeatPayload:
     dispense_state: DispenseState
-    presence: bool
-    pg1: bool           # bit 0 — pellet present on plate
-    pg2: bool           # bit 1 — at load position
-    pg3: bool           # bit 2 — dome open
+    mouse_presence: bool
+    pellet: bool           # bit 0 — pellet present on plate
+    load_position: bool    # bit 1 — at load position
+    dome_open: bool        # bit 2 — dome open
     fault_code: ServiceStatus
     pellets_presented: int = 0
     pellets_taken: int = 0
 
     @property
-    def pg_bits(self) -> int:
-        return (self.pg1 << 0) | (self.pg2 << 1) | (self.pg3 << 2)
+    def sensor_bits(self) -> int:
+        return (
+            (self.pellet << 0)
+            | (self.load_position << 1)
+            | (self.dome_open << 2)
+        )
 
     @property
     def dispense_state_str(self) -> str:
@@ -201,15 +205,15 @@ def parse_heartbeat(data: bytes) -> Optional[HeartbeatPayload]:
     except ValueError:
         fault = ServiceStatus.Ok
 
-    pg = data[4]
+    sensor_bits = data[4]
     presented = data[1] | (data[2] << 8)
     taken = (data[6] | (data[7] << 8)) if len(data) >= 8 else 0
     return HeartbeatPayload(
         dispense_state=state,
-        presence=bool(data[3]),
-        pg1=bool(pg & 0x01),
-        pg2=bool(pg & 0x02),
-        pg3=bool(pg & 0x04),
+        mouse_presence=bool(data[3]),
+        pellet=bool(sensor_bits & 0x01),
+        load_position=bool(sensor_bits & 0x02),
+        dome_open=bool(sensor_bits & 0x04),
         fault_code=fault,
         pellets_presented=presented,
         pellets_taken=taken,
@@ -347,8 +351,8 @@ def build_heartbeat_frame(node_id: int, hb: HeartbeatPayload) -> tuple[int, byte
         int(hb.dispense_state),
         presented & 0xFF,
         (presented >> 8) & 0xFF,
-        int(hb.presence),
-        hb.pg_bits,
+        int(hb.mouse_presence),
+        hb.sensor_bits,
         int(hb.fault_code),
         taken & 0xFF,
         (taken >> 8) & 0xFF,

@@ -15,10 +15,11 @@ constexpr uint32_t kDefaultHeartbeatIntervalMs = 5000;
 // ---------------------------------------------------------------------------
 // Heartbeat payload packed into 8 bytes:
 //   byte 0: DispenseState
-//   byte 1: pelletCount (low byte) — pellets presented
+//   byte 1: pelletCount (low byte) — Loaded milestones
 //   byte 2: pelletCount (high byte)
-//   byte 3: presence (detection sensor, 0/1)
-//   byte 4: PG bits  [2:PG3 | 1:PG2 | 0:PG1]
+//   byte 3: mouse presence (capacitive pad, 0/1)
+//   byte 4: sensor bits
+//           [2:dome open | 1:load position | 0:pellet on plate]
 //   byte 5: fault code (ServiceStatus)
 //   byte 6: takenCount (low byte) — pellets taken
 //   byte 7: takenCount (high byte)
@@ -28,7 +29,7 @@ struct HeartbeatPayload {
     uint8_t pelletCountLo;
     uint8_t pelletCountHi;
     uint8_t presence;
-    uint8_t pgBits;
+    uint8_t sensorBits;
     uint8_t faultCode;
     uint8_t takenCountLo;
     uint8_t takenCountHi;

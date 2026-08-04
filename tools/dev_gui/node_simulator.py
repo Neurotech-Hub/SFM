@@ -15,8 +15,8 @@ Each simulated node:
   - Sends heartbeats at 1 Hz
   - Responds to Ping with Pong
   - On Dispense: occupancy-first sequence —
-    empty → Lowering → Loading → Loaded → Raising → Presented → DomeOpened → PelletTaken → Idle
-    occupied → FeedSkipped → Raising → Presented (then take as above)
+    empty → Lowering → Loading → OnPlate → Raising → Loaded → DomeOpened → PelletTaken → Idle
+    occupied → FeedSkipped → Raising → Loaded (then take as above)
   - On Recover: returns to Idle immediately
 
 Press Ctrl+C to stop.
@@ -75,15 +75,15 @@ except ImportError:
         Ping=0x01; Dispense=0x02; Recover=0x03; AssignId=0x04; SetConfig=0x05; ReqStatus=0x06; ClearId=0x07
 
     class CanEvent(IntEnum):
-        PelletLoaded=0x01; PelletPresented=0x02; DomeOpened=0x03; Fault=0x04
+        OnPlate=0x01; Loaded=0x02; DomeOpened=0x03; Fault=0x04
         Pong=0x05; InputChanged=0x06; Lowering=0x07; Loading=0x08; Raising=0x09
-        DomeOpenWarning=0x0A; PelletTaken=0x0B; FeedSkipped=0x0C
+        DomeOpenWarning=0x0A; PelletTaken=0x0B; FeedSkipped=0x0C; Seeking=0x0D
 
     class InputId(IntEnum):
-        PG1=0x01; PG2=0x02; PG3=0x03; Presence=0x04
+        Pellet=0x01; LoadPosition=0x02; Dome=0x03; MousePresence=0x04
 
     class DispenseState(IntEnum):
-        Idle=0; Lowering=1; Loading=2; Raising=3; Presented=4; SeekingAway=5; Fault=6
+        Idle=0; Lowering=1; Loading=2; Raising=3; Loaded=4; Seeking=5; Fault=6
 
     class ServiceStatus(IntEnum):
         Ok=0; NotInitialized=1; Timeout=2; Jam=3; InvalidData=4; PelletLost=5
@@ -94,10 +94,10 @@ except ImportError:
     @_dataclass
     class HeartbeatPayload:
         dispense_state: "DispenseState"
-        presence: bool
-        pg1: bool
-        pg2: bool
-        pg3: bool
+        mouse_presence: bool
+        pellet: bool
+        load_position: bool
+        dome_open: bool
         fault_code: "ServiceStatus"
         pellets_presented: int = 0
         pellets_taken: int = 0
@@ -108,13 +108,17 @@ except ImportError:
 
     def build_heartbeat_frame(node_id, hb):
         arb_id = CAN_STATUS_BASE + node_id
-        pg_bits = (int(hb.pg1) << 0) | (int(hb.pg2) << 1) | (int(hb.pg3) << 2)
+        sensor_bits = (
+            (int(hb.pellet) << 0)
+            | (int(hb.load_position) << 1)
+            | (int(hb.dome_open) << 2)
+        )
         presented = int(getattr(hb, "pellets_presented", 0))
         taken = int(getattr(hb, "pellets_taken", 0))
         data = bytes([
             int(hb.dispense_state),
             presented & 0xFF, (presented >> 8) & 0xFF,
-            int(hb.presence), pg_bits, int(hb.fault_code),
+            int(hb.mouse_presence), sensor_bits, int(hb.fault_code),
             taken & 0xFF, (taken >> 8) & 0xFF,
         ])
         return arb_id, data
@@ -148,14 +152,14 @@ class SimNode:
 
     # Dispenser state
     dispense_state: DispenseState = DispenseState.Idle
-    presence: bool = False
-    pg1: bool = False
-    pg2: bool = False
-    pg3: bool = False
+    mouse_presence: bool = False
+    pellet: bool = False
+    load_position: bool = False
+    dome_open: bool = False
     fault_code: ServiceStatus = ServiceStatus.Ok
     pellets_presented: int = 0
     pellets_taken: int = 0
-    pg3_open_since: Optional[float] = None
+    dome_open_since: Optional[float] = None
     dome_warn_sent: bool = False
 
     # Timing
@@ -172,10 +176,10 @@ class SimNode:
     def hb_payload(self) -> HeartbeatPayload:
         return HeartbeatPayload(
             dispense_state=self.dispense_state,
-            presence=self.presence,
-            pg1=self.pg1,
-            pg2=self.pg2,
-            pg3=self.pg3,
+            mouse_presence=self.mouse_presence,
+            pellet=self.pellet,
+            load_position=self.load_position,
+            dome_open=self.dome_open,
             fault_code=self.fault_code,
             pellets_presented=self.pellets_presented,
             pellets_taken=self.pellets_taken,
@@ -190,8 +194,8 @@ class NodeSimulator:
     """Runs N simulated VFM nodes on a SocketCAN interface."""
 
     # Dispense sequence timings (seconds after command received)
-    LOADED_DELAY    = 1.0
-    PRESENTED_DELAY = 2.0
+    LOWERING_DELAY = 1.0
+    RAISING_DELAY  = 2.0
     TAKEN_DELAY_MIN = 3.0
     TAKEN_DELAY_MAX = 5.0
     HB_INTERVAL     = 5.0  # default node heartbeat interval (s)
@@ -327,21 +331,21 @@ class NodeSimulator:
                 print(f"  [SIM] Node {node.node_id}: status LED blink (Ping)", flush=True)
 
             elif cmd == CanCmd.Dispense:
-                # Idle or Presented (re-dispense / occupied skip)
-                if node.dispense_state in (DispenseState.Idle, DispenseState.Presented):
+                # Idle or Loaded (re-dispense / occupied skip)
+                if node.dispense_state in (DispenseState.Idle, DispenseState.Loaded):
                     node.phase = SimNodePhase.Dispensing
                     node.dispense_step_time = time.time()
-                    node.pg3 = False
-                    node.pg3_open_since = None
+                    node.dome_open = False
+                    node.dome_open_since = None
                     node.dome_warn_sent = False
-                    if node.pg1:
+                    if node.pellet:
                         # Occupied plate → FeedSkipped (+ raise if at load)
                         count_extra = bytes([
                             node.pellets_presented & 0xFF,
                             (node.pellets_presented >> 8) & 0xFF,
                         ])
                         self._send_event(node, CanEvent.FeedSkipped, count_extra)
-                        if node.pg2:
+                        if node.load_position:
                             node.dispense_state = DispenseState.Raising
                             self._send_event(node, CanEvent.Raising, count_extra)
                             node.dispense_step = 3  # jump to raise travel
@@ -350,8 +354,8 @@ class NodeSimulator:
                                 flush=True,
                             )
                         else:
-                            node.dispense_state = DispenseState.Presented
-                            self._send_event(node, CanEvent.PelletPresented, count_extra)
+                            node.dispense_state = DispenseState.Loaded
+                            self._send_event(node, CanEvent.Loaded, count_extra)
                             taken_delay = random.uniform(
                                 self.TAKEN_DELAY_MIN, self.TAKEN_DELAY_MAX
                             )
@@ -362,7 +366,7 @@ class NodeSimulator:
                                 flush=True,
                             )
                     else:
-                        node.pg2 = False
+                        node.load_position = False
                         node.dispense_state = DispenseState.Lowering
                         node.dispense_step = 0
                         self._send_event(node, CanEvent.Lowering)
@@ -375,8 +379,8 @@ class NodeSimulator:
                 node.dispense_state = DispenseState.Idle
                 node.phase          = SimNodePhase.Enabled
                 node.fault_code     = ServiceStatus.Ok
-                node.pg1 = node.pg2 = node.pg3 = False
-                node.pg3_open_since = None
+                node.pellet = node.load_position = node.dome_open = False
+                node.dome_open_since = None
                 node.dome_warn_sent = False
                 print(f"  [SIM] Node {node.node_id}: Recovered", flush=True)
 
@@ -399,7 +403,7 @@ class NodeSimulator:
                 node.node_id = None
                 node.phase = SimNodePhase.WaitAssign
                 node.dispense_state = DispenseState.Idle
-                node.pg1 = node.pg2 = node.pg3 = False
+                node.pellet = node.load_position = node.dome_open = False
                 # Re-announce so the base can re-assign (simulates WaitAEI→Announce)
                 self._send_announce(node)
 
@@ -410,8 +414,8 @@ class NodeSimulator:
             c = node.pellets_presented if count is None else count
             return bytes([c & 0xFF, (c >> 8) & 0xFF])
 
-        # Step 0 → 1: PG2 home reached → Loading (M1 feeding)
-        if node.dispense_step == 0 and elapsed >= self.LOADED_DELAY:
+        # Step 0 → 1: load position reached → Loading (M1 feeding)
+        if node.dispense_step == 0 and elapsed >= self.LOWERING_DELAY:
             if self._fault_rate > 0 and random.random() < self._fault_rate:
                 node.dispense_state = DispenseState.Fault
                 node.fault_code = (
@@ -423,29 +427,29 @@ class NodeSimulator:
                 self._send_event(node, CanEvent.Fault, bytes([int(node.fault_code)]))
                 print(f"  [SIM] Node {node.node_id}: FAULT {node.fault_code.name}", flush=True)
                 return
-            node.pg2 = True
-            self._send_input_changed(node, InputId.PG2, True)
+            node.load_position = True
+            self._send_input_changed(node, InputId.LoadPosition, True)
             node.dispense_state = DispenseState.Loading
             self._send_event(node, CanEvent.Loading, _count_extra())
             node.dispense_step      = 1
             node.dispense_step_time = now
 
-        # Step 1 → 2: presence asserts → Loaded + Raising same tick
+        # Step 1 → 2: pellet sensor asserts → OnPlate + Raising same tick
         elif node.dispense_step == 1 and elapsed >= 0.5:
-            node.pg1 = True
-            self._send_input_changed(node, InputId.PG1, True)
-            self._send_event(node, CanEvent.PelletLoaded, _count_extra())
+            node.pellet = True
+            self._send_input_changed(node, InputId.Pellet, True)
+            self._send_event(node, CanEvent.OnPlate, _count_extra())
             node.dispense_state = DispenseState.Raising
             self._send_event(node, CanEvent.Raising, _count_extra())
             node.dispense_step      = 3
             node.dispense_step_time = now
 
-        # Step 3 → Presented after raise travel (presence stays latched)
-        elif node.dispense_step == 3 and elapsed >= self.PRESENTED_DELAY:
-            node.pg2 = False
+        # Step 3 → Loaded after raise travel (pellet sensor stays latched)
+        elif node.dispense_step == 3 and elapsed >= self.RAISING_DELAY:
+            node.load_position = False
             node.pellets_presented += 1
-            node.dispense_state = DispenseState.Presented
-            self._send_event(node, CanEvent.PelletPresented, _count_extra())
+            node.dispense_state = DispenseState.Loaded
+            self._send_event(node, CanEvent.Loaded, _count_extra())
             taken_delay = random.uniform(self.TAKEN_DELAY_MIN, self.TAKEN_DELAY_MAX)
             node._taken_delay = taken_delay
             node.dispense_step      = 4
@@ -453,31 +457,31 @@ class NodeSimulator:
 
         # Step 4 → DomeOpened (dome lift while pellet present)
         elif node.dispense_step == 4 and elapsed >= getattr(node, "_taken_delay", self.TAKEN_DELAY_MAX):
-            node.pg3 = True
-            node.pg3_open_since = now
+            node.dome_open = True
+            node.dome_open_since = now
             node.dome_warn_sent = False
-            self._send_input_changed(node, InputId.PG3, True)
-            extra = _count_extra() + bytes([1 if node.pg1 else 0])
+            self._send_input_changed(node, InputId.Dome, True)
+            extra = _count_extra() + bytes([1 if node.pellet else 0])
             self._send_event(node, CanEvent.DomeOpened, extra)
             node.dispense_step = 5
             node.dispense_step_time = now
 
-        # Step 5 → presence clear → PelletTaken → Idle
+        # Step 5 → pellet sensor clear → PelletTaken → Idle
         elif node.dispense_step == 5 and elapsed >= 0.4:
-            if node.pg1:
-                node.pg1 = False
-                self._send_input_changed(node, InputId.PG1, False)
+            if node.pellet:
+                node.pellet = False
+                self._send_input_changed(node, InputId.Pellet, False)
             node.pellets_taken += 1
             taken_extra = bytes([
                 node.pellets_taken & 0xFF,
                 (node.pellets_taken >> 8) & 0xFF,
-                1 if node.pg3 else 0,
+                1 if node.dome_open else 0,
             ])
             self._send_event(node, CanEvent.PelletTaken, taken_extra)
-            if node.pg3:
-                self._send_input_changed(node, InputId.PG3, False)
-                node.pg3 = False
-                node.pg3_open_since = None
+            if node.dome_open:
+                self._send_input_changed(node, InputId.Dome, False)
+                node.dome_open = False
+                node.dome_open_since = None
                 node.dome_warn_sent = False
             node.dispense_state = DispenseState.Idle
             node.phase = SimNodePhase.Enabled
@@ -489,17 +493,17 @@ class NodeSimulator:
             )
 
     def _check_dome_open_warning(self, node: SimNode, now: float) -> None:
-        """Emit one-shot DomeOpenWarning after continuous PG3 open (sim delay)."""
-        if not node.pg3:
-            node.pg3_open_since = None
+        """Emit one-shot DomeOpenWarning after continuous dome opening (sim delay)."""
+        if not node.dome_open:
+            node.dome_open_since = None
             node.dome_warn_sent = False
             return
-        if node.pg3_open_since is None:
-            node.pg3_open_since = now
+        if node.dome_open_since is None:
+            node.dome_open_since = now
             return
         if node.dome_warn_sent:
             return
-        if (now - node.pg3_open_since) < self.DOME_WARN_DELAY:
+        if (now - node.dome_open_since) < self.DOME_WARN_DELAY:
             return
         node.dome_warn_sent = True
         self._send_event(node, CanEvent.DomeOpenWarning)

@@ -17,7 +17,7 @@ def make_entry(**kwargs) -> LogEntry:
         direction="RX",
         node_id=1,
         frame_type="EVENT",
-        event_name="PelletLoaded",
+        event_name="OnPlate",
         raw_id=0x301,
         raw_data=bytes([0x01]),
         details="",
@@ -29,7 +29,7 @@ def make_entry(**kwargs) -> LogEntry:
 class TestLogManager:
     def test_add_and_retrieve(self):
         lm = LogManager(auto_save=False)
-        lm.add(make_entry(event_name="PelletLoaded"))
+        lm.add(make_entry(event_name="OnPlate"))
         assert lm.total_count == 1
 
     def test_ring_buffer_overflow(self):

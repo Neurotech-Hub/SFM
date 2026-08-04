@@ -17,12 +17,13 @@ from base_station.protocol import (
 )
 
 
-def make_hb(state=DispenseState.Idle, presence=False, pg1=False, pg2=False, pg3=False,
+def make_hb(state=DispenseState.Idle, presence=False, pellet=False,
+            load_position=False, dome_open=False,
             fault=ServiceStatus.Ok) -> HeartbeatPayload:
     return HeartbeatPayload(
         dispense_state=state,
-        presence=presence,
-        pg1=pg1, pg2=pg2, pg3=pg3,
+        mouse_presence=presence,
+        pellet=pellet, load_position=load_position, dome_open=dome_open,
         fault_code=fault,
     )
 
@@ -47,11 +48,18 @@ class TestNodeRegistry:
 
     def test_heartbeat_updates_state(self):
         reg = NodeRegistry(1)
-        reg.update_from_heartbeat(1, make_hb(state=DispenseState.Presented, presence=True, pg2=True))
+        reg.update_from_heartbeat(
+            1,
+            make_hb(
+                state=DispenseState.Loaded,
+                presence=True,
+                load_position=True,
+            ),
+        )
         node = reg.get(1)
-        assert node.dispense_state == DispenseState.Presented
+        assert node.dispense_state == DispenseState.Loaded
         assert node.presence is True
-        assert node.pg2 is True
+        assert node.load_position is True
 
     def test_heartbeat_age(self):
         reg = NodeRegistry(1)
@@ -83,18 +91,20 @@ class TestNodeRegistry:
     def test_event_updates_dispense_state(self):
         reg = NodeRegistry(1)
         reg.update_from_heartbeat(1, make_hb())  # bring online
-        reg.update_from_event(1, CanEvent.PelletPresented)
-        assert reg.get(1).dispense_state == DispenseState.Presented
+        reg.update_from_event(1, CanEvent.Loaded)
+        assert reg.get(1).dispense_state == DispenseState.Loaded
 
     def test_phase_events_update_dispense_state(self):
         reg = NodeRegistry(1)
         reg.update_from_heartbeat(1, make_hb())
         seq = [
+            (CanEvent.Seeking, DispenseState.Seeking, "SEEKING"),
             (CanEvent.Lowering, DispenseState.Lowering, "LOWERING"),
             (CanEvent.Loading, DispenseState.Loading, "LOADING"),
-            (CanEvent.PelletLoaded, DispenseState.Loading, "LOADING"),
+            (CanEvent.OnPlate, DispenseState.Loading, "LOADING"),
             (CanEvent.Raising, DispenseState.Raising, "RAISING"),
-            (CanEvent.DomeOpened, DispenseState.Presented, "PRESENTED"),
+            (CanEvent.Loaded, DispenseState.Loaded, "LOADED"),
+            (CanEvent.DomeOpened, DispenseState.Loaded, "LOADED"),
             (CanEvent.PelletTaken, DispenseState.Idle, "IDLE"),
         ]
         for event, state, label in seq:
@@ -143,7 +153,7 @@ class TestNodeRegistry:
         reg.update_from_event(1, CanEvent.FeedSkipped)
         assert reg.get(1).dispense_state == DispenseState.Raising
 
-    def test_dome_open_warning_and_clear_on_pg3(self):
+    def test_dome_open_warning_and_clear_on_dome_sensor(self):
         reg = NodeRegistry(1)
         reg.update_from_heartbeat(1, make_hb())
         reg.update_from_event(1, CanEvent.DomeOpenWarning)
@@ -151,9 +161,9 @@ class TestNodeRegistry:
         assert node.dome_open_warning is True
         assert node.dispense_state != DispenseState.Fault
 
-        reg.update_from_input(1, InputId.PG3, True)
+        reg.update_from_input(1, InputId.Dome, True)
         assert node.dome_open_warning is True
-        reg.update_from_input(1, InputId.PG3, False)
+        reg.update_from_input(1, InputId.Dome, False)
         assert node.dome_open_warning is False
 
     def test_clear_fault_resets_warning(self):
@@ -168,15 +178,15 @@ class TestNodeRegistry:
 
     def test_input_event_updates_without_heartbeat(self):
         reg = NodeRegistry(1)
-        reg.update_from_input(1, InputId.PG1, True)
-        reg.update_from_input(1, InputId.Presence, True)
+        reg.update_from_input(1, InputId.Pellet, True)
+        reg.update_from_input(1, InputId.MousePresence, True)
         node = reg.get(1)
-        assert node.pg1 is True
+        assert node.pellet is True
         assert node.presence is True
         assert node.online is True
 
-        reg.update_from_input(1, InputId.PG1, False)
-        assert node.pg1 is False
+        reg.update_from_input(1, InputId.Pellet, False)
+        assert node.pellet is False
 
     def test_staleness_marks_offline(self):
         reg = NodeRegistry(1)
@@ -223,8 +233,8 @@ class TestNodeRegistry:
         ids = [n.node_id for n in reg.all_nodes()]
         assert ids == sorted(ids)
 
-    def test_pg_bits_property(self):
+    def test_sensor_bits_property(self):
         reg = NodeRegistry(1)
-        reg.update_from_heartbeat(1, make_hb(pg1=True, pg3=True))
+        reg.update_from_heartbeat(1, make_hb(pellet=True, dome_open=True))
         node = reg.get(1)
-        assert node.pg_bits == 0b101
+        assert node.sensor_bits == 0b101

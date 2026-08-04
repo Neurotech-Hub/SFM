@@ -139,7 +139,7 @@ A script may expose either `exp = Experiment(...)` or
 
 ### API surface
 
-- **Events** (`EventKind`): `PELLET_LOADED`, `PELLET_PRESENTED`, `CATCH_ATTEMPT`,
+- **Events** (`EventKind`): `ON_PLATE`, `LOADED`, `CATCH_ATTEMPT`,
   `FAULT`, phase events, `PRESENCE_CHANGED`, `PG_CHANGED`, plus derived
   `DOME_OPENED` / `DOME_CLOSED`, `NODE_ONLINE` / `NODE_OFFLINE`, and
   base-station `BNC_IN`, `SESSION_START`, `SESSION_END`.
@@ -245,7 +245,7 @@ button clears `~/.sfm/mac_id_registry.json`, broadcasts ClearId so every node
 wipes its NVS ID, then rediscovers and rebuilds the MAC↔ID dictionary.
 
 `InputChanged` event payloads are `[0x06, inputId, active]`, where input IDs
-are PG1=`1`, PG2=`2`, PG3=`3`, and presence=`4`. These events update the GUI
+are pellet=`1`, load position=`2`, dome=`3`, and presence=`4`. These events update the GUI
 indicators and log immediately; heartbeats remain the periodic recovery
 snapshot.
 

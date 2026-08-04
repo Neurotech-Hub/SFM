@@ -12,10 +12,6 @@ VFM::VFM()
 
       identity_(can_),
 
-      presence_(false),
-
-      presenceThreshold_(35000),
-
       btnHoldMs_(3000),
 
       btnPressStartMs_(0),
@@ -153,19 +149,19 @@ bool VFM::begin() {
 
 
 
-    // 6. Touch pin (analog read) and BTN (active LOW, long-press clears NVS ID)
+    // 6. Presence pad (threshold restored from NVS) and BTN (active LOW:
+    //    click = recalibrate presence, long hold = clear NVS ID)
 
-    pinMode(PIN_PRESENCE, INPUT);
+    presence_.begin();
 
     pinMode(PIN_BTN, INPUT_PULLUP);
 
     // Seed the edge-reporting snapshots from real inputs so startup levels do
     // not generate false InputChanged events.
-    updatePresence();
-    reportedPg1_      = dispenser_.pg1();
-    reportedPg2_      = dispenser_.pg2();
-    reportedPg3_      = dispenser_.pg3();
-    reportedPresence_ = presence_;
+    reportedPellet_       = dispenser_.pelletOnPlate();
+    reportedLoadPosition_ = dispenser_.atLoadPosition();
+    reportedDomeOpen_     = dispenser_.domeOpen();
+    reportedPresence_ = presence_.present();
     lastReportedDispenseState_ = dispenser_.state();
 
 
@@ -202,13 +198,15 @@ void VFM::update() {
 
     leds_.update();
 
-    updatePresence();
+    presence_.update();
 
     updateButton();
 
+    handlePresenceEvents();
+
     handleInputEvents();
 
-    // Milestone events (Loaded / Presented / Dome / Taken / Fault) first, then
+    // Milestone events (OnPlate / Loaded / Dome / Taken / Fault) first, then
     // phase-entry events (Lowering / Loading / Raising) so a same-tick
     // load→Raising transition logs as Loaded then Raising.
     handleDispenserEvents();
@@ -277,9 +275,9 @@ void VFM::handleDispenserEvents() {
 
     switch (ev) {
 
-        case DispenseEvent::PelletLoaded:    canEv = CanEvent::PelletLoaded;    break;
+        case DispenseEvent::OnPlate: canEv = CanEvent::OnPlate; break;
 
-        case DispenseEvent::PelletPresented: canEv = CanEvent::PelletPresented; break;
+        case DispenseEvent::Loaded:  canEv = CanEvent::Loaded;  break;
 
         case DispenseEvent::DomeOpened:      canEv = CanEvent::DomeOpened;      break;
 
@@ -307,7 +305,7 @@ void VFM::handleDispenserEvents() {
 
     // Clear status LED when returning to normal operation after a fault
 
-    if (ev == DispenseEvent::PelletLoaded || ev == DispenseEvent::PelletPresented ||
+    if (ev == DispenseEvent::OnPlate || ev == DispenseEvent::Loaded ||
 
         ev == DispenseEvent::DomeOpened || ev == DispenseEvent::PelletTaken ||
 
@@ -354,7 +352,7 @@ void VFM::handleDispenserEvents() {
     if (ev == DispenseEvent::PelletTaken) {
 
         // PelletTaken count uses takenCount in the cycle doc sense of
-        // presented count still carried as LE16; context = dome open.
+        // Loaded count still carried as LE16; context = dome open.
         count = dispenser_.takenCount();
         extra[0] = static_cast<uint8_t>(count & 0xFF);
         extra[1] = static_cast<uint8_t>((count >> 8) & 0xFF);
@@ -373,10 +371,11 @@ void VFM::handleDispenserEvents() {
 
 // ---------------------------------------------------------------------------
 // Publish dispenser phase entries in real time (not waiting for heartbeat):
-//   Lowering — M2 seeking/approaching load position
-//   Loading  — M1 feeding (Feeding state)
+//   Seeking  — M2 clearing the load sensor before approach
+//   Lowering — M2 approaching the load position
+//   Loading  — M1 loading a pellet
 //   Raising  — M2 raising after load / FeedSkipped
-// Loaded is still sent via PelletLoaded in handleDispenserEvents().
+// OnPlate and Loaded milestones are sent by handleDispenserEvents().
 // ---------------------------------------------------------------------------
 
 void VFM::handleDispensePhaseEvents() {
@@ -386,20 +385,18 @@ void VFM::handleDispensePhaseEvents() {
     DispenseState s = dispenser_.state();
     if (s == lastReportedDispenseState_) return;
 
-    DispenseState prev = lastReportedDispenseState_;
     lastReportedDispenseState_ = s;
 
     switch (s) {
-        case DispenseState::SeekingAway:
-        case DispenseState::Lowering:
-            // Treat SeekingAway + Lowering as one user-facing "Lowering" phase;
-            // do not emit a second Lowering when SeekingAway hands off to Lowering.
-            if (prev != DispenseState::SeekingAway && prev != DispenseState::Lowering) {
-                sendPhaseEvent(CanEvent::Lowering);
-            }
+        case DispenseState::Seeking:
+            sendPhaseEvent(CanEvent::Seeking);
             break;
 
-        case DispenseState::Feeding:
+        case DispenseState::Lowering:
+            sendPhaseEvent(CanEvent::Lowering);
+            break;
+
+        case DispenseState::Loading:
             sendPhaseEvent(CanEvent::Loading);
             break;
 
@@ -434,26 +431,69 @@ void VFM::handleInputEvents() {
     // Do not publish operational events until this node has a valid CAN ID.
     if (!identity_.isEnabled() || can_.nodeId() == 0) return;
 
-    bool pg1 = dispenser_.pg1();
-    bool pg2 = dispenser_.pg2();
-    bool pg3 = dispenser_.pg3();
+    bool pellet = dispenser_.pelletOnPlate();
+    bool loadPosition = dispenser_.atLoadPosition();
+    bool domeOpen = dispenser_.domeOpen();
 
-    if (pg1 != reportedPg1_) {
-        reportedPg1_ = pg1;
-        sendInputChanged(InputId::PG1, pg1);
+    if (pellet != reportedPellet_) {
+        reportedPellet_ = pellet;
+        sendInputChanged(InputId::Pellet, pellet);
     }
-    if (pg2 != reportedPg2_) {
-        reportedPg2_ = pg2;
-        sendInputChanged(InputId::PG2, pg2);
+    if (loadPosition != reportedLoadPosition_) {
+        reportedLoadPosition_ = loadPosition;
+        sendInputChanged(InputId::LoadPosition, loadPosition);
     }
-    if (pg3 != reportedPg3_) {
-        reportedPg3_ = pg3;
-        sendInputChanged(InputId::PG3, pg3);
+    if (domeOpen != reportedDomeOpen_) {
+        reportedDomeOpen_ = domeOpen;
+        sendInputChanged(InputId::Dome, domeOpen);
     }
-    if (presence_ != reportedPresence_) {
-        reportedPresence_ = presence_;
-        sendInputChanged(InputId::Presence, presence_);
+    bool mousePresence = presence_.present();
+    if (mousePresence != reportedPresence_) {
+        reportedPresence_ = mousePresence;
+        sendInputChanged(InputId::MousePresence, mousePresence);
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Presence calibration owns LED 9 for the duration of the capture: solid ON
+// while sampling, then the same confirm flash used for an NVS ID clear so the
+// bench sees one pattern for "stored something".
+// ---------------------------------------------------------------------------
+
+void VFM::handlePresenceEvents() {
+
+    PresenceEvent ev = presence_.takeEvent();
+    if (ev == PresenceEvent::None) return;
+
+    switch (ev) {
+        case PresenceEvent::CalibrationStarted:
+            leds_.setLed9BlinkMs(0);
+            leds_.setLed9(true);
+            break;
+
+        case PresenceEvent::CalibrationDone:
+            leds_.setLed9(false);
+            leds_.flashConfirm();
+            break;
+
+        case PresenceEvent::CalibrationFailed:
+            leds_.setLed9(false);
+            break;
+
+        default:
+            break;
+    }
+
+    pendingPresenceEvent_ = ev;
+}
+
+
+PresenceEvent VFM::takePresenceEvent() {
+
+    PresenceEvent ev = pendingPresenceEvent_;
+    pendingPresenceEvent_ = PresenceEvent::None;
+    return ev;
 }
 
 
@@ -482,11 +522,11 @@ static HeartbeatPayload buildHeartbeat(const DispenserService &d, bool presence)
 
     p.presence       = presence ? 1 : 0;
 
-    p.pgBits         = (d.pg1() ? 0x01 : 0) |
+    p.sensorBits     = (d.pelletOnPlate() ? 0x01 : 0) |
 
-                       (d.pg2() ? 0x02 : 0) |
+                       (d.atLoadPosition() ? 0x02 : 0) |
 
-                       (d.pg3() ? 0x04 : 0);
+                       (d.domeOpen() ? 0x04 : 0);
 
     p.faultCode      = static_cast<uint8_t>(d.faultCode());
 
@@ -506,7 +546,7 @@ void VFM::sendHeartbeatIfDue() {
 
     if (!can_.heartbeatDue()) return;
 
-    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_));
+    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_.present()));
 
 }
 
@@ -514,7 +554,7 @@ void VFM::sendHeartbeatIfDue() {
 
 void VFM::sendHeartbeatNow() {
 
-    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_));
+    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_.present()));
 
 }
 
@@ -553,34 +593,20 @@ void VFM::updatePingBlink() {
 // show what the firmware acts on rather than the raw pin.
 //
 // LED 10 has no other owner and mirrors unconditionally. LED 9 is shared with
-// the boot / discovery blink and the button-hold warning, which keep it until
-// discovery is done and no hold is armed.
+// the boot / discovery blink, the button-hold warning, and the presence
+// calibration capture, all of which keep it until they are done.
 
 void VFM::updateSensorLeds() {
 
-    leds_.setLed10(dispenser_.pg1());
+    leds_.setLed10(dispenser_.pelletOnPlate());
 
-    if (identity_.isEnabled() && !btnArmed_) {
+    if (identity_.isEnabled() && !btnArmed_ && !presence_.calibrating()) {
 
         leds_.setLed9BlinkMs(0);
 
-        leds_.setLed9(dispenser_.pg3());
+        leds_.setLed9(dispenser_.domeOpen());
 
     }
-
-}
-
-
-
-void VFM::updatePresence() {
-
-    // ESP32-S3 presence detection sensor (capacitive pad on GPIO5).
-    // touchRead() returns a raw count; presence asserts when raw exceeds
-    // the bench-tuned threshold (idle ~30–35k, presence often 100k+).
-
-    uint32_t val = touchRead(PIN_PRESENCE);
-
-    presence_ = (val > presenceThreshold_);
 
 }
 
@@ -594,11 +620,13 @@ void VFM::updatePresence() {
 
 // Behaviour:
 
+//   - Short click (kBtnClickMinMs .. btnHoldMs_) → recalibrate the presence pad.
+
 //   - Press and hold for btnHoldMs_ → LED 9 blinks rapidly as visual warning.
 
 //   - Release after hold threshold → NVS ID cleared; status/LED9/LED10 flash 3x.
 
-//   - Release before threshold     → no action (accidental press ignored).
+//   - Release under kBtnClickMinMs  → no action (contact bounce ignored).
 
 // ---------------------------------------------------------------------------
 
@@ -644,6 +672,8 @@ void VFM::updateButton() {
 
             // Trailing edge
 
+            uint32_t heldMs = millis() - btnPressStartMs_;
+
             if (btnArmed_) {
 
                 // Held long enough – clear NVS ID and confirm visually
@@ -653,6 +683,13 @@ void VFM::updateButton() {
                 leds_.setLed9BlinkMs(0);
 
                 flashLedsClear();
+
+            } else if (heldMs >= kBtnClickMinMs) {
+
+                // A click is the recalibrate gesture. The hold branch above
+                // already consumed this press, so the two never both fire.
+
+                presence_.startCalibration();
 
             }
 
@@ -675,27 +712,8 @@ void VFM::updateButton() {
 // ~600 ms total and only fires on a deliberate 3-second button hold.
 
 void VFM::flashLedsClear() {
-
-    for (int i = 0; i < 3; i++) {
-
-        leds_.setStatusLed(true);
-
-        leds_.setLed9(true);
-
-        leds_.setLed10(true);
-
-        delay(100);
-
-        leds_.setStatusLed(false);
-
-        leds_.setLed9(false);
-
-        leds_.setLed10(false);
-
-        delay(100);
-
-    }
-
+    // Shared confirm pattern lives in LedService (also used by MousePresenceTest).
+    leds_.flashConfirm();
 }
 
 

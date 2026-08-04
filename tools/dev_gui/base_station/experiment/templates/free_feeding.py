@@ -9,7 +9,7 @@ Behavior:
      (latched) and stops reloading; the other nodes keep free-feeding. The
      node resumes only after an operator **Recover** (``on_recover``
      re-dispenses it).
-  5. End after ``duration`` and/or when total pellets presented reaches
+  5. End after ``duration`` and/or when total `Loaded` milestones reaches
      ``max_pellets``.
 
 Usage::
@@ -49,7 +49,7 @@ def build(
     hours / minutes / seconds:
         Session duration (combined). 0 = no duration limit.
     max_pellets:
-        End when this many pellets have been presented (None = no cap).
+        End when this many pellets reach `Loaded` (None = no cap).
     """
     node_list = list(nodes) if nodes else [1, 2, 3]
     exp = Experiment(nodes=node_list, name=name)
@@ -94,11 +94,11 @@ def build(
             # Node-scoped so a fault on this node cancels its pending reload.
             ctx.after(reload_delay_s, _do_reload, node=node_id)
 
-    @exp.on_pellet_presented
-    def _presented(ctx, ev):
+    @exp.on_loaded
+    def _loaded(ctx, ev):
         # Runner already incr("pellets"); just log for the experiment CSV.
         ctx.log(
-            "pellet_presented",
+            "loaded",
             node=ev.node_id,
             total=ctx.counter("pellets"),
         )
@@ -116,7 +116,7 @@ def build(
 
     @exp.on_recover
     def _recovered(ctx, ev):
-        """Operator cleared the fault — resume this node's feeding cycle."""
+        """Operator cleared the fault — resume this node's dispense cycle."""
         ctx.log("recovered", node=ev.node_id)
         ctx.dispense(ev.node_id)
 

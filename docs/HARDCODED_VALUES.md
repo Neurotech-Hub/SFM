@@ -15,15 +15,15 @@ These are the ones called out most often during bring-up.
 
 | Value         | Constant                | Location             | Notes                                                                                   |
 | ------------- | ----------------------- | -------------------- | --------------------------------------------------------------------------------------- |
-| **200 ms**    | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while presented → `PelletTaken`. Set from bench data: too short and a reach-in flicker counts as a take |
-| **2 s**       | `kPelletLoadConfirmMs`  | `DispenserService.h` | Pellet sensor held this long during the feed → `PelletLoaded`. M1 stops on the first sighting and holds; if the beam clears before the window elapses the wheel resumes. Rejects a fragment tumbling past the beam |
+| **200 ms**    | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while `Loaded` → `PelletTaken`. Set from bench data: too short and a reach-in flicker counts as a take |
+| **2 s**       | `kPelletLoadConfirmMs`  | `DispenserService.h` | Pellet sensor held this long during `Loading` → `OnPlate`. M1 stops on the first sighting and holds; if the beam clears before the window elapses the wheel resumes. Rejects a fragment tumbling past the beam |
 | **0.5×**      | `kDefaultFeedSpeedScale`| `DispenserService.h` | M1 runs at this fraction of `motorSpeed_` — half speed, so the wheel drops one pellet at a time |
 | **30 s**      | `kDomeOpenWarnMs`       | `DispenserService.h` | Dome held open continuously → `DomeOpenWarning` (non-sticky)                             |
 | **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
 | **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
-| **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past** the load position sensor by this much before M1 turns. The sensor is not the drop height — the plate has to sit this far below it for the pellet to land cleanly. PG2 is ignored during this descent |
-| **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 280 + 1200 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from PG2 home |
-| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel to clear the load sensor before the approach. Fixed travel, not sensor-gated: at the drop position PG2 may already read clear, and a sensor-gated seek would skip the move and then lower into the floor |
+| **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past** the load position sensor by this much before M1 turns. The sensor is not the drop height — the plate has to sit this far below it for the pellet to land cleanly. The load position sensor is ignored during this descent |
+| **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 280 + 1200 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from the load position sensor |
+| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel to clear the load sensor before the approach. Fixed travel, not sensor-gated: at the drop position the load position sensor may already read clear, and a sensor-gated seek would skip the move and then lower into the floor |
 
 
 ---
@@ -50,7 +50,6 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | 8 s         | `kDefaultLowerTimeoutMs` | M2 seek-away / approach / grab-descent timeout (re-armed per sub-phase) |
 | 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout |
 | 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                    |
-| 100 ms      | `kSensorDebounceMs`      | Sensor debounce (pellet / load / dome)    |
 
 
 Not overrideable via SetConfig CAN yet — only compile-time / setter before begin.
@@ -66,11 +65,57 @@ Same header; **not** runtime-configurable via CAN today.
 
 | Value  | Constant                | Trigger                                                              |
 | ------ | ----------------------- | -------------------------------------------------------------------- |
-| 2 s    | `kPelletLoadConfirmMs`  | Pellet sensor held during the feed → `PelletLoaded`, raise starts    |
-| 200 ms | `kPelletTakenConfirmMs` | Pellet sensor clear while presented → `PelletTaken`, cycle completes |
+| 2 s    | `kPelletLoadConfirmMs`  | Pellet sensor held during `Loading` → `OnPlate`, raise starts        |
+| 200 ms | `kPelletTakenConfirmMs` | Pellet sensor clear while `Loaded` → `PelletTaken`, cycle completes |
 | 500 ms | `kPelletLostMs`         | Pellet sensor clear during the raise → Fault/`PelletLost`            |
 | 5 s    | `kLoadClearOnRaiseMs`   | Load position sensor still blocked after raise start → Jam           |
 | 30 s   | `kDomeOpenWarnMs`       | Dome held open → `DomeOpenWarning`                                   |
+
+
+---
+
+
+
+## Shared input debounce
+
+
+One window for every sensor input, so a single bout produces one trigger event
+and one clear event no matter which sensor reported it.
+
+
+| Value  | Constant              | Location         | Notes                                                                     |
+| ------ | --------------------- | ---------------- | ------------------------------------------------------------------------- |
+| 100 ms | `kSensorDebounceMs`   | `ServiceTypes.h` | Pellet, load position, dome, **and** mouse presence all debounce on this |
+
+
+---
+
+
+
+## Presence detection (`PresenceService`)
+
+
+The threshold is calibrated against the idle pad and stored in NVS under the
+same namespace as the node ID, so it survives reboots. Calibration is started by
+a short click of `PIN_BTN` or the serial `cal` command; a 3 s hold of the same
+button clears the node ID instead.
+
+Calibration rule: `threshold = idle_max + (idle_max − idle_min)` — one noise
+range above the highest idle reading. The pad must stay clear for the capture.
+
+
+| Value    | Constant / where              | Notes                                                                                     |
+| -------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
+| 35000    | `kDefaultPresenceThreshold`   | Compile-time fallback used only until a calibration is stored. Bench idle ≈ 35 000–35 500 |
+| 5 s      | `kPresenceCalMs`              | Idle capture duration                                                                     |
+| 25 ms    | `kPresenceCalSampleMs`        | Sample cadence during the capture (≈200 samples over 5 s)                                 |
+| 10       | `kPresenceCalMinSamples`      | Below this the attempt fails and the threshold is left unchanged                          |
+| 20 ms    | `kPresenceSampleMs`           | `touchRead()` cadence in normal operation — several samples per debounce window            |
+| `presThr`| NVS key (`PresenceService.h`) | Stored threshold; namespace `kNvsNamespace` ("vfm"), shared with `nodeId`                  |
+
+
+Threshold changes apply immediately rather than waiting out a debounce window:
+the reading did not change, the decision boundary did.
 
 
 ---
@@ -94,17 +139,18 @@ Same header; **not** runtime-configurable via CAN today.
 ## UI / LED / button (`VFM`)
 
 
-| Value          | Where                                 | Notes                                                                         |
-| -------------- | ------------------------------------- | ----------------------------------------------------------------------------- |
-| 3 s            | `VFM` ctor → `btnHoldMs_(3000)`       | Hold to arm NVS clear (`VFM.h` in-class default `1000` is overridden by ctor) |
-| 100 ms         | `VFM.cpp` LED9 blink while hold armed | Rapid blink warning                                                           |
-| 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                         |
-| 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                          |
-| 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                  |
-| —              | LED9 after discovery                  | Live dome mirror: lit = dome open. Yields to the button-hold blink            |
-| —              | LED10                                 | Live pellet mirror: lit = pellet on the plate. No other steady owner          |
-| 35000          | `presenceThreshold_`                  | Presence detection sensor threshold (`raw > thr` → animal present)            |
-| 100 ms         | `flashLedsClear()` delays             | Visual confirm of NVS clear                                                   |
+| Value          | Where                                 | Notes                                                                              |
+| -------------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
+| 3 s            | `VFM` ctor → `btnHoldMs_(3000)`       | Hold to arm NVS clear (`VFM.h` in-class default `1000` is overridden by ctor)      |
+| 50 ms          | `kBtnClickMinMs` (`VFM.h`)            | Minimum press for a click to count as "recalibrate presence"; shorter = bounce     |
+| 100 ms         | `VFM.cpp` LED9 blink while hold armed | Rapid blink warning                                                                |
+| 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                              |
+| 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                               |
+| 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                       |
+| —              | LED9 during presence calibration      | Solid ON for the whole capture; yields back to the dome mirror when done            |
+| —              | LED9 after discovery                  | Live dome mirror: lit = dome open. Yields to the button-hold blink                  |
+| —              | LED10                                 | Live pellet mirror: lit = pellet on the plate. No other steady owner                |
+| 100 ms         | `LedService::flashConfirm()` delays   | Visual confirm (NVS clear / presence cal)                                          |
 
 
 ---

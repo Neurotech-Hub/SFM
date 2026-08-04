@@ -645,12 +645,12 @@ class SFMApp:
                 tags["presence_text"] = dpg.add_text("○", color=_COLOR_GREY)
 
             with dpg.group(horizontal=True):
-                dpg.add_text("PG:", color=(160,165,175,255))
-                tags["pg1_text"] = dpg.add_text("PG1: ○")
+                dpg.add_text("Sensors:", color=(160,165,175,255))
+                tags["pellet_text"] = dpg.add_text("Pellet: ○")
                 dpg.add_spacer(width=6)
-                tags["pg2_text"] = dpg.add_text("PG2: ○")
+                tags["load_position_text"] = dpg.add_text("Load: ○")
                 dpg.add_spacer(width=6)
-                tags["pg3_text"] = dpg.add_text("PG3: ○")
+                tags["dome_text"] = dpg.add_text("Dome: ○")
 
             with dpg.group(horizontal=True):
                 dpg.add_text("Fault:", color=(160,165,175,255))
@@ -762,7 +762,7 @@ class SFMApp:
         cfg = self._bnc_out_cfg
         tags: dict = {"last_pulse_ts": 0.0}
         triggers = _bnc_out_trigger_items()
-        default_trigger = cfg.trigger if cfg.trigger in triggers else "Presented"
+        default_trigger = cfg.trigger if cfg.trigger in triggers else "Loaded"
         with dpg.child_window(width=300, height=195, border=True):
             with dpg.group(horizontal=True):
                 tags["dot"] = dpg.add_text("●", color=_COLOR_GREY)
@@ -1216,10 +1216,14 @@ class SFMApp:
                     self._maybe_request_mac_via_ping(node_id)
                     self._registry.update_from_heartbeat(node_id, hb)
                     self._refresh_tile(node_id)
-                    details = (f"state={hb.dispense_state.name} "
-                               f"presence={int(hb.presence)} "
-                               f"pg={''.join(str(int(b)) for b in [hb.pg1,hb.pg2,hb.pg3])} "
-                               f"fault={hb.fault_code.name}")
+                    details = (
+                        f"state={hb.dispense_state.name} "
+                        f"mouse_presence={int(hb.mouse_presence)} "
+                        f"sensors=pellet:{int(hb.pellet)},"
+                        f"load_position:{int(hb.load_position)},"
+                        f"dome_open:{int(hb.dome_open)} "
+                        f"fault={hb.fault_code.name}"
+                    )
                     if hb.fault_code.value != 0:
                         details += f" ({fault_user_message(hb.fault_code)})"
 
@@ -1240,7 +1244,7 @@ class SFMApp:
                             self._registry.update_from_input(
                                 node_id, changed.input_id, changed.active
                             )
-                            if changed.input_id.name == "Presence":
+                            if changed.input_id == InputId.MousePresence:
                                 state_name = "Detected" if changed.active else "Cleared"
                             else:
                                 state_name = "Triggered" if changed.active else "Cleared"
@@ -1258,7 +1262,7 @@ class SFMApp:
                             details = f"fault={code} — {fault_user_message(fault_code)}"
                             entry_name = f"Fault: {code}"
                         elif ev.event == CanEvent.DomeOpenWarning:
-                            details = "PG3 open >30s"
+                            details = "dome sensor open >30s"
                         else:
                             ctx = parse_event_context(ev)
                             if ctx is not None:
@@ -1268,18 +1272,19 @@ class SFMApp:
                                 if "dome_open" in ctx:
                                     details += f" dome_open={int(ctx['dome_open'])}"
                             elif ev.event in (
+                                CanEvent.Seeking,
                                 CanEvent.Lowering,
                                 CanEvent.Loading,
-                                CanEvent.PelletLoaded,
+                                CanEvent.OnPlate,
                                 CanEvent.Raising,
-                                CanEvent.PelletPresented,
+                                CanEvent.Loaded,
                                 CanEvent.FeedSkipped,
                             ) and len(ev.raw_extra) >= 2:
                                 pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
                                 details = f"pellet_count={pellet_count}"
                     self._refresh_tile(node_id)
                     self._maybe_fire_bnc_out(entry_name)
-                    if ev.event == CanEvent.PelletPresented:
+                    if ev.event == CanEvent.Loaded:
                         self._arm_chained_schedules(node_id)
 
         elif ftype == "DISCOVERY":
@@ -1429,15 +1434,15 @@ class SFMApp:
             color=(100, 220, 120, 255) if node.presence else (160, 165, 175, 255),
         )
 
-        # Photogates
-        for pg_tag, val, label in [
-            (tags["pg1_text"], node.pg1, "1"),
-            (tags["pg2_text"], node.pg2, "2"),
-            (tags["pg3_text"], node.pg3, "3"),
+        # Sensors
+        for sensor_tag, val, label in [
+            (tags["pellet_text"], node.pellet, "Pellet"),
+            (tags["load_position_text"], node.load_position, "Load"),
+            (tags["dome_text"], node.dome_open, "Dome"),
         ]:
             sym = "●" if val else "○"
             col = (100, 220, 120, 255) if val else (160, 165, 175, 255)
-            dpg.configure_item(pg_tag, default_value=f"PG{label}: {sym}", color=col)
+            dpg.configure_item(sensor_tag, default_value=f"{label}: {sym}", color=col)
 
         # Fault (FeedTimeout / ActuatorTimeout / Jam / PelletLost when sticky)
         if node.fault_code.value != 0:
@@ -1836,7 +1841,7 @@ class SFMApp:
 
     def _arm_chained_schedules(self, source_node_id: int) -> None:
         """
-        Called when `source_node_id` fires a PelletPresented event. Any node
+        Called when `source_node_id` fires a Loaded event. Any node
         whose schedule is chained to this node gets its one-shot dispense
         timer (re-)armed for `chained_delay_minutes` from now.
         """

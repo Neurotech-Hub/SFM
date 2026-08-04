@@ -91,25 +91,25 @@ class TestBuildAssignFrame:
 
 
 class TestParseHeartbeat:
-    def _make_data(self, state=0, presence=0, pg=0, fault=0):
-        return bytes([state, 0, 0, presence, pg, fault, 0, 0])
+    def _make_data(self, state=0, presence=0, sensor_bits=0, fault=0):
+        return bytes([state, 0, 0, presence, sensor_bits, fault, 0, 0])
 
     def test_idle(self):
         hb = parse_heartbeat(self._make_data(state=0))
         assert hb is not None
         assert hb.dispense_state == DispenseState.Idle
-        assert hb.presence is False
-        assert hb.pg1 is False
+        assert hb.mouse_presence is False
+        assert hb.pellet is False
 
-    def test_pg_bits(self):
-        hb = parse_heartbeat(self._make_data(pg=0b101))  # PG1 + PG3
-        assert hb.pg1 is True
-        assert hb.pg2 is False
-        assert hb.pg3 is True
+    def test_sensor_bits(self):
+        hb = parse_heartbeat(self._make_data(sensor_bits=0b101))  # pellet + dome
+        assert hb.pellet is True
+        assert hb.load_position is False
+        assert hb.dome_open is True
 
     def test_presence(self):
         hb = parse_heartbeat(self._make_data(presence=1))
-        assert hb.presence is True
+        assert hb.mouse_presence is True
 
     def test_fault_state(self):
         hb = parse_heartbeat(self._make_data(state=6, fault=3))  # Fault, Jam
@@ -126,17 +126,17 @@ class TestParseHeartbeat:
 
 
 class TestParseEvent:
-    def test_pellet_loaded(self):
-        ev = parse_event(bytes([CanEvent.PelletLoaded]))
+    def test_on_plate(self):
+        ev = parse_event(bytes([CanEvent.OnPlate]))
         assert ev is not None
-        assert ev.event == CanEvent.PelletLoaded
+        assert ev.event == CanEvent.OnPlate
 
     def test_pong(self):
         ev = parse_event(bytes([CanEvent.Pong]))
         assert ev.event == CanEvent.Pong
 
     def test_extra_bytes(self):
-        ev = parse_event(bytes([CanEvent.PelletLoaded, 0x12, 0x00]))
+        ev = parse_event(bytes([CanEvent.OnPlate, 0x12, 0x00]))
         assert ev.raw_extra == bytes([0x12, 0x00])
 
     def test_empty(self):
@@ -146,18 +146,19 @@ class TestParseEvent:
         assert parse_event(bytes([0xFF])) is None
 
     def test_input_changed(self):
-        ev = parse_event(bytes([CanEvent.InputChanged, InputId.PG1, 1]))
+        ev = parse_event(bytes([CanEvent.InputChanged, InputId.Pellet, 1]))
         changed = parse_input_changed(ev)
         assert changed is not None
-        assert changed.input_id == InputId.PG1
+        assert changed.input_id == InputId.Pellet
         assert changed.active is True
 
     def test_input_changed_rejects_short_payload(self):
-        ev = parse_event(bytes([CanEvent.InputChanged, InputId.PG2]))
+        ev = parse_event(bytes([CanEvent.InputChanged, InputId.LoadPosition]))
         assert parse_input_changed(ev) is None
 
     def test_phase_events(self):
         for ev_type, code in (
+            (CanEvent.Seeking, 0x0D),
             (CanEvent.Lowering, 0x07),
             (CanEvent.Loading, 0x08),
             (CanEvent.Raising, 0x09),
@@ -168,7 +169,9 @@ class TestParseEvent:
             assert ev.event == ev_type
 
     def test_phase_display_names(self):
-        assert CAN_EVENT_DISPLAY_NAME[CanEvent.PelletLoaded] == "Loaded"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.OnPlate] == "OnPlate"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.Loaded] == "Loaded"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.Seeking] == "Seeking"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.DomeOpened] == "DomeOpened"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Lowering] == "Lowering"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Loading] == "Loading"
@@ -206,7 +209,7 @@ class TestParseEvent:
         assert parse_fault_code(ev) is None
 
     def test_fault_payload_ignores_non_fault(self):
-        ev = parse_event(bytes([CanEvent.PelletPresented, ServiceStatus.Jam]))
+        ev = parse_event(bytes([CanEvent.Loaded, ServiceStatus.Jam]))
         assert parse_fault_code(ev) is None
 
     def test_dome_opened_and_pellet_taken_opcodes(self):
@@ -238,10 +241,10 @@ class TestParseEvent:
     def test_build_heartbeat_roundtrip_taken(self):
         hb = HeartbeatPayload(
             dispense_state=DispenseState.Idle,
-            presence=False,
-            pg1=True,
-            pg2=False,
-            pg3=False,
+            mouse_presence=False,
+            pellet=True,
+            load_position=False,
+            dome_open=False,
             fault_code=ServiceStatus.Ok,
             pellets_presented=9,
             pellets_taken=4,
@@ -250,7 +253,7 @@ class TestParseEvent:
         parsed = parse_heartbeat(data)
         assert parsed.pellets_presented == 9
         assert parsed.pellets_taken == 4
-        assert parsed.pg1 is True
+        assert parsed.pellet is True
 
 
 class TestParseDiscovery:

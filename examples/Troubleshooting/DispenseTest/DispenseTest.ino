@@ -3,8 +3,8 @@
 // Open the Arduino Serial Monitor at 115200 baud.
 //
 // Commands:
-//   d          – start a dispense cycle (also ends Presented wait and starts next)
-//   a          – recover: stop motion / clear Fault / leave Presented
+//   d          – start a dispense cycle (also ends Loaded wait and starts next)
+//   a          – recover: stop motion / clear Fault / leave Loaded
 //   s          – print current dispenser state + photogate readings
 //   +          – increase motor speed by 100 steps/s
 //   -          – decrease motor speed by 100 steps/s
@@ -12,8 +12,8 @@
 //   r <n>      – set raiseSteps (e.g. "r 1480" or "r 1200")
 //
 // LED mirrors (debounced sensor state):
-//   LED 10 = pellet present (PG1)
-//   LED 9  = dome open (PG3)
+//   LED 10 = pellet present
+//   LED 9  = dome open
 //
 // Defaults match library: grab=280, raise=1480, seek-away=800, feed timeout=30 s.
 // raiseSteps is measured from the pellet-drop position (kDefaultGrabSteps below
@@ -39,11 +39,11 @@ static uint8_t  lineIdx = 0;
 static const char *stateStr(vfm::DispenseState s) {
     switch (s) {
         case vfm::DispenseState::Idle:        return "Idle";
-        case vfm::DispenseState::SeekingAway: return "SeekingAway";
+        case vfm::DispenseState::Seeking:  return "Seeking";
         case vfm::DispenseState::Lowering:    return "Lowering";
-        case vfm::DispenseState::Feeding:     return "Feeding";
+        case vfm::DispenseState::Loading:  return "Loading";
         case vfm::DispenseState::Raising:     return "Raising";
-        case vfm::DispenseState::Presented:   return "Presented";
+        case vfm::DispenseState::Loaded:   return "Loaded";
         case vfm::DispenseState::Fault:       return "Fault";
     }
     return "?";
@@ -52,9 +52,9 @@ static const char *stateStr(vfm::DispenseState s) {
 void printStatus() {
     Serial.print(F("[State] "));
     Serial.print(stateStr(dispenser.state()));
-    Serial.print(F("  PG1="));   Serial.print(dispenser.pg1());
-    Serial.print(F(" PG2="));    Serial.print(dispenser.pg2());
-    Serial.print(F(" PG3="));    Serial.print(dispenser.pg3());
+    Serial.print(F("  pellet="));        Serial.print(dispenser.pelletOnPlate());
+    Serial.print(F(" load_position="));  Serial.print(dispenser.atLoadPosition());
+    Serial.print(F(" dome_open="));       Serial.print(dispenser.domeOpen());
     Serial.print(F("  Pellets=")); Serial.print(dispenser.pelletCount());
     Serial.print(F("  raiseSteps=")); Serial.print(currentRaiseSteps);
     Serial.print(F("  speed=")); Serial.println(currentSpeed);
@@ -164,15 +164,15 @@ void loop() {
     dispenser.update();
 
     // Live sensor mirrors (same mapping as VFM::updateSensorLeds).
-    leds.setLed10(dispenser.pg1());
-    leds.setLed9(dispenser.pg3());
+    leds.setLed10(dispenser.pelletOnPlate());
+    leds.setLed9(dispenser.domeOpen());
 
     switch (dispenser.takeEvent()) {
-        case vfm::DispenseEvent::PelletLoaded:
-            Serial.println(F("[Event] PelletLoaded"));
+        case vfm::DispenseEvent::OnPlate:
+            Serial.println(F("[Event] OnPlate"));
             break;
-        case vfm::DispenseEvent::PelletPresented:
-            Serial.print(F("[Event] PelletPresented  total="));
+        case vfm::DispenseEvent::Loaded:
+            Serial.print(F("[Event] Loaded  total="));
             Serial.println(dispenser.pelletCount());
             break;
         case vfm::DispenseEvent::DomeOpened:

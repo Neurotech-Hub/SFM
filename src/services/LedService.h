@@ -12,8 +12,8 @@ namespace vfm {
 //   1. Status LED  (PIN_STATUS_LED) – fault / discovery indication
 //   2. LED 9       (PIN_LED_IO_9)   – boot / discovery / button-hold warning,
 //                                     then a live dome-open mirror once enabled
-//   3. LED 10      (PIN_LED_IO_10)  – live pellet-present mirror; also the clear
-//                                     confirm flash
+//   3. LED 10      (PIN_LED_IO_10)  – live pellet-present mirror; also used in
+//                                     confirm flashes
 //
 // All LEDs are digital (on/off). RGB or PWM extensions can be added later.
 class LedService {
@@ -24,9 +24,8 @@ public:
     pinMode(PIN_STATUS_LED, OUTPUT);
     pinMode(PIN_LED_IO_9, OUTPUT);
     pinMode(PIN_LED_IO_10, OUTPUT);
-    setStatusLed(false);
-    setLed9(false);
-    setLed10(false);
+    stopAllBlinks();
+    allOff();
     return ServiceStatus::Ok;
   }
 
@@ -34,6 +33,37 @@ public:
   void setStatusLed(bool on) { digitalWrite(PIN_STATUS_LED, on ? HIGH : LOW); }
   void setLed9(bool on)      { digitalWrite(PIN_LED_IO_9,   on ? HIGH : LOW); }
   void setLed10(bool on)     { digitalWrite(PIN_LED_IO_10,  on ? HIGH : LOW); }
+
+  void allOff() {
+    setStatusLed(false);
+    setLed9(false);
+    setLed10(false);
+  }
+
+  void allOn() {
+    setStatusLed(true);
+    setLed9(true);
+    setLed10(true);
+  }
+
+  // Stop every blink channel so solid / flash patterns are not overridden.
+  void stopAllBlinks() {
+    statusBlinkMs_ = 0;
+    led9BlinkMs_   = 0;
+    led10BlinkMs_  = 0;
+  }
+
+  // Blocking confirm flash (same pattern as NVS clear): all LEDs on/off N times.
+  // ~600 ms for defaults (3 × 100 ms on + 100 ms off). Call sparingly.
+  void flashConfirm(uint8_t times = 3, uint32_t onMs = 100, uint32_t offMs = 100) {
+    stopAllBlinks();
+    for (uint8_t i = 0; i < times; i++) {
+      allOn();
+      delay(onMs);
+      allOff();
+      delay(offMs);
+    }
+  }
 
   // --- Blink channels (pass 0 to stop) ---
   void setStatusLedBlinkMs(uint32_t ms) {

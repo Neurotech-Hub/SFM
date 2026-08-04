@@ -1,9 +1,9 @@
 // PhotogateTest – hardware bring-up test for VFM photogates.
 //
 // Polarity (matches DispenserService):
-//   PG1 (GPIO46) – pellet in cup:        TRIGGERED = pin LOW  (beam break)
-//   PG2 (GPIO45) – actuator home/down:   TRIGGERED = pin LOW  (beam break)
-//   PG3 (GPIO44) – dome OPEN:            TRIGGERED = pin HIGH (idle = LOW)
+//   Pellet (GPIO46):       TRIGGERED = pin LOW  (beam break)
+//   Load position (GPIO45): TRIGGERED = pin LOW  (beam break)
+//   Dome open (GPIO44):    TRIGGERED = pin HIGH (idle = LOW)
 //
 // Open Serial Monitor at 115200 baud.
 //
@@ -33,9 +33,9 @@ struct Gate {
 };
 
 Gate gates[4] = {
-    { PIN_PG1, "PG1 (GPIO46)", false, INPUT_PULLUP,   false, false, false, 0 },
-    { PIN_PG2, "PG2 (GPIO45)", false, INPUT_PULLUP,   false, false, false, 0 },
-    { PIN_PG3, "PG3 (GPIO44)", true,  INPUT_PULLDOWN, false, false, false, 0 },
+    { PIN_PG1, "Pellet (GPIO46)",       false, INPUT_PULLUP,   false, false, false, 0 },
+    { PIN_PG2, "Load position (GPIO45)", false, INPUT_PULLUP,   false, false, false, 0 },
+    { PIN_PG3, "Dome (GPIO44)",          true,  INPUT_PULLDOWN, false, false, false, 0 },
 };
 
 bool     monitoring   = false;
@@ -83,7 +83,7 @@ void printRaw() {
 }
 
 void printDebounced() {
-    Serial.println(F("[PG] Debounced state:"));
+    Serial.println(F("[SENSORS] Debounced state:"));
     for (const auto &g : gates) {
         Serial.print(F("  ")); Serial.print(g.name);
         Serial.print(F(" -> "));
@@ -97,7 +97,7 @@ void printHelp() {
     Serial.println(F("  r  raw digital reads"));
     Serial.println(F("  m  toggle 200 ms raw monitor"));
     Serial.println(F("  h  help"));
-    Serial.println(F("PG1/PG2: LOW=TRIG  |  PG3: HIGH=TRIG (dome open)"));
+    Serial.println(F("Pellet/load: LOW=TRIG  |  Dome: HIGH=TRIG (open)"));
 }
 
 void setup() {
@@ -105,8 +105,8 @@ void setup() {
     while (!Serial && millis() < 3000) {}
 
     Serial.println(F("\n===== VFM PhotogateTest ====="));
-    Serial.println(F("PG1=GPIO46  PG2=GPIO45  PG3=GPIO44"));
-    Serial.println(F("PG3 idle=LOW, open=HIGH (active HIGH)"));
+    Serial.println(F("Pellet=GPIO46  Load position=GPIO45  Dome=GPIO44"));
+    Serial.println(F("Dome idle=LOW, open=HIGH (active HIGH)"));
     printHelp();
 
     initGates();

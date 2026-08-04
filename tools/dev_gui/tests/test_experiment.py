@@ -31,13 +31,13 @@ def _msg(arb_id: int, data: bytes):
 # EventNormalizer
 # ---------------------------------------------------------------------------
 
-def test_normalizer_pellet_presented() -> None:
+def test_normalizer_loaded() -> None:
     norm = EventNormalizer()
-    arb, data = build_event_frame(2, CanEvent.PelletPresented, b"\x05\x00")
+    arb, data = build_event_frame(2, CanEvent.Loaded, b"\x05\x00")
     events = norm.frame_to_events(_msg(arb, data), now=100.0)
     assert len(events) == 1
     ev = events[0]
-    assert ev.kind == EventKind.PELLET_PRESENTED
+    assert ev.kind == EventKind.LOADED
     assert ev.node_id == 2
     assert ev.data.get("pellet_count") == 5
 
@@ -61,20 +61,20 @@ def test_normalizer_pellet_taken() -> None:
     assert events[0].data.get("dome_open") is True
 
 
-def test_normalizer_derives_dome_closed_from_pg3() -> None:
+def test_normalizer_derives_dome_closed_from_dome_sensor() -> None:
     norm = EventNormalizer()
-    # PG3 open
+    # Dome sensor open
     arb, data = build_event_frame(
-        3, CanEvent.InputChanged, bytes([InputId.PG3, 1])
+        3, CanEvent.InputChanged, bytes([InputId.Dome, 1])
     )
     opened = norm.frame_to_events(_msg(arb, data), now=10.0)
     kinds = [e.kind for e in opened]
     assert EventKind.DOME_OPENED in kinds
     assert EventKind.PG_CHANGED in kinds
 
-    # PG3 clear
+    # Dome sensor clear
     arb, data = build_event_frame(
-        3, CanEvent.InputChanged, bytes([InputId.PG3, 0])
+        3, CanEvent.InputChanged, bytes([InputId.Dome, 0])
     )
     closed = norm.frame_to_events(_msg(arb, data), now=11.0)
     kinds = [e.kind for e in closed]
@@ -86,10 +86,10 @@ def test_normalizer_node_online_offline() -> None:
     norm = EventNormalizer(online_timeout_s=5.0)
     hb = HeartbeatPayload(
         dispense_state=DispenseState.Idle,
-        presence=False,
-        pg1=False,
-        pg2=True,
-        pg3=False,
+        mouse_presence=False,
+        pellet=False,
+        load_position=True,
+        dome_open=False,
         fault_code=ServiceStatus.Ok,
     )
     arb, data = build_heartbeat_frame(1, hb)
@@ -105,7 +105,7 @@ def test_normalizer_node_online_offline() -> None:
 def test_normalizer_presence_changed() -> None:
     norm = EventNormalizer()
     arb, data = build_event_frame(
-        1, CanEvent.InputChanged, bytes([InputId.Presence, 1])
+        1, CanEvent.InputChanged, bytes([InputId.MousePresence, 1])
     )
     events = norm.frame_to_events(_msg(arb, data), now=1.0)
     assert events[0].kind == EventKind.PRESENCE_CHANGED
@@ -195,11 +195,11 @@ def test_runner_end_after_pellets() -> None:
     runner = exp.make_runner()
     runner.start(now=0.0)
 
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=1, timestamp=1.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
     assert not runner.is_finished
     assert runner.ctx.counter("pellets") == 1
 
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=1, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=2.0))
     assert runner.is_finished
     assert runner.ctx.counter("pellets") == 2
 
@@ -595,25 +595,25 @@ def test_free_feeding_ends_on_pellet_cap() -> None:
     runner = exp.make_runner()
     runner.start(now=0.0)
 
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=1, timestamp=1.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
     assert not runner.is_finished
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=1, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=2.0))
     assert runner.is_finished
     assert runner.ctx.counter("pellets") == 2
 
 
 def test_pellet_cap_sums_across_all_nodes() -> None:
-    """max_pellets compares an aggregate of PELLET_PRESENTED from every node."""
+    """max_pellets compares an aggregate of LOADED from every node."""
     exp = build_free_feeding(nodes=[1, 2, 3], reload_delay_s=2.0, max_pellets=3)
     runner = exp.make_runner()
     runner.start(now=0.0)
 
     # One pellet from each of three different nodes → total 3 → cap reached.
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=1, timestamp=1.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
     assert not runner.is_finished
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=2, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=2, timestamp=2.0))
     assert not runner.is_finished
-    runner.inject(NodeEvent(EventKind.PELLET_PRESENTED, node_id=3, timestamp=3.0))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=3, timestamp=3.0))
     assert runner.is_finished
     assert runner.ctx.counter("pellets") == 3
 
@@ -629,7 +629,7 @@ def test_runner_step_with_messages_no_can_poll() -> None:
     runner.start(now=0.0)
     runner.ctx.commands_sent.clear()
 
-    arb, data = build_event_frame(1, CanEvent.PelletPresented, b"\x01\x00")
+    arb, data = build_event_frame(1, CanEvent.Loaded, b"\x01\x00")
     msg = _msg(arb, data)
     runner.step(now=1.0, messages=[msg])
     assert runner.ctx.counter("pellets") == 1
@@ -679,13 +679,13 @@ def test_controller_step_and_on_log() -> None:
     )
     assert ctrl.is_running
 
-    arb, data = build_event_frame(1, CanEvent.PelletPresented, b"\x01\x00")
+    arb, data = build_event_frame(1, CanEvent.Loaded, b"\x01\x00")
     ctrl.step(messages=[_msg(arb, data)], now=1.0)
     assert not ctrl.is_running  # finished via pellet cap
 
     exp_rows = [e for e in log.all_entries() if e.frame_type == "EXPERIMENT"]
     assert any(e.event_name == "session_start" for e in exp_rows)
-    assert any(e.event_name == "pellet_presented" for e in exp_rows)
+    assert any(e.event_name == "loaded" for e in exp_rows)
 
 
 def test_experiment_commands_appear_under_command_filter() -> None:

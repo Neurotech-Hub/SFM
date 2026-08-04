@@ -3,7 +3,7 @@ events.py — Normalized experiment event model.
 
 Adapts raw CAN frames (via protocol.py) into NodeEvent objects that user
 callbacks consume. Also derives higher-level events such as DOME_CLOSED
-from PG3 edge transitions and NODE_ONLINE/OFFLINE from heartbeats.
+from dome sensor edge transitions and NODE_ONLINE/OFFLINE from heartbeats.
 """
 
 from __future__ import annotations
@@ -31,11 +31,12 @@ class EventKind(Enum):
     """Normalized event kinds consumed by experiment callbacks."""
 
     # Direct CAN events
-    PELLET_LOADED = auto()
-    PELLET_PRESENTED = auto()
+    ON_PLATE = auto()
+    LOADED = auto()
     PELLET_TAKEN = auto()
     FEED_SKIPPED = auto()
     FAULT = auto()
+    SEEKING = auto()
     LOWERING = auto()
     LOADING = auto()
     RAISING = auto()
@@ -60,12 +61,13 @@ class EventKind(Enum):
 
 # Map CanEvent → EventKind for the direct (non-InputChanged) events.
 _CAN_EVENT_TO_KIND: Dict[CanEvent, EventKind] = {
-    CanEvent.PelletLoaded: EventKind.PELLET_LOADED,
-    CanEvent.PelletPresented: EventKind.PELLET_PRESENTED,
+    CanEvent.OnPlate: EventKind.ON_PLATE,
+    CanEvent.Loaded: EventKind.LOADED,
     CanEvent.DomeOpened: EventKind.DOME_OPENED,
     CanEvent.PelletTaken: EventKind.PELLET_TAKEN,
     CanEvent.FeedSkipped: EventKind.FEED_SKIPPED,
     CanEvent.Fault: EventKind.FAULT,
+    CanEvent.Seeking: EventKind.SEEKING,
     CanEvent.Lowering: EventKind.LOWERING,
     CanEvent.Loading: EventKind.LOADING,
     CanEvent.Raising: EventKind.RAISING,
@@ -89,17 +91,17 @@ class _NodeTrack:
 
     online: bool = False
     last_heartbeat: Optional[float] = None
-    pg3: bool = False
+    dome_open: bool = False
     presence: bool = False
-    pg1: bool = False
-    pg2: bool = False
+    pellet: bool = False
+    load_position: bool = False
 
 
 class EventNormalizer:
     """
     Stateful adapter: CAN frames → list[NodeEvent].
 
-    Tracks per-node PG3 / presence / online status so it can emit derived
+    Tracks per-node dome / presence / online status so it can emit derived
     events (DOME_OPENED/CLOSED, NODE_ONLINE/OFFLINE).
     """
 
@@ -186,16 +188,25 @@ class EventNormalizer:
             )
         track.last_heartbeat = now
 
-        # Derive PG / presence edges from heartbeat snapshot (recovery path).
-        out.extend(self._pg_edges(node_id, track, hb.pg1, hb.pg2, hb.pg3, now))
-        if hb.presence != track.presence:
-            track.presence = hb.presence
+        # Derive sensor / mouse-presence edges from heartbeat snapshot (recovery path).
+        out.extend(
+            self._sensor_edges(
+                node_id,
+                track,
+                hb.pellet,
+                hb.load_position,
+                hb.dome_open,
+                now,
+            )
+        )
+        if hb.mouse_presence != track.presence:
+            track.presence = hb.mouse_presence
             out.append(
                 NodeEvent(
                     kind=EventKind.PRESENCE_CHANGED,
                     node_id=node_id,
                     timestamp=now,
-                    data={"active": hb.presence, "source": "heartbeat"},
+                    data={"active": hb.mouse_presence, "source": "heartbeat"},
                 )
             )
 
@@ -206,10 +217,10 @@ class EventNormalizer:
                 timestamp=now,
                 data={
                     "dispense_state": hb.dispense_state,
-                    "presence": hb.presence,
-                    "pg1": hb.pg1,
-                    "pg2": hb.pg2,
-                    "pg3": hb.pg3,
+                    "mouse_presence": hb.mouse_presence,
+                    "pellet": hb.pellet,
+                    "load_position": hb.load_position,
+                    "dome_open": hb.dome_open,
                     "fault_code": hb.fault_code,
                 },
             )
@@ -279,7 +290,7 @@ class EventNormalizer:
         track = self._track(node_id)
         out: List[NodeEvent] = []
 
-        if ic.input_id == InputId.Presence:
+        if ic.input_id == InputId.MousePresence:
             track.presence = ic.active
             out.append(
                 NodeEvent(
@@ -292,16 +303,16 @@ class EventNormalizer:
             return out
 
         # Photogate change
-        if ic.input_id == InputId.PG1:
-            track.pg1 = ic.active
-            gate = "pg1"
-        elif ic.input_id == InputId.PG2:
-            track.pg2 = ic.active
-            gate = "pg2"
-        elif ic.input_id == InputId.PG3:
-            prev = track.pg3
-            track.pg3 = ic.active
-            gate = "pg3"
+        if ic.input_id == InputId.Pellet:
+            track.pellet = ic.active
+            gate = "pellet"
+        elif ic.input_id == InputId.LoadPosition:
+            track.load_position = ic.active
+            gate = "load_position"
+        elif ic.input_id == InputId.Dome:
+            prev = track.dome_open
+            track.dome_open = ic.active
+            gate = "dome"
             if ic.active and not prev:
                 out.append(
                     NodeEvent(
@@ -331,49 +342,53 @@ class EventNormalizer:
         )
         return out
 
-    def _pg_edges(
+    def _sensor_edges(
         self,
         node_id: int,
         track: _NodeTrack,
-        pg1: bool,
-        pg2: bool,
-        pg3: bool,
+        pellet: bool,
+        load_position: bool,
+        dome_open: bool,
         now: float,
     ) -> List[NodeEvent]:
-        """Emit PG_CHANGED / DOME_* when heartbeat PG bits differ from track."""
+        """Emit PG_CHANGED / DOME_* when heartbeat sensor bits differ from track."""
         out: List[NodeEvent] = []
-        if pg1 != track.pg1:
-            track.pg1 = pg1
+        if pellet != track.pellet:
+            track.pellet = pellet
             out.append(
                 NodeEvent(
                     kind=EventKind.PG_CHANGED,
                     node_id=node_id,
                     timestamp=now,
-                    data={"gate": "pg1", "active": pg1, "source": "heartbeat"},
+                    data={"gate": "pellet", "active": pellet, "source": "heartbeat"},
                 )
             )
-        if pg2 != track.pg2:
-            track.pg2 = pg2
+        if load_position != track.load_position:
+            track.load_position = load_position
             out.append(
                 NodeEvent(
                     kind=EventKind.PG_CHANGED,
                     node_id=node_id,
                     timestamp=now,
-                    data={"gate": "pg2", "active": pg2, "source": "heartbeat"},
+                    data={
+                        "gate": "load_position",
+                        "active": load_position,
+                        "source": "heartbeat",
+                    },
                 )
             )
-        if pg3 != track.pg3:
-            prev = track.pg3
-            track.pg3 = pg3
+        if dome_open != track.dome_open:
+            prev = track.dome_open
+            track.dome_open = dome_open
             out.append(
                 NodeEvent(
                     kind=EventKind.PG_CHANGED,
                     node_id=node_id,
                     timestamp=now,
-                    data={"gate": "pg3", "active": pg3, "source": "heartbeat"},
+                    data={"gate": "dome", "active": dome_open, "source": "heartbeat"},
                 )
             )
-            if pg3 and not prev:
+            if dome_open and not prev:
                 out.append(
                     NodeEvent(
                         kind=EventKind.DOME_OPENED,
@@ -381,7 +396,7 @@ class EventNormalizer:
                         timestamp=now,
                     )
                 )
-            elif not pg3 and prev:
+            elif not dome_open and prev:
                 out.append(
                     NodeEvent(
                         kind=EventKind.DOME_CLOSED,

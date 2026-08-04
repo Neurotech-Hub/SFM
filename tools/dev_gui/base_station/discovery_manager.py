@@ -205,7 +205,7 @@ class DiscoveryManager:
             return False
 
         # Late arrivals after idle timeout: reopen the window so real
-        # CanNode firmware that announced slowly still gets an ASSIGN.
+        # Node firmware that announced slowly still gets an ASSIGN.
         if self._phase == DiscoveryPhase.Complete:
             if arb_id in (CAN_ID_ANNOUNCE, CAN_ID_REJOIN, CAN_ID_ACK):
                 self._phase = DiscoveryPhase.Running
