@@ -12,14 +12,23 @@ a base station plus multiple **VFM** nodes — over the CAN bus on a Raspberry P
 ## First-time hardware bring-up
 
 Before running the GUI against real hardware, configure the CAN
-controller device tree overlay and bring up `can0` — see
-[deploy/README.md](deploy/README.md). This only needs to be done once per Pi.
+controller device tree overlay and bring up `can0`. This only needs to be
+done once per Pi:
+
+```bash
+cd tools/dev_gui/deploy
+sudo ./setup-can.sh            # reboots automatically if needed
+sudo ./setup-can.sh --verify   # confirm can0 is healthy after reboot
+```
+
+See [deploy/README.md](deploy/README.md) for the manual steps and
+troubleshooting if `--verify` reports a failure.
 
 ## Install
 
 ```bash
 cd tools/dev_gui
-pip install -r requirements.txt
+pip install -r requirements.txt --break-system-packages
 ```
 
 ## Run
