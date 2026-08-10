@@ -14,8 +14,9 @@
 //   short click – recalibrate the mouse-presence pad (keep the pad CLEAR)
 //   3 s hold    – clear the NVS node ID, then re-enter discovery
 //
-// Presence threshold and node ID both live in NVS, so a calibrated node keeps
-// its settings across reboots. Serial 'cal' does the same as a button click.
+// Presence threshold, calibration factor, and node ID live in NVS, so a
+// calibrated node keeps its settings across reboots. Serial 'cal' does the
+// same as a button click. Calibration rule: thr = mean + factor * std_dev.
 //
 // CAN frame reference (250 kbps, 11-bit IDs):
 //   Commands  base->node : 0x100 + nodeId  (0x100 = broadcast)
@@ -32,15 +33,16 @@ vfm::VFM gVfm;
 // ---------------------------------------------------------------------------
 static void printHelp() {
     Serial.println(F("Commands:"));
-    Serial.println(F("  id <n>   assign node ID (1-254)"));
-    Serial.println(F("  d        dispense pellet"));
-    Serial.println(F("  a        recover (stop motion / clear fault)"));
-    Serial.println(F("  s        print status"));
-    Serial.println(F("  cal      calibrate presence pad (5 s, keep pad CLEAR)"));
-    Serial.println(F("  thr      print presence raw + threshold"));
-    Serial.println(F("  thr <n>  set + save presence threshold"));
-    Serial.println(F("  thrclr   forget saved threshold (back to default)"));
-    Serial.println(F("  clr      clear NVS node ID (forces first-boot next reset)"));
+    Serial.println(F("  id <n>     assign node ID (1-254)"));
+    Serial.println(F("  d          dispense pellet"));
+    Serial.println(F("  a          recover (stop motion / clear fault)"));
+    Serial.println(F("  s          print status"));
+    Serial.println(F("  cal        calibrate presence pad (5 s, keep pad CLEAR)"));
+    Serial.println(F("  thr        print presence raw + threshold + factor"));
+    Serial.println(F("  factor     print calibration factor"));
+    Serial.println(F("  factor <n> set factor (thr = mean + factor*σ); saves to NVS"));
+    Serial.println(F("  thrclr     forget saved presence cal (back to defaults)"));
+    Serial.println(F("  clr        clear NVS node ID (forces first-boot next reset)"));
 }
 
 static const char *discStr(vfm::DiscoveryState s) {
@@ -84,6 +86,14 @@ static void printPresence() {
     Serial.print(gVfm.presenceRaw());
     Serial.print(F("  thr="));
     Serial.print(gVfm.presenceThreshold());
+    Serial.print(F("  factor="));
+    Serial.print(gVfm.presence().factor(), 2);
+    if (gVfm.presence().hasCalStats()) {
+        Serial.print(F("  mean="));
+        Serial.print(gVfm.presence().calMean(), 1);
+        Serial.print(F("  σ="));
+        Serial.print(gVfm.presence().calStdDev(), 1);
+    }
     Serial.print(F("  -> "));
     Serial.println(gVfm.mousePresent() ? F("PRESENT") : F("clear"));
 }
@@ -92,17 +102,19 @@ static void printPresence() {
 static void reportPresenceEvents() {
     switch (gVfm.takePresenceEvent()) {
         case vfm::PresenceEvent::CalibrationStarted:
-            Serial.println(F("[PRESENCE] CAL START - keep pad CLEAR for 5 s (LED9 solid)"));
+            Serial.print(F("[PRESENCE] CAL START - keep pad CLEAR for 5 s (LED9 solid)  factor="));
+            Serial.println(gVfm.presence().factor(), 2);
             break;
 
         case vfm::PresenceEvent::CalibrationDone: {
             const vfm::PresenceCalibration &c = gVfm.presence().lastCalibration();
             Serial.print(F("[PRESENCE] CAL DONE  samples=")); Serial.print(c.samples);
-            Serial.print(F("  min=")); Serial.print(c.minRaw);
-            Serial.print(F("  max=")); Serial.print(c.maxRaw);
-            Serial.print(F("  avg=")); Serial.println(c.avgRaw);
-            Serial.print(F("[PRESENCE] threshold saved to NVS: "));
-            Serial.println(c.threshold);
+            Serial.print(F("  mean=")); Serial.print(c.mean, 1);
+            Serial.print(F("  std_dev=")); Serial.print(c.stdDev, 1);
+            Serial.print(F("  factor=")); Serial.println(c.factor, 2);
+            Serial.print(F("[PRESENCE] thr = mean + factor*σ = "));
+            Serial.print(c.threshold);
+            Serial.println(F("  (saved to NVS)"));
             break;
         }
 
@@ -142,19 +154,32 @@ static void handleSerialLine(const char *line) {
         }
     } else if (strcmp(line, "thr") == 0) {
         printPresence();
-    } else if (strncmp(line, "thr ", 4) == 0) {
-        const char *p = line + 4;
+    } else if (strcmp(line, "factor") == 0) {
+        Serial.print(F("[PRESENCE] factor="));
+        Serial.println(gVfm.presence().factor(), 2);
+        Serial.println(F("Usage: factor <n>  (e.g. factor 3 or factor 2.5)"));
+        if (!gVfm.presence().hasCalStats()) {
+            Serial.println(F("No cal stats yet – run 'cal' or press button first to re-apply."));
+        }
+    } else if (strncmp(line, "factor ", 7) == 0) {
+        const char *p = line + 7;
         char *end = nullptr;
-        unsigned long n = strtoul(p, &end, 10);
-        if (end == p) {
-            Serial.println(F("Usage: thr <n>"));
+        float f = strtof(p, &end);
+        if (end == p || f <= 0.0f) {
+            Serial.println(F("Invalid factor. Usage: factor <n>"));
+        } else if (!gVfm.presence().setFactor(f)) {
+            Serial.println(F("Invalid factor."));
         } else {
-            gVfm.presence().saveThreshold((uint32_t)n);
+            if (gVfm.presence().hasCalStats()) {
+                Serial.println(F("[PRESENCE] Factor saved; threshold re-applied from last cal."));
+            } else {
+                Serial.println(F("[PRESENCE] Factor saved; run 'cal' to apply (no cal stats yet)."));
+            }
             printPresence();
         }
     } else if (strcmp(line, "thrclr") == 0) {
         gVfm.presence().clearStoredThreshold();
-        Serial.println(F("Saved threshold cleared; using compile-time default."));
+        Serial.println(F("Saved presence cal cleared; using compile-time defaults."));
         printPresence();
     } else if (strcmp(line, "clr") == 0) {
         gVfm.identity().clearId();

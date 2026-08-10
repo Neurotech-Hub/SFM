@@ -29,8 +29,9 @@ the node is enabled and none of those own it.
 A fourth input, **mouse presence**, is the capacitive pad read by `PresenceService`. It is independent of the
 pellet sensor and the dispense cycle, and is reported for behavioral context only. Raw counts rise when a mouse
 is present, so mouse presence is `raw > threshold`, and it shares the same 100 ms debounce as the photogates — one approach produces
-one trigger and one clear. The threshold is calibrated against the idle pad (short click of the on-board button
-or the serial `cal` command) and stored in NVS alongside the node ID, so it survives reboots.
+one trigger and one clear. The threshold is calibrated against the idle pad as
+`mean + factor × std_dev` (short click of the on-board button or serial `cal`; factor via serial `factor <n>`)
+and stored in NVS alongside the node ID, so it survives reboots.
 
 The pellet sensor sits on the plate and reports occupancy in every state. Because it holds its state, the node
 always knows whether the plate is occupied — before a dispense, during travel, and after an access.

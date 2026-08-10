@@ -114,20 +114,27 @@ and one clear event no matter which sensor reported it.
 The threshold is calibrated against the idle pad and stored in NVS under the
 same namespace as the node ID, so it survives reboots. Calibration is started by
 a short click of `PIN_BTN` or the serial `cal` command; a 3 s hold of the same
-button clears the node ID instead.
+button clears the node ID instead. The multiplier is set with serial
+`factor <n>` (also persisted).
 
-Calibration rule: `threshold = idle_max + (idle_max − idle_min)` — one noise
-range above the highest idle reading. The pad must stay clear for the capture.
+Calibration rule: `threshold = mean + factor × std_dev` (Welford online stats
+over the 5 s idle capture; population σ). The pad must stay clear for the
+capture. Changing `factor` after a successful cal recomputes and saves the
+threshold from the stored mean/σ without a new capture.
 
 
-| Value    | Constant / where              | Notes                                                                                     |
-| -------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| 35000    | `kDefaultPresenceThreshold`   | Compile-time fallback used only until a calibration is stored. Bench idle ≈ 35 000–35 500 |
-| 5 s      | `kPresenceCalMs`              | Idle capture duration                                                                     |
-| 25 ms    | `kPresenceCalSampleMs`        | Sample cadence during the capture (≈200 samples over 5 s)                                 |
-| 10       | `kPresenceCalMinSamples`      | Below this the attempt fails and the threshold is left unchanged                          |
-| 20 ms    | `kPresenceSampleMs`           | `touchRead()` cadence in normal operation — several samples per debounce window            |
-| `presThr`| NVS key (`PresenceService.h`) | Stored threshold; namespace `kNvsNamespace` ("vfm"), shared with `nodeId`                  |
+| Value    | Constant / where                | Notes                                                                                     |
+| -------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| 35000    | `kDefaultPresenceThreshold`     | Compile-time fallback used only until a calibration is stored. Bench idle ≈ 35 000–35 500 |
+| 3.0      | `kDefaultPresenceFactor`        | Default multiplier in `thr = mean + factor × σ`. Runtime via serial `factor <n>`           |
+| 0.1–100  | `kMinPresenceFactor` / `kMax…`  | Clamp range for the factor                                                                |
+| 5 s      | `kPresenceCalMs`                | Idle capture duration                                                                     |
+| 25 ms    | `kPresenceCalSampleMs`          | Sample cadence during the capture (≈200 samples over 5 s)                                 |
+| 10       | `kPresenceCalMinSamples`        | Below this the attempt fails and the threshold is left unchanged                          |
+| 20 ms    | `kPresenceSampleMs`             | `touchRead()` cadence in normal operation — several samples per debounce window            |
+| `presThr`| NVS key                         | Stored threshold                                                                          |
+| `presFac`| NVS key                         | Stored factor                                                                             |
+| `presMean` / `presStd` | NVS keys              | Last-cal mean / σ so factor changes can re-apply after reboot                             |
 
 
 Threshold changes apply immediately rather than waiting out a debounce window:
