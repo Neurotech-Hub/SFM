@@ -3,7 +3,7 @@
 run.py — SFM Developer GUI entry point.
 
 Usage:
-    python run.py                          # defaults: can0, 250000 bps, 9 nodes
+    python run.py                          # defaults: can0, 250000 bps, 2 nodes
     python run.py --interface vcan0        # virtual CAN for testing
     python run.py -i vcan0 -n 3            # 3 nodes on vcan0
     python run.py --help
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--nodes", "-n",
         type=int,
-        default=9,
+        default=2,
         metavar="N",
         help="Number of expected nodes (1–254)",
     )

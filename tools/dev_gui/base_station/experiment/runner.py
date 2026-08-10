@@ -147,6 +147,10 @@ class Experiment:
     def on_presence_changed(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.PRESENCE_CHANGED)(fn)
 
+    def on_presence_cal_result(self, fn: EventCb) -> EventCb:
+        """Fired when a node reports the result of a CalibratePresence broadcast."""
+        return self.on(EventKind.PRESENCE_CAL_RESULT)(fn)
+
     # ------------------------------------------------------------------
     # Start / end conditions
     # ------------------------------------------------------------------

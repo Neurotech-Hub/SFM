@@ -395,3 +395,55 @@ class TestBuildDispenseNoFeed:
         assert arb_id == CAN_CMD_BASE + 2
         assert data[0] == CanCmd.DispenseNoFeed
         assert data[1] | (data[2] << 8) == 6000
+
+
+class TestPresenceCalibration:
+    def test_calibrate_presence_opcode(self):
+        from base_station.protocol import CanCmd
+        assert CanCmd.CalibratePresence == 0x09
+
+    def test_presence_cal_result_opcode(self):
+        assert CanEvent.PresenceCalResult == 0x10
+
+    def test_parse_presence_cal_ok(self):
+        from base_station.protocol import parse_presence_cal
+        # ok=1, threshold=35820 LE32, samples=199 LE16
+        extra = bytes([1]) + (35820).to_bytes(4, "little") + (199).to_bytes(2, "little")
+        ev = parse_event(bytes([CanEvent.PresenceCalResult]) + extra)
+        cal = parse_presence_cal(ev)
+        assert cal is not None
+        assert cal.ok is True
+        assert cal.threshold == 35820
+        assert cal.samples == 199
+
+    def test_parse_presence_cal_failed_keeps_threshold(self):
+        from base_station.protocol import parse_presence_cal
+        extra = bytes([0]) + (35000).to_bytes(4, "little") + (0).to_bytes(2, "little")
+        ev = parse_event(bytes([CanEvent.PresenceCalResult]) + extra)
+        cal = parse_presence_cal(ev)
+        assert cal is not None
+        assert cal.ok is False
+        assert cal.threshold == 35000
+
+    def test_parse_presence_cal_rejects_wrong_event(self):
+        from base_station.protocol import parse_presence_cal
+        ev = parse_event(bytes([CanEvent.Loaded, 0x01, 0x00]))
+        assert parse_presence_cal(ev) is None
+
+    def test_parse_presence_cal_rejects_short_payload(self):
+        from base_station.protocol import parse_presence_cal
+        ev = parse_event(bytes([CanEvent.PresenceCalResult, 1, 0x2C]))  # only 2 bytes extra
+        assert parse_presence_cal(ev) is None
+
+    def test_parse_event_context_ignores_presence_cal_result(self):
+        """Regression guard: a PresenceCalResult payload must never be
+        misdecoded as a pellet count just because it has >= 2 extra bytes."""
+        from base_station.protocol import parse_event_context
+        extra = bytes([1]) + (35820).to_bytes(4, "little") + (199).to_bytes(2, "little")
+        ev = parse_event(bytes([CanEvent.PresenceCalResult]) + extra)
+        assert parse_event_context(ev) is None
+
+    def test_calibrate_presence_has_purpose_text(self):
+        from base_station.protocol import CanCmd, CAN_CMD_PURPOSE
+        assert CanCmd.CalibratePresence in CAN_CMD_PURPOSE
+        assert CAN_CMD_PURPOSE[CanCmd.CalibratePresence]

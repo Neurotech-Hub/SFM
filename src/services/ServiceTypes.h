@@ -69,14 +69,15 @@ enum class DispenseEvent : uint8_t {
 // Base -> Node on ID: 0x100 + nodeId   (0x100 = broadcast to all nodes)
 // ---------------------------------------------------------------------------
 enum class CanCmd : uint8_t {
-    Ping           = 0x01,
-    Dispense       = 0x02,
-    Recover        = 0x03, // stop motion, clear sticky Fault, return to Idle
-    AssignId       = 0x04, // payload byte[1] = new nodeId
-    SetConfig      = 0x05, // payload TBD
-    ReqStatus      = 0x06,
-    ClearId        = 0x07, // clear NVS id; re-enter discovery (broadcast-friendly)
-    DispenseNoFeed = 0x08, // full dispense motion, M1 never runs; payload = dwell ms LE16 (optional)
+    Ping              = 0x01,
+    Dispense          = 0x02,
+    Recover           = 0x03, // stop motion, clear sticky Fault, return to Idle
+    AssignId          = 0x04, // payload byte[1] = new nodeId
+    SetConfig         = 0x05, // payload TBD
+    ReqStatus         = 0x06,
+    ClearId           = 0x07, // clear NVS id; re-enter discovery (broadcast-friendly)
+    DispenseNoFeed    = 0x08, // full dispense motion, M1 never runs; payload = dwell ms LE16 (optional)
+    CalibratePresence = 0x09, // recalibrate the presence pad; cage MUST be empty for ~5s
 };
 
 // ---------------------------------------------------------------------------
@@ -84,21 +85,22 @@ enum class CanCmd : uint8_t {
 // Node -> Base on ID: 0x300 + nodeId
 // ---------------------------------------------------------------------------
 enum class CanEvent : uint8_t {
-    OnPlate         = 0x01, // pellet on plate during Loading; raise starting
-    Loaded          = 0x02, // plate at top — ready for the mouse
-    DomeOpened      = 0x03, // dome lift; extra: count LE16 + pellet_on_plate
-    Fault           = 0x04, // payload byte[1] = ServiceStatus
-    Pong            = 0x05,
-    InputChanged    = 0x06, // payload: InputId(1), active(0/1)
-    Lowering        = 0x07, // M2 toward load position
-    Loading         = 0x08, // M1 running (Loading state)
-    Raising         = 0x09, // M2 raising plate
-    DomeOpenWarning = 0x0A, // dome open > kDomeOpenWarnMs
-    PelletTaken     = 0x0B, // extra: count LE16 + dome_open
-    FeedSkipped     = 0x0C, // plate occupied on Dispense; lower/load skipped
-    Seeking         = 0x0D, // M2 clearing the load sensor before Lowering (clear or step cap)
-    NoFeedPresented = 0x0E, // no-feed raise complete; extra: count LE16 (NOT incremented)
-    Dwelling        = 0x0F, // phase: holding at the drop position, M1 idle
+    OnPlate           = 0x01, // pellet on plate during Loading; raise starting
+    Loaded            = 0x02, // plate at top — ready for the mouse
+    DomeOpened        = 0x03, // dome lift; extra: count LE16 + pellet_on_plate
+    Fault             = 0x04, // payload byte[1] = ServiceStatus
+    Pong              = 0x05,
+    InputChanged      = 0x06, // payload: InputId(1), active(0/1)
+    Lowering          = 0x07, // M2 toward load position
+    Loading           = 0x08, // M1 running (Loading state)
+    Raising           = 0x09, // M2 raising plate
+    DomeOpenWarning   = 0x0A, // dome open > kDomeOpenWarnMs
+    PelletTaken       = 0x0B, // extra: count LE16 + dome_open
+    FeedSkipped       = 0x0C, // plate occupied on Dispense; lower/load skipped
+    Seeking           = 0x0D, // M2 clearing the load sensor before Lowering (clear or step cap)
+    NoFeedPresented   = 0x0E, // no-feed raise complete; extra: count LE16 (NOT incremented)
+    Dwelling          = 0x0F, // phase: holding at the drop position, M1 idle
+    PresenceCalResult = 0x10, // extra: ok(1), threshold LE32, samples LE16
 };
 
 // Input IDs carried by CanEvent::InputChanged.

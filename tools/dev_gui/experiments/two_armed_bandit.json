@@ -32,37 +32,38 @@
       "key": "dwell_s",
       "label": "Empty-arm dwell (s)",
       "type": "float",
-      "default": 6.0,
+      "default": 3.0,
       "min": 0.5,
       "max": 60,
-      "help": "How long the empty arm holds at the drop position before raising"
+      "help": "How long the empty arm holds at the drop position before raising (approximates a fed cycle's M1 run)"
     },
     {
-      "key": "iti_quiet_s",
-      "label": "Inter-trial quiet (s)",
+      "key": "next_trial_wait",
+      "label": "Advance to next trial",
+      "type": "choice",
+      "default": "fixed_delay",
+      "options": ["fixed_delay", "presence_clear"],
+      "help": "fixed_delay = wait a fixed time; presence_clear = wait until the animal is off both presence pads"
+    },
+    {
+      "key": "fixed_delay_s",
+      "label": "Fixed delay (s)",
       "type": "float",
       "default": 5.0,
       "min": 0,
-      "max": 60,
-      "help": "Required seconds of inactivity (both domes closed) before the next trial"
-    },
-    {
-      "key": "iti_max_s",
-      "label": "Inter-trial max wait (s)",
-      "type": "float",
-      "default": 30.0,
-      "min": 0,
-      "max": 300,
-      "help": "Start the next trial anyway after this long, even if not quiet"
-    },
-    {
-      "key": "trial_timeout_s",
-      "label": "Trial timeout (s)",
-      "type": "float",
-      "default": 60.0,
-      "min": 0,
       "max": 600,
-      "help": "Abandon a trial (and log it) if the pellet isn't taken within this long"
+      "help": "Used when Advance = fixed_delay",
+      "visible_when": {"next_trial_wait": "fixed_delay"}
+    },
+    {
+      "key": "iti_quiet_s",
+      "label": "Presence-clear settle (s)",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 60,
+      "help": "Used when Advance = presence_clear — presence must stay clear this long before the next trial",
+      "visible_when": {"next_trial_wait": "presence_clear"}
     },
     {
       "key": "minutes",

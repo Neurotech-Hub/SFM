@@ -147,6 +147,15 @@ bool VFM::begin() {
 
                 break;
 
+            case CanCmd::CalibratePresence:
+
+                // Same gesture as a short BTN click (updateButton()). Returns
+                // false if a capture is already running; ignored on purpose —
+                // a duplicate broadcast is a no-op, not a restart.
+                presence_.startCalibration();
+
+                break;
+
             default:
 
                 break;
@@ -510,6 +519,25 @@ void VFM::handlePresenceEvents() {
     }
 
     pendingPresenceEvent_ = ev;
+
+    // Publish the result on CAN so a broadcast CalibratePresence gets visible
+    // per-node feedback. Guarded exactly like handleInputEvents() (above):
+    // never emit operational frames before this node owns a CAN ID.
+    if (!identity_.isEnabled() || can_.nodeId() == 0) return;
+    if (ev != PresenceEvent::CalibrationDone && ev != PresenceEvent::CalibrationFailed) return;
+
+    const PresenceCalibration &cal = presence_.lastCalibration();
+    uint32_t samples = cal.samples > 0xFFFF ? 0xFFFF : cal.samples;
+    uint8_t extra[7] = {
+        static_cast<uint8_t>(cal.ok ? 1 : 0),
+        static_cast<uint8_t>( cal.threshold        & 0xFF),
+        static_cast<uint8_t>((cal.threshold >>  8) & 0xFF),
+        static_cast<uint8_t>((cal.threshold >> 16) & 0xFF),
+        static_cast<uint8_t>((cal.threshold >> 24) & 0xFF),
+        static_cast<uint8_t>( samples       & 0xFF),
+        static_cast<uint8_t>((samples >> 8) & 0xFF),
+    };
+    can_.sendEvent(CanEvent::PresenceCalResult, extra, 7);
 }
 
 

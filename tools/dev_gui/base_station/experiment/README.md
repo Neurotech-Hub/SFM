@@ -235,6 +235,11 @@ the same class, kept as an alias.)
 | `control.quiet_for(seconds, node=None)` → `bool` | No PG/dome/presence/pellet-taken/BNC activity on the given node(s) — or all session nodes if omitted — for `seconds`. Ignores heartbeats and the node's own dispense-phase events, so it reflects the *animal*, not our own commands. |
 | `control.domes_closed(nodes=None)` → `bool` | All the given (or all session) domes currently closed. |
 | `control.dome_open(node)` / `control.pellet_on_plate(node)` / `control.is_online(node)` → `bool` | Current per-node sensor snapshot. |
+| `control.presence(node)` → `bool` / `control.presence_clear(nodes=None)` → `bool` | Animal on the capacitive presence pad; clear on every given (or all session) node. Defaults `False`/clear until the first reading arrives for a node — gate on `is_online(node)` first if you need to tell "confirmed clear" from "not yet known". |
+| `control.presented_pellet(node)` / `control.presented_empty(node)` → `bool` | What the last **completed** dispense cycle on this node raised — a real pellet, or an empty plate from `dispense(node, feed=False)`. At most one is ever `True`. |
+| `control.presentation(node)` → `str` | `'pellet'` \| `'empty'` \| `'none'` (`'none'` while a cycle is in flight). |
+| `control.presentation_done(node)` → `bool` | `True` once the cycle has finished raising, either way. Stays `True` through the take — call `clear_presentation()` to reset it. `wait_until` this across several nodes to gate a response window on **all** of them being ready before acting on any (see `two_armed_bandit.py`). |
+| `control.clear_presentation(node)` | Reset a node's presentation state — call at the start of a new trial so a stale reading can't be mistaken for this trial's result. |
 
 ### Counters, trials, RNG, time, logging, stop
 
@@ -449,9 +454,19 @@ operator chose. Always iterate `control.nodes`; never assume `[1, 2, 3]`.
   `@exp.script`-based: exactly two nodes (the arms). Each trial, both arms run
   the dispense motion (`control.dispense(fed)` / `control.dispense(empty,
   feed=False)`), but only one delivers, chosen by a reward probability that
-  flips which arm is "rich" every `block_size` trials. Waits for the pellet to
-  be taken (bounded by `trial_timeout_s`), then for both domes closed and a
-  quiet inter-trial interval, before the next trial.
+  flips which arm is "rich" every `block_size` trials. Sweeps both plates
+  clear before trial 1, gates the response window on **both** arms finishing
+  their raise (`presentation_done`) so neither one tips off the animal by
+  finishing first, then waits — with no timeout — for the pellet to be taken.
+  Advances to the next trial either after a fixed delay or once the animal is
+  off both presence pads (`next_trial_wait`). If a no-feed arm's plate turns
+  out already occupied (firmware presents the leftover pellet honestly rather
+  than discarding it), the trial is logged invalid and the session keeps
+  running — see the module docstring for the full mutual-exclusion and sync
+  analysis. A good reference for writing your own trial-based `@exp.script`
+  template: see `control.presented_pellet`/`presented_empty`/`presentation_done`/
+  `clear_presentation`/`presence`/`presence_clear` in [`context.py`](context.py)
+  and `kit.next_trial_wait` in [`kit.py`](kit.py).
 
 Both `fixed_and_random` and `probability_delivery` accept `seed=` for
 reproducible runs (used by the tests); `two_armed_bandit` does too, and also

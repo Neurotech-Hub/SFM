@@ -188,10 +188,18 @@ Node → base on CAN ID `0x300 + nodeId`. Byte 0 is the event code.
 | `0x0D` | `Seeking`         | count LE16                 | Conditional phase: clear load sensor (or step cap) before `Lowering`    |
 | `0x0E` | `NoFeedPresented` | count LE16 (unchanged)     | A no-feed raise finished; empty plate at the top. `count` does NOT increment |
 | `0x0F` | `Dwelling`        | count LE16                 | Phase entered: holding at the drop position, M1 idle (no-feed cycle)   |
+| `0x10` | `PresenceCalResult` | ok(1), threshold LE32, samples LE16 | Response to a `CalibratePresence` command — see below      |
 
 
 `count` is the running total of `Loaded` milestones from that node — `NoFeedPresented` deliberately does not
 advance it, so the base station can tell an unrewarded cycle from a real delivery just by watching the count.
+
+**Presence recalibration.** `CanCmd::CalibratePresence` (`0x09`, no payload, broadcast-friendly) starts a fresh
+5 s idle-pad capture on the presence sensor — the same action as a short `PIN_BTN` click. The node replies with
+`PresenceCalResult`: `ok=1` and the new `threshold` (uint32 LE) on success, or `ok=0` with the *unchanged*
+threshold if the capture saw fewer than `kPresenceCalMinSamples` (10) samples. Calibrating with an animal on the
+pad sets a threshold above real presence readings, so the cage must be empty for the whole capture — see
+[HARDCODED_VALUES.md](HARDCODED_VALUES.md#presence-detection-presenceservice) for the full timing table.
 
 The context byte on dome and take events separates intent from accident. `DomeOpened` carries whether a
 pellet was on the plate at the moment of the lift, so an opening with an empty plate is recognizable as
