@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import queue
+import struct
 import subprocess
 import time
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .node_registry import NodeRegistry
-from .experiment import ExperimentController, load_experiment_defs
+from .experiment import ExperimentController, ExperimentControl, load_experiment_defs
 from .experiment.schema import (
     DEFAULT_EXPERIMENTS_DIR,
     ExperimentDef,
@@ -54,10 +55,17 @@ from .protocol import (
     parse_heartbeat,
     parse_discovery,
     parse_presence_cal,
+    parse_config_applied,
+    config_applied_factor,
     build_setconfig_heartbeat,
+    build_setconfig_presence_factor,
     CAN_EVENT_DISPLAY_NAME,
     CAN_CMD_PURPOSE,
     CONFIG_HEARTBEAT_INTERVAL,
+    CONFIG_PRESENCE_FACTOR,
+    CONFIG_TYPE_NAME,
+    PRESENCE_FACTOR_MIN,
+    PRESENCE_FACTOR_MAX,
     CAN_ID_ANNOUNCE,
     CAN_ID_ASSIGN,
     CAN_ID_ACK,
@@ -69,7 +77,7 @@ from .protocol import (
 # Constants
 # ---------------------------------------------------------------------------
 
-WINDOW_W = 1600
+WINDOW_W = 1500
 WINDOW_H = 1200        
 TILE_W   = 320
 TILE_H   = 280
@@ -556,6 +564,13 @@ class SFMApp:
                 label="Calibrate Presence",
                 width=150,
                 callback=self._on_open_presence_cal_dialog,
+            )
+            dpg.add_spacer(width=12)
+            dpg.add_button(
+                tag="dev_menu_btn",
+                label="Developer Menu",
+                width=140,
+                callback=self._on_open_dev_menu,
             )
             dpg.add_spacer(width=12)
             dpg.add_text("Heartbeat (s):", color=(160, 165, 175, 255))
@@ -1269,12 +1284,39 @@ class SFMApp:
                                     f"ok={int(cal.ok)} threshold={cal.threshold} "
                                     f"samples={cal.samples}"
                                 )
-                                if not cal.ok:
-                                    details += " — FAILED (threshold unchanged; retry with an empty cage)"
                                 node = self._registry.get(node_id)
+                                if not cal.ok:
+                                    details += (
+                                        " — FAILED (too few samples captured; "
+                                        "retry with an empty cage)"
+                                    )
+                                elif (
+                                    node is not None
+                                    and node.presence_threshold is not None
+                                    and node.presence_threshold == cal.threshold
+                                ):
+                                    details += " — note: threshold unchanged from previous calibration"
                                 if node is not None:
                                     node.presence_threshold = cal.threshold
                                     node.presence_cal_ok = cal.ok
+                        elif ev.event == CanEvent.ConfigApplied:
+                            applied = parse_config_applied(ev)
+                            if applied is None:
+                                details = "malformed ConfigApplied payload"
+                            else:
+                                config_name = CONFIG_TYPE_NAME.get(
+                                    applied.config_type, f"0x{applied.config_type:02X}"
+                                )
+                                if applied.config_type == CONFIG_PRESENCE_FACTOR:
+                                    value_str = f"{config_applied_factor(applied):g}"
+                                    node = self._registry.get(node_id)
+                                    if node is not None and applied.ok:
+                                        node.presence_factor = config_applied_factor(applied)
+                                else:
+                                    value_str = str(applied.raw_value)
+                                details = f"config={config_name} ok={int(applied.ok)} value={value_str}"
+                                if not applied.ok:
+                                    details += " — REJECTED"
                         else:
                             ctx = parse_event_context(ev)
                             if ctx is not None:
@@ -1593,6 +1635,9 @@ class SFMApp:
         if cmd == CanCmd.SetConfig and len(payload) >= 3 and payload[0] == CONFIG_HEARTBEAT_INTERVAL:
             ms = payload[1] | (payload[2] << 8)
             purpose = f"heartbeat={ms / 1000:g}s"
+        elif cmd == CanCmd.SetConfig and len(payload) >= 5 and payload[0] == CONFIG_PRESENCE_FACTOR:
+            factor = struct.unpack("<f", payload[1:5])[0]
+            purpose = f"presence_factor={factor:g}"
         if not ok:
             return f"{purpose} — send failed"
         return purpose
@@ -1677,8 +1722,8 @@ class SFMApp:
             modal=True,
             no_resize=True,
             width=420,
-            height=220,
-            pos=((WINDOW_W - 420) // 2, (WINDOW_H - 220) // 2),
+            height=250,
+            pos=((WINDOW_W - 420) // 2, (WINDOW_H - 250) // 2),
         ):
             dpg.add_text("Broadcast presence recalibration to ALL nodes.",
                          color=(100, 180, 255, 255))
@@ -1693,7 +1738,7 @@ class SFMApp:
             )
             dpg.add_separator()
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Cages are empty — Calibrate", width=230,
+                dpg.add_button(label="Cage is empty — Calibrate", width=230,
                                callback=self._on_confirm_presence_cal)
                 dpg.add_button(label="Cancel", width=90,
                                callback=lambda: dpg.delete_item("presence_cal_modal"))
@@ -1702,6 +1747,82 @@ class SFMApp:
         if dpg.does_item_exist("presence_cal_modal"):
             dpg.delete_item("presence_cal_modal")
         self._broadcast(CanCmd.CalibratePresence)
+
+    def _on_open_dev_menu(self, sender=None, app_data=None, user_data=None) -> None:
+        """
+        Runtime tuning for values that otherwise require a reflash or hand-
+        editing an experiment's JSON. Built to make adding more rows later
+        (tuning motion/timing constants) a copy of this pattern, not a
+        redesign — see the plan for the tiering rationale.
+        """
+        if dpg.does_item_exist("dev_menu_modal"):
+            dpg.delete_item("dev_menu_modal")
+        with dpg.window(
+            tag="dev_menu_modal",
+            label="Developer Menu",
+            modal=True,
+            no_resize=True,
+            width=420,
+            height=280,
+            pos=((WINDOW_W - 420) // 2, (WINDOW_H - 280) // 2),
+        ):
+            dpg.add_text("Presence Detection", color=(100, 180, 255, 255))
+            dpg.add_text(
+                f"threshold = mean + factor × std_dev  (range {PRESENCE_FACTOR_MIN:g}-{PRESENCE_FACTOR_MAX:g})",
+                color=(160, 165, 175, 255), wrap=390,
+            )
+            with dpg.group(horizontal=True):
+                dpg.add_input_float(
+                    tag="dev_presence_factor_input",
+                    default_value=3.0,
+                    width=120,
+                    step=0.5,
+                )
+                dpg.add_button(
+                    label="Apply to All Nodes", width=180,
+                    callback=self._on_apply_presence_factor,
+                )
+            dpg.add_separator()
+            dpg.add_text("No-Feed Dispense", color=(100, 180, 255, 255))
+            dpg.add_text(
+                "Default dwell at the drop position for any no-feed cycle\n"
+                "that doesn't set its own (e.g. the two-armed bandit unless\n"
+                "overridden). Applies to running and future experiments.",
+                color=(160, 165, 175, 255), wrap=390,
+            )
+            with dpg.group(horizontal=True):
+                dpg.add_input_float(
+                    tag="dev_no_feed_dwell_input",
+                    default_value=ExperimentControl.default_no_feed_dwell_s,
+                    width=120,
+                    step=0.5,
+                )
+                dpg.add_button(
+                    label="Apply", width=180,
+                    callback=self._on_apply_no_feed_dwell_default,
+                )
+
+    def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
+        factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else 3.0
+        payload = build_setconfig_presence_factor(float(factor))
+        self._broadcast(CanCmd.SetConfig, payload)
+
+    def _on_apply_no_feed_dwell_default(self, sender=None, app_data=None, user_data=None) -> None:
+        dwell_s = dpg.get_value("dev_no_feed_dwell_input") if dpg.does_item_exist("dev_no_feed_dwell_input") else ExperimentControl.default_no_feed_dwell_s
+        dwell_s = max(0.5, float(dwell_s))
+        ExperimentControl.default_no_feed_dwell_s = dwell_s
+        if self._log:
+            self._log.add(LogEntry(
+                timestamp=time.time(),
+                direction="LOCAL",
+                node_id=0,
+                frame_type="CONFIG",
+                event_name="No-Feed Default Dwell",
+                raw_id=0,
+                raw_data=b"",
+                details=f"default_no_feed_dwell_s={dwell_s:g}s",
+            ))
+        self._refresh_log_table()
 
     def _on_assign_id(self, node_id: int) -> None:
         """

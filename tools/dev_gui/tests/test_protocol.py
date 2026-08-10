@@ -447,3 +447,62 @@ class TestPresenceCalibration:
         from base_station.protocol import CanCmd, CAN_CMD_PURPOSE
         assert CanCmd.CalibratePresence in CAN_CMD_PURPOSE
         assert CAN_CMD_PURPOSE[CanCmd.CalibratePresence]
+
+
+class TestConfigApplied:
+    def test_config_applied_opcode(self):
+        assert CanEvent.ConfigApplied == 0x11
+
+    def test_presence_factor_configtype_opcode(self):
+        from base_station.protocol import CONFIG_PRESENCE_FACTOR
+        assert CONFIG_PRESENCE_FACTOR == 0x02
+
+    def test_build_setconfig_presence_factor_round_trips_through_config_applied(self):
+        from base_station.protocol import (
+            build_setconfig_presence_factor,
+            parse_config_applied,
+            config_applied_factor,
+            CONFIG_PRESENCE_FACTOR,
+        )
+        payload = build_setconfig_presence_factor(10.0)
+        assert payload[0] == CONFIG_PRESENCE_FACTOR
+        assert len(payload) == 5  # configType(1) + float32(4)
+
+        # Simulate the node echoing the applied value back.
+        extra = bytes([CONFIG_PRESENCE_FACTOR, 1]) + payload[1:5]
+        ev = parse_event(bytes([CanEvent.ConfigApplied]) + extra)
+        applied = parse_config_applied(ev)
+        assert applied is not None
+        assert applied.config_type == CONFIG_PRESENCE_FACTOR
+        assert applied.ok is True
+        assert config_applied_factor(applied) == pytest.approx(10.0)
+
+    def test_build_setconfig_presence_factor_clamps_to_firmware_range(self):
+        from base_station.protocol import (
+            build_setconfig_presence_factor,
+            PRESENCE_FACTOR_MIN,
+            PRESENCE_FACTOR_MAX,
+        )
+        import struct
+        low = struct.unpack("<f", build_setconfig_presence_factor(-5.0)[1:5])[0]
+        high = struct.unpack("<f", build_setconfig_presence_factor(999.0)[1:5])[0]
+        assert low == pytest.approx(PRESENCE_FACTOR_MIN)
+        assert high == pytest.approx(PRESENCE_FACTOR_MAX)
+
+    def test_parse_config_applied_rejects_wrong_event(self):
+        from base_station.protocol import parse_config_applied
+        ev = parse_event(bytes([CanEvent.Loaded, 0x01, 0x00]))
+        assert parse_config_applied(ev) is None
+
+    def test_parse_config_applied_rejects_short_payload(self):
+        from base_station.protocol import parse_config_applied
+        ev = parse_event(bytes([CanEvent.ConfigApplied, 1, 1]))  # only 2 bytes extra
+        assert parse_config_applied(ev) is None
+
+    def test_parse_event_context_ignores_config_applied(self):
+        """Regression guard, same class of bug as PresenceCalResult: a
+        ConfigApplied payload must never be misdecoded as a pellet count."""
+        from base_station.protocol import parse_event_context
+        extra = bytes([2, 1]) + (1092616192).to_bytes(4, "little")  # factor=10.0
+        ev = parse_event(bytes([CanEvent.ConfigApplied]) + extra)
+        assert parse_event_context(ev) is None

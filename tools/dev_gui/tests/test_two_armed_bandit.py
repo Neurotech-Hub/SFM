@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from base_station.experiment import EventKind, NodeEvent
+from base_station.experiment import EventKind, ExperimentControl, NodeEvent
 from base_station.experiment.templates.two_armed_bandit import build as build_bandit
 from base_station.protocol import CanCmd
 
@@ -50,6 +50,46 @@ def test_first_trial_feeds_rich_arm_and_no_feeds_the_other() -> None:
     assert len(no_fed) == 1
     assert dispensed[0][0] == 1  # block 0 → arm 1 is rich; p_high=1.0 → always fed
     assert no_fed[0][0] == 2
+
+
+def test_no_feed_dwell_defaults_to_developer_menu_class_setting() -> None:
+    """With no dwell_s passed to build(), the empty arm's DispenseNoFeed
+    payload should carry ExperimentControl.default_no_feed_dwell_s — the
+    process-wide value the GUI's Developer Menu writes — not a hardcoded
+    per-template default."""
+    original = ExperimentControl.default_no_feed_dwell_s
+    try:
+        ExperimentControl.default_no_feed_dwell_s = 4.0
+        exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+        runner = exp.make_runner()
+        runner.start(now=0.0)
+        _bring_online(runner, [1, 2])
+
+        no_fed = _no_feed_cmds(runner)
+        assert len(no_fed) == 1
+        payload = no_fed[0][2]
+        assert payload[0] | (payload[1] << 8) == 4000
+
+        started = [e for e in runner.ctx.log_entries if e.name == "two_armed_bandit_start"]
+        assert started[0].fields.get("dwell_s") == 4.0
+    finally:
+        ExperimentControl.default_no_feed_dwell_s = original
+
+
+def test_no_feed_dwell_explicit_build_kwarg_overrides_developer_menu_default() -> None:
+    original = ExperimentControl.default_no_feed_dwell_s
+    try:
+        ExperimentControl.default_no_feed_dwell_s = 4.0
+        exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1, dwell_s=1.5)
+        runner = exp.make_runner()
+        runner.start(now=0.0)
+        _bring_online(runner, [1, 2])
+
+        no_fed = _no_feed_cmds(runner)
+        payload = no_fed[0][2]
+        assert payload[0] | (payload[1] << 8) == 1500
+    finally:
+        ExperimentControl.default_no_feed_dwell_s = original
 
 
 def test_advances_to_next_trial_after_sync_gate_and_take() -> None:
@@ -108,7 +148,10 @@ def test_block_flip_switches_the_rich_arm() -> None:
     assert _dispense_cmds(runner)[-1][0] == 2  # trial 2, block 1 → arm 2 now rich
 
 
-def test_fault_on_fed_arm_aborts_trial_and_starts_a_new_one() -> None:
+def test_fault_on_fed_arm_pauses_whole_session_until_recovered() -> None:
+    """A fault on EITHER arm must pause the whole session — the healthy arm
+    must not keep dispensing solo, since that would give away which node is
+    armed just as surely as skipping the no-feed cycle would."""
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
@@ -120,13 +163,72 @@ def test_fault_on_fed_arm_aborts_trial_and_starts_a_new_one() -> None:
     assert len(aborted) == 1
     assert not runner.is_finished
 
-    # After the 5s cooldown, a new trial starts. Node 1 is still halted, so
-    # its dispense is a no-op and the trial is logged invalid — but the
-    # session keeps running and the trial counter still advances.
-    runner.step(now=7.0)
+    paused = [e for e in runner.ctx.log_entries if e.name == "bandit_paused_for_fault"]
+    assert len(paused) == 1
+    assert paused[0].fields.get("nodes") == [1]
+
+    # Node 1 is still faulted: no new trial should start dispensing, on arm 1
+    # OR arm 2 — the session is paused, not just cooling down.
+    dispensed_before = len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner))
+    runner.step(now=30.0)
+    assert runner.ctx.trial == 1
+    assert len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner)) == dispensed_before
+    assert [e for e in runner.ctx.log_entries if e.name == "bandit_resumed_after_fault"] == []
+
+    # Operator recovers node 1 — the session resumes and trial 2 starts.
+    runner.recover_node(1, now=31.0)
+    resumed = [e for e in runner.ctx.log_entries if e.name == "bandit_resumed_after_fault"]
+    assert len(resumed) == 1
     assert runner.ctx.trial == 2
-    invalid = [e for e in runner.ctx.log_entries if e.name == "bandit_trial_invalid"]
-    assert any(e.fields.get("invalid_reason") == "fed_arm_halted" for e in invalid)
+    assert _dispense_cmds(runner)[-1][0] == 1
+    assert _no_feed_cmds(runner)[-1][0] == 2
+
+
+def test_fault_on_empty_arm_also_pauses_the_whole_session() -> None:
+    """Symmetric with the fed-arm case: a fault on the MIMIC arm must pause
+    the fed arm too, not just the faulted one."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    # Node 2 (the empty arm) faults during the sync gate.
+    runner.inject(NodeEvent(EventKind.FAULT, node_id=2, timestamp=1.0))
+    paused = [e for e in runner.ctx.log_entries if e.name == "bandit_paused_for_fault"]
+    assert len(paused) == 1
+    assert paused[0].fields.get("nodes") == [2]
+
+    dispensed_before = len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner))
+    runner.step(now=30.0)
+    assert runner.ctx.trial == 1
+    assert len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner)) == dispensed_before
+
+    runner.recover_node(2, now=31.0)
+    assert [e for e in runner.ctx.log_entries if e.name == "bandit_resumed_after_fault"]
+    assert runner.ctx.trial == 2
+
+
+def test_fault_before_first_trial_pauses_startup() -> None:
+    """A node that comes online already faulted must pause the session
+    before trial 1 even starts — not just faults that occur mid-trial."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.inject([
+        NodeEvent(EventKind.NODE_ONLINE, node_id=1, timestamp=0.0),
+        NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
+        NodeEvent(EventKind.FAULT, node_id=1, timestamp=0.0),
+    ])
+
+    assert runner.ctx.trial == 0
+    paused = [e for e in runner.ctx.log_entries if e.name == "bandit_paused_for_fault"]
+    assert len(paused) == 1
+    assert len(_dispense_cmds(runner)) == 0
+    assert len(_no_feed_cmds(runner)) == 0
+
+    runner.recover_node(1, now=5.0)
+    assert runner.ctx.trial == 1
+    assert len(_dispense_cmds(runner)) == 1
 
 
 def test_arm_ready_timeout_marks_trial_invalid() -> None:

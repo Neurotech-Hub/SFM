@@ -109,6 +109,13 @@ class ExperimentControl:
         "fields",
     ]
 
+    # Process-wide default dwell (s) for a no-feed dispense when a template
+    # doesn't pass its own dwell_s — the GUI's Developer Menu writes this
+    # directly (ExperimentControl.default_no_feed_dwell_s = value) so every
+    # running or future experiment picks it up immediately. Matches firmware's
+    # kDefaultNoFeedDwellMs.
+    default_no_feed_dwell_s: float = 6.0
+
     def __init__(
         self,
         nodes: List[int],
@@ -214,17 +221,21 @@ class ExperimentControl:
     # Actions
     # ------------------------------------------------------------------
 
-    def dispense(self, node: int, *, feed: bool = True, dwell_s: float = 6.0) -> bool:
+    def dispense(self, node: int, *, feed: bool = True, dwell_s: Optional[float] = None) -> bool:
         """
         Send Dispense (or, with ``feed=False``, DispenseNoFeed) to one node.
 
         DispenseNoFeed runs the identical dispense motion — lower, seek the
         load position, raise — but M1 never turns: the node holds at the drop
-        position for ``dwell_s`` seconds (default 6s, matching the time a fed
-        cycle spends loading) before raising an empty plate. Use it to run a
-        module through the motions with no pellet — e.g. so a two-armed task
-        can activate both arms every trial and the animal can't use sound or
-        vibration alone to find the baited one.
+        position for ``dwell_s`` seconds before raising an empty plate. Use it
+        to run a module through the motions with no pellet — e.g. so a
+        two-armed task can activate both arms every trial and the animal
+        can't use sound or vibration alone to find the baited one.
+
+        ``dwell_s=None`` (the default) picks up
+        ``ExperimentControl.default_no_feed_dwell_s`` — a process-wide value
+        the GUI's Developer Menu writes directly, so every template shares one
+        rig-tuned dwell unless it explicitly overrides it.
 
         No-op (logged) while the node is halted by a fault — templates can keep
         calling ``dispense(n)`` unconditionally; a faulted node simply stops
@@ -235,8 +246,9 @@ class ExperimentControl:
             return False
         if feed:
             return self._send(node, CanCmd.Dispense)
+        dwell = dwell_s if dwell_s is not None else self.default_no_feed_dwell_s
         return self._send(
-            node, CanCmd.DispenseNoFeed, build_dispense_no_feed(int(dwell_s * 1000))
+            node, CanCmd.DispenseNoFeed, build_dispense_no_feed(int(dwell * 1000))
         )
 
     def recover(self, node: int) -> bool:

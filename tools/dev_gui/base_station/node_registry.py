@@ -62,6 +62,11 @@ class NodeState:
     presence_threshold: Optional[int] = None
     presence_cal_ok: Optional[bool] = None
 
+    # Last-known presence-detection multiplier (threshold = mean + factor *
+    # stdDev), set from a ConfigApplied ack after the Developer Menu broadcasts
+    # a new value. None = never reported this session.
+    presence_factor: Optional[float] = None
+
     # Connectivity
     last_heartbeat_time: Optional[float] = None
     online: bool = False

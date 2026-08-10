@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import struct
 import sys
 import threading
 import time
@@ -168,6 +169,7 @@ class SimNode:
     dwell_s: float = 6.0     # no-feed dwell at the drop position
     cal_until: Optional[float] = None  # presence calibration in progress until this time
     presence_threshold: int = 35000    # mirrors firmware kDefaultPresenceThreshold
+    presence_factor: float = 3.0       # mirrors firmware kDefaultPresenceFactor
 
     # Timing
     last_heartbeat: float = field(default_factory=time.time)
@@ -208,6 +210,9 @@ class NodeSimulator:
     HB_INTERVAL     = 5.0  # default node heartbeat interval (s)
     DOME_WARN_DELAY = 3.0  # shorter than firmware 30s for sim demos
     CONFIG_HEARTBEAT_INTERVAL = 0x01
+    CONFIG_PRESENCE_FACTOR    = 0x02
+    PRESENCE_FACTOR_MIN = 0.1  # mirrors firmware kMinPresenceFactor
+    PRESENCE_FACTOR_MAX = 100.0  # mirrors firmware kMaxPresenceFactor
     PRESENCE_CAL_S  = 5.0  # mirrors firmware kPresenceCalMs
     PRESENCE_LINGER_S = 1.0  # presence clears slightly after the dome closes
 
@@ -405,10 +410,27 @@ class NodeSimulator:
                 self._send_heartbeat(node)
 
             elif cmd == CanCmd.SetConfig and len(data) >= 2:
-                if data[1] == self.CONFIG_HEARTBEAT_INTERVAL and len(data) >= 4:
+                config_type = data[1]
+                ok = False
+                raw_value = 0
+                if config_type == self.CONFIG_HEARTBEAT_INTERVAL and len(data) >= 4:
                     ms = data[2] | (data[3] << 8)
                     node.hb_interval = ms / 1000.0
+                    raw_value = ms
+                    ok = True
                     print(f"  [SIM] Node {node.node_id}: heartbeat interval set to {node.hb_interval:.2f}s", flush=True)
+                elif config_type == self.CONFIG_PRESENCE_FACTOR and len(data) >= 6:
+                    factor = struct.unpack("<f", bytes(data[2:6]))[0]
+                    factor = max(self.PRESENCE_FACTOR_MIN, min(factor, self.PRESENCE_FACTOR_MAX))
+                    node.presence_factor = factor
+                    raw_value = struct.unpack("<I", struct.pack("<f", factor))[0]
+                    ok = True
+                    print(f"  [SIM] Node {node.node_id}: presence factor set to {factor:.2f}", flush=True)
+                extra = (
+                    bytes([config_type, 1 if ok else 0])
+                    + raw_value.to_bytes(4, "little")
+                )
+                self._send_event(node, CanEvent.ConfigApplied, extra)
 
             elif cmd == CanCmd.AssignId and len(data) >= 2:
                 old_id = node.node_id

@@ -68,6 +68,7 @@ class CanEvent(IntEnum):
     NoFeedPresented   = 0x0E  # no-feed raise complete; raw_extra: count LE16 (NOT incremented)
     Dwelling          = 0x0F  # phase: holding at the drop position, M1 idle
     PresenceCalResult = 0x10  # raw_extra: ok(1), threshold LE32, samples LE16
+    ConfigApplied     = 0x11  # raw_extra: configType(1), ok(1), value LE32
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
@@ -85,6 +86,7 @@ CAN_EVENT_DISPLAY_NAME = {
     CanEvent.NoFeedPresented: "NoFeedPresented",
     CanEvent.Dwelling: "Dwelling",
     CanEvent.PresenceCalResult: "PresenceCalResult",
+    CanEvent.ConfigApplied: "ConfigApplied",
 }
 
 # Events whose extra bytes really are a pellet count LE16 (+ optional context
@@ -181,6 +183,12 @@ DISCOVERY_IDS = {CAN_ID_ANNOUNCE, CAN_ID_ASSIGN, CAN_ID_ACK, CAN_ID_REJOIN}
 # ---------------------------------------------------------------------------
 # SetConfig payload: [configType(1), value...]
 CONFIG_HEARTBEAT_INTERVAL = 0x01  # value = uint16 LE, heartbeat interval in ms
+CONFIG_PRESENCE_FACTOR    = 0x02  # value = float32 LE; threshold = mean + factor * stdDev
+
+CONFIG_TYPE_NAME = {
+    CONFIG_HEARTBEAT_INTERVAL: "heartbeat_interval",
+    CONFIG_PRESENCE_FACTOR: "presence_factor",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +347,29 @@ def parse_presence_cal(event: EventPayload) -> Optional[PresenceCalPayload]:
     )
 
 
+@dataclass
+class ConfigAppliedPayload:
+    config_type: int
+    ok: bool
+    raw_value: int  # LE32 raw bits; interpret per config_type
+
+
+def parse_config_applied(event: EventPayload) -> Optional[ConfigAppliedPayload]:
+    """Decode ConfigApplied extra bytes: configType(1), ok(1), value LE32."""
+    if event.event != CanEvent.ConfigApplied or len(event.raw_extra) < 6:
+        return None
+    return ConfigAppliedPayload(
+        config_type=event.raw_extra[0],
+        ok=bool(event.raw_extra[1]),
+        raw_value=int.from_bytes(event.raw_extra[2:6], "little"),
+    )
+
+
+def config_applied_factor(payload: ConfigAppliedPayload) -> float:
+    """Reinterpret a ConfigApplied raw_value as the float32 presence factor."""
+    return struct.unpack("<f", payload.raw_value.to_bytes(4, "little"))[0]
+
+
 # ---------------------------------------------------------------------------
 # Discovery payload helpers
 # ---------------------------------------------------------------------------
@@ -386,6 +417,24 @@ def build_setconfig_heartbeat(interval_ms: int) -> bytes:
     """
     interval_ms = max(0, min(int(interval_ms), 0xFFFF))
     return bytes([CONFIG_HEARTBEAT_INTERVAL]) + struct.pack("<H", interval_ms)
+
+
+# Mirrors PresenceService.h kMinPresenceFactor / kMaxPresenceFactor.
+PRESENCE_FACTOR_MIN = 0.1
+PRESENCE_FACTOR_MAX = 100.0
+
+
+def build_setconfig_presence_factor(factor: float) -> bytes:
+    """
+    Build the payload (after the SetConfig command byte) that sets the
+    presence-detection multiplier: threshold = mean + factor * stdDev.
+
+    Payload: [CONFIG_PRESENCE_FACTOR, factor float32 LE]. Clamped client-side
+    to match firmware's own clamp in PresenceService::setFactor — the node
+    clamps independently too, so a stale GUI can't push an out-of-range value.
+    """
+    factor = max(PRESENCE_FACTOR_MIN, min(float(factor), PRESENCE_FACTOR_MAX))
+    return bytes([CONFIG_PRESENCE_FACTOR]) + struct.pack("<f", factor)
 
 
 def build_dispense_no_feed(dwell_ms: int = DEFAULT_NO_FEED_DWELL_MS) -> bytes:

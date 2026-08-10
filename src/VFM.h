@@ -98,6 +98,13 @@ private:
 
     PresenceEvent pendingPresenceEvent_ = PresenceEvent::None;
 
+    // A calibration finished (Done or Failed) while this node had no CAN ID
+    // yet (discovery still in progress). The local threshold is already
+    // applied/saved regardless; this just remembers to publish the result
+    // once identity_.isEnabled() so a broadcast Calibrate sent early doesn't
+    // silently drop that node's feedback.
+    bool presenceCalResultPending_ = false;
+
     // Status LED blink triggered by a received Ping (visual "which node" aid)
     static constexpr uint32_t kPingBlinkMs         = 1500; // total blink duration
     static constexpr uint32_t kPingBlinkPeriodMs   = 150;  // blink toggle period
