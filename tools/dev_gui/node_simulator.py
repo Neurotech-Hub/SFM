@@ -73,13 +73,13 @@ except ImportError:
 
     class CanCmd(IntEnum):
         Ping=0x01; Dispense=0x02; Recover=0x03; AssignId=0x04; SetConfig=0x05
-        ReqStatus=0x06; ClearId=0x07; DispenseNoFeed=0x08
+        ReqStatus=0x06; ClearId=0x07; DispenseNoFeed=0x08; CalibratePresence=0x09
 
     class CanEvent(IntEnum):
         OnPlate=0x01; Loaded=0x02; DomeOpened=0x03; Fault=0x04
         Pong=0x05; InputChanged=0x06; Lowering=0x07; Loading=0x08; Raising=0x09
         DomeOpenWarning=0x0A; PelletTaken=0x0B; FeedSkipped=0x0C; Seeking=0x0D
-        NoFeedPresented=0x0E; Dwelling=0x0F
+        NoFeedPresented=0x0E; Dwelling=0x0F; PresenceCalResult=0x10
 
     class InputId(IntEnum):
         Pellet=0x01; LoadPosition=0x02; Dome=0x03; MousePresence=0x04
@@ -166,6 +166,8 @@ class SimNode:
     dome_warn_sent: bool = False
     no_feed: bool = False    # current/last cycle is a no-feed dispense
     dwell_s: float = 6.0     # no-feed dwell at the drop position
+    cal_until: Optional[float] = None  # presence calibration in progress until this time
+    presence_threshold: int = 35000    # mirrors firmware kDefaultPresenceThreshold
 
     # Timing
     last_heartbeat: float = field(default_factory=time.time)
@@ -206,6 +208,8 @@ class NodeSimulator:
     HB_INTERVAL     = 5.0  # default node heartbeat interval (s)
     DOME_WARN_DELAY = 3.0  # shorter than firmware 30s for sim demos
     CONFIG_HEARTBEAT_INTERVAL = 0x01
+    PRESENCE_CAL_S  = 5.0  # mirrors firmware kPresenceCalMs
+    PRESENCE_LINGER_S = 1.0  # presence clears slightly after the dome closes
 
     def __init__(
         self,
@@ -296,6 +300,7 @@ class NodeSimulator:
                     if node.phase == SimNodePhase.Dispensing:
                         self._advance_dispense(node, now)
                     self._check_dome_open_warning(node, now)
+                    self._advance_calibration(node, now)
 
     def _handle_rx(self, msg: can.Message) -> None:
         arb_id = msg.arbitration_id
@@ -390,6 +395,11 @@ class NodeSimulator:
                 node.dome_open_since = None
                 node.dome_warn_sent = False
                 print(f"  [SIM] Node {node.node_id}: Recovered", flush=True)
+
+            elif cmd == CanCmd.CalibratePresence:
+                if node.cal_until is None:  # ignore if one is already running
+                    node.cal_until = time.time() + self.PRESENCE_CAL_S
+                    print(f"  [SIM] Node {node.node_id}: presence calibration started", flush=True)
 
             elif cmd == CanCmd.ReqStatus:
                 self._send_heartbeat(node)
@@ -503,8 +513,11 @@ class NodeSimulator:
             node.dispense_step      = 4
             node.dispense_step_time = now
 
-        # Step 4 → DomeOpened (dome lift while pellet present)
+        # Step 4 → animal arrives (presence asserts) then DomeOpened (dome lift
+        # while pellet present).
         elif node.dispense_step == 4 and elapsed >= getattr(node, "_taken_delay", self.TAKEN_DELAY_MAX):
+            node.mouse_presence = True
+            self._send_input_changed(node, InputId.MousePresence, True)
             node.dome_open = True
             node.dome_open_since = now
             node.dome_warn_sent = False
@@ -534,11 +547,18 @@ class NodeSimulator:
             node.dispense_state = DispenseState.Idle
             node.phase = SimNodePhase.Enabled
             node.dispense_step = 6
+            node.dispense_step_time = now
             print(
                 f"  [SIM] Node {node.node_id}: PelletTaken → Idle "
                 f"(taken={node.pellets_taken})",
                 flush=True,
             )
+
+        # Step 6 → animal lingers briefly, then presence clears.
+        elif node.dispense_step == 6 and elapsed >= self.PRESENCE_LINGER_S:
+            node.mouse_presence = False
+            self._send_input_changed(node, InputId.MousePresence, False)
+            node.dispense_step = 7
 
         # Step 10 → dwell elapsed → Raising (M1 never ran; pellet stays clear)
         elif node.dispense_step == 10 and elapsed >= node.dwell_s:
@@ -557,8 +577,11 @@ class NodeSimulator:
             node.dispense_step      = 12
             node.dispense_step_time = now
 
-        # Step 12 → dome bout on the empty plate (pellet_present = 0)
+        # Step 12 → animal arrives (presence asserts) then dome bout on the
+        # empty plate (pellet_present = 0)
         elif node.dispense_step == 12 and elapsed >= getattr(node, "_taken_delay", self.TAKEN_DELAY_MAX):
+            node.mouse_presence = True
+            self._send_input_changed(node, InputId.MousePresence, True)
             node.dome_open = True
             node.dome_open_since = now
             node.dome_warn_sent = False
@@ -577,11 +600,43 @@ class NodeSimulator:
             self._send_input_changed(node, InputId.Dome, False)
             node.phase = SimNodePhase.Enabled
             node.dispense_step = 14
+            node.dispense_step_time = now
             print(
                 f"  [SIM] Node {node.node_id}: NoFeedPresented dome closed "
                 f"(no PelletTaken — plate is empty)",
                 flush=True,
             )
+
+        # Step 14 → animal lingers briefly, then presence clears.
+        elif node.dispense_step == 14 and elapsed >= self.PRESENCE_LINGER_S:
+            node.mouse_presence = False
+            self._send_input_changed(node, InputId.MousePresence, False)
+            node.dispense_step = 15
+
+    def _advance_calibration(self, node: SimNode, now: float) -> None:
+        """Model the real failure mode: a pad occupied during the 5s capture
+        yields a threshold above real presence readings -> ok=0, so the GUI's
+        failure path is exercisable without hardware."""
+        if node.cal_until is None or now < node.cal_until:
+            return
+        node.cal_until = None
+        ok = not node.mouse_presence
+        if ok:
+            node.presence_threshold = 35000 + random.randint(200, 900)
+            samples = random.randint(180, 200)
+        else:
+            samples = 0
+        extra = (
+            bytes([1 if ok else 0])
+            + node.presence_threshold.to_bytes(4, "little")
+            + samples.to_bytes(2, "little")
+        )
+        self._send_event(node, CanEvent.PresenceCalResult, extra)
+        print(
+            f"  [SIM] Node {node.node_id}: presence calibration "
+            f"{'OK' if ok else 'FAILED'} threshold={node.presence_threshold}",
+            flush=True,
+        )
 
     def _check_dome_open_warning(self, node: SimNode, now: float) -> None:
         """Emit one-shot DomeOpenWarning after continuous dome opening (sim delay)."""

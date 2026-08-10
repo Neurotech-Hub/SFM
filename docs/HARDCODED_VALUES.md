@@ -113,8 +113,11 @@ and one clear event no matter which sensor reported it.
 
 The threshold is calibrated against the idle pad and stored in NVS under the
 same namespace as the node ID, so it survives reboots. Calibration is started by
-a short click of `PIN_BTN` or the serial `cal` command; a 3 s hold of the same
-button clears the node ID instead.
+a short click of `PIN_BTN`, the serial `cal` command, or a broadcast
+`CanCmd::CalibratePresence` (0x09) from the base station — see
+[DISPENSE_CYCLE.md](DISPENSE_CYCLE.md) for the wire format and the resulting
+`CanEvent::PresenceCalResult` (0x10). A 3 s hold of `PIN_BTN` clears the node ID
+instead.
 
 Calibration rule: `threshold = idle_max + (idle_max − idle_min)` — one noise
 range above the highest idle reading. The pad must stay clear for the capture.

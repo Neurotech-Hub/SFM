@@ -47,6 +47,21 @@ class NodeState:
     fault_code: ServiceStatus = ServiceStatus.Ok
     dome_open_warning: bool = False         # dome sensor open >30 s
 
+    # True while this node is holding an EMPTY plate at the top from a
+    # DispenseNoFeed (no-feed / mimic) cycle. Firmware deliberately reports
+    # DispenseState.Loaded for that state too (DomeOpened is only emitted from
+    # Loaded, and dome bouts on the empty plate are the behavioral measure),
+    # so the wire state alone cannot distinguish "empty" from "actually
+    # loaded". Event-driven: heartbeats may only CLEAR this flag, never set
+    # it, so a missed event can never leave a stale EMPTY reading.
+    presented_empty: bool = False
+
+    # Result of the most recent presence recalibration, if any (None = never
+    # calibrated this session; the node's own NVS-stored value is unknown to
+    # the base station until a CalibratePresence broadcast reports back).
+    presence_threshold: Optional[int] = None
+    presence_cal_ok: Optional[bool] = None
+
     # Connectivity
     last_heartbeat_time: Optional[float] = None
     online: bool = False
@@ -74,6 +89,8 @@ class NodeState:
     def status_label(self) -> str:
         if not self.online:
             return "OFFLINE"
+        if self.dispense_state == DispenseState.Loaded and self.presented_empty:
+            return "EMPTY"
         return self.dispense_state.name.upper()
 
     @property
@@ -87,7 +104,9 @@ class NodeState:
         if s == DispenseState.Idle:
             return (60, 200, 80, 255)     # green
         if s == DispenseState.Loaded:
-            return (50, 200, 220, 255)    # cyan
+            if self.presented_empty:
+                return (220, 200, 50, 255)  # yellow — EMPTY (motion only, no pellet)
+            return (50, 200, 220, 255)    # cyan — real pellet loaded
         if s == DispenseState.Seeking:
             return (60, 130, 220, 255)    # blue (homing)
         # Lowering / Loading / Raising
@@ -141,6 +160,12 @@ class NodeRegistry:
         if node.discovery_state == "Pending":
             # Node is heartbeating even without formal discovery (e.g. manual ID)
             node.discovery_state = "Enabled"
+        # Self-healing backstop for `presented_empty`: a real pellet, or any
+        # state other than Loaded, is proof the EMPTY reading is stale (a
+        # missed NoFeedPresented/Dwelling event, a dropped frame, etc). Never
+        # SET it here — only NoFeedPresented does that.
+        if hb.pellet or hb.dispense_state != DispenseState.Loaded:
+            node.presented_empty = False
 
     def update_from_event(
         self,
@@ -169,6 +194,15 @@ class NodeRegistry:
         }
         if event in state_map:
             node.dispense_state = state_map[event]
+            # Only NoFeedPresented means "empty plate at the top". Every
+            # other transition in state_map is either a new cycle starting
+            # or proof a real pellet is involved — except DomeOpened, which
+            # deliberately falls through untouched: a dome bout on the empty
+            # plate is the behavioral measure and must not clear the flag.
+            if event == CanEvent.NoFeedPresented:
+                node.presented_empty = True
+            elif event != CanEvent.DomeOpened:
+                node.presented_empty = False
         if event == CanEvent.Fault and fault_code is not None:
             node.fault_code = fault_code
         if event == CanEvent.DomeOpenWarning:
@@ -180,6 +214,8 @@ class NodeRegistry:
         node.online = True
         if input_id == InputId.Pellet:
             node.pellet = active
+            if active:
+                node.presented_empty = False
         elif input_id == InputId.LoadPosition:
             node.load_position = active
         elif input_id == InputId.Dome:
@@ -195,6 +231,7 @@ class NodeRegistry:
         if node.dispense_state == DispenseState.Fault:
             node.dispense_state = DispenseState.Idle
         node.dome_open_warning = False
+        node.presented_empty = False
 
     def register_node(self, node_id: int, mac: bytes, source: str = "ANNOUNCE") -> None:
         """Register a node's MAC address from discovery."""
@@ -230,6 +267,7 @@ class NodeRegistry:
             if node.online and node.last_heartbeat_time is not None:
                 if (now - node.last_heartbeat_time) > self._offline_timeout:
                     node.online = False
+                    node.presented_empty = False
                     newly_offline.append(node.node_id)
         return newly_offline
 

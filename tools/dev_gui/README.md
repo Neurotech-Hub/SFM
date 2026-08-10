@@ -56,7 +56,7 @@ python run.py --help
 
   --interface, -i  SocketCAN interface name  (default: can0)
   --bitrate,   -b  CAN bitrate in bps        (default: 250000)
-  --nodes,     -n  Number of expected nodes  (default: 9)
+  --nodes,     -n  Number of expected nodes  (default: 2)
   --log-dir        Directory for CSV logs    (default: ~/sfm_logs)
 ```
 
@@ -238,7 +238,7 @@ The base station keeps a dictionary of discovered modules in
   otherwise the next free ID is used and written to the file after **ACK**.
 - On **REJOIN**, if the node's NVS ID disagrees with the file, the base station
   sends **ASSIGN** with the historical ID so the mapping stays stable.
-- **Clear All IDs** wipes this file (and broadcasts `ClearId` to node NVS), then
+- **Re-discover** wipes this file (and broadcasts `ClearId` to node NVS), then
   rediscovers and rebuilds the dictionary from scratch.
 
 ## CAN frame reference
@@ -254,7 +254,7 @@ The base station keeps a dictionary of discovered modules in
 | node → base   | `0x082`          | ACK                           |
 | node → base   | `0x083`          | REJOIN (returning node)       |
 
-Broadcast command opcodes include `ClearId` (`0x07`) — the GUI **Clear All IDs**
+Broadcast command opcodes include `ClearId` (`0x07`) — the GUI **Re-discover**
 button clears `~/.sfm/mac_id_registry.json`, broadcasts ClearId so every node
 wipes its NVS ID, then rediscovers and rebuilds the MAC↔ID dictionary.
 

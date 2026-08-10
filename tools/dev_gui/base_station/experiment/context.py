@@ -58,6 +58,12 @@ class _NodeView:
     last_event_ts: float = 0.0
     last_activity_ts: float = 0.0
     last_kind: Optional[EventKind] = None
+    # What the most recently COMPLETED dispense cycle on this node raised:
+    # a real pellet (LOADED), an empty plate (NO_FEED_PRESENTED), or neither
+    # yet (a cycle is in flight, or none has run this session). At most one
+    # of these two is ever True — see ExperimentControl.observe_event().
+    presented_pellet: bool = False
+    presented_empty: bool = False
 
 
 @dataclass
@@ -470,9 +476,38 @@ class ExperimentControl:
         elif ev.kind is EventKind.PRESENCE_CHANGED:
             view.presence = bool(ev.data.get("active"))
         elif ev.kind is EventKind.ON_PLATE:
+            # Pellet sensor confirmed during Loading — the raise hasn't
+            # happened yet, so this is NOT a completed presentation. Do not
+            # touch presented_pellet/presented_empty here.
             view.pellet = True
+        elif ev.kind is EventKind.LOADED:
+            # Raise finished with a real pellet at the top.
+            view.presented_pellet, view.presented_empty = True, False
+        elif ev.kind is EventKind.NO_FEED_PRESENTED:
+            # Raise finished with an empty plate at the top (a no-feed /
+            # mimic cycle — see ExperimentControl.dispense(feed=False)).
+            view.presented_pellet, view.presented_empty = False, True
         elif ev.kind is EventKind.PELLET_TAKEN:
+            # Deliberately does NOT clear presented_pellet/presented_empty.
+            # "Presented" describes the outcome of the last COMPLETED cycle,
+            # and stays true — through the take — until a new cycle starts.
+            # This matters for gating a response window on multiple nodes
+            # (see presentation_done()): an animal can legitimately take a
+            # fast-presenting arm's pellet before a slower arm finishes
+            # raising, and that must not un-resolve the first arm's
+            # "finished presenting" reading. Call clear_presentation()
+            # explicitly at the start of a new trial instead.
             view.pellet = False
+        elif ev.kind in (
+            EventKind.SEEKING, EventKind.LOWERING, EventKind.LOADING,
+            EventKind.DWELLING, EventKind.RAISING, EventKind.FEED_SKIPPED,
+            EventKind.FAULT,
+        ):
+            # A new cycle starting (or a fault) means whatever was presented
+            # before is no longer current. DOME_OPENED is deliberately NOT in
+            # this list — a dome bout on an already-presented plate (pellet
+            # or empty) must not erase what was actually presented.
+            view.presented_pellet = view.presented_empty = False
         elif ev.kind in (EventKind.NODE_ONLINE, EventKind.HEARTBEAT):
             view.online = True
             if ev.kind is EventKind.HEARTBEAT:
@@ -502,6 +537,75 @@ class ExperimentControl:
 
     def is_online(self, node: int) -> bool:
         return self._view(node).online
+
+    # ------------------------------------------------------------------
+    # Presentation state: what did the last completed dispense cycle raise?
+    # ------------------------------------------------------------------
+    #
+    # Reusable primitives for writing your own trial-based template — e.g. a
+    # two-armed task that needs to know which arm actually delivered versus
+    # which one only ran the motion (control.dispense(node, feed=False)).
+
+    def presented_pellet(self, node: int) -> bool:
+        """True if this node's last completed dispense cycle raised a REAL pellet."""
+        return self._view(node).presented_pellet
+
+    def presented_empty(self, node: int) -> bool:
+        """True if this node's last completed cycle raised an EMPTY plate
+        (a ``dispense(node, feed=False)`` / no-feed cycle) — motion only,
+        nothing delivered."""
+        return self._view(node).presented_empty
+
+    def presentation(self, node: int) -> str:
+        """``'pellet'`` | ``'empty'`` | ``'none'`` — ``'none'`` while a cycle
+        is in flight (or before any cycle has completed this session)."""
+        view = self._view(node)
+        if view.presented_pellet:
+            return "pellet"
+        if view.presented_empty:
+            return "empty"
+        return "none"
+
+    def presentation_done(self, node: int) -> bool:
+        """True once this node's cycle has finished raising, either way (a
+        real pellet OR an empty plate). Stays True even after the pellet is
+        taken — so an animal that grabs a fast-presenting arm's pellet before
+        a slower arm finishes raising can't un-resolve this — until you call
+        ``clear_presentation(node)`` or a new cycle starts. Use ``wait_until``
+        on this across several nodes to gate a response window on ALL of them
+        being ready before acting on any — e.g. so neither arm of a
+        two-armed task tips off the animal by finishing first."""
+        view = self._view(node)
+        return view.presented_pellet or view.presented_empty
+
+    def clear_presentation(self, node: int) -> None:
+        """Reset this node's presentation state. Call at the start of a new
+        trial so a stale reading from the previous cycle can't be mistaken
+        for this one's result before the new cycle completes."""
+        view = self._view(node)
+        view.presented_pellet = False
+        view.presented_empty = False
+
+    # ------------------------------------------------------------------
+    # Mouse presence (capacitive pad)
+    # ------------------------------------------------------------------
+
+    def presence(self, node: int) -> bool:
+        """True if the animal is on this node's capacitive presence pad.
+
+        Defaults to False until the first heartbeat or InputChanged for this
+        node arrives, exactly like ``pellet_on_plate`` / ``dome_open`` — gate
+        on ``is_online(node)`` first if you need to distinguish "confirmed
+        clear" from "not yet known".
+        """
+        return self._view(node).presence
+
+    def presence_clear(self, nodes: Union[int, Sequence[int], None] = None) -> bool:
+        """True when presence is clear on every given node (all session
+        nodes if omitted). Mirrors ``domes_closed()``; see ``presence()``
+        for the same before-first-heartbeat caveat."""
+        targets = self._node_list(nodes)
+        return all(not self._view(n).presence for n in targets)
 
     def _node_list(self, node: Union[int, Sequence[int], None]) -> List[int]:
         if node is None:

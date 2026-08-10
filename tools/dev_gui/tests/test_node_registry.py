@@ -238,3 +238,101 @@ class TestNodeRegistry:
         reg.update_from_heartbeat(1, make_hb(pellet=True, dome_open=True))
         node = reg.get(1)
         assert node.sensor_bits == 0b101
+
+    # ------------------------------------------------------------------
+    # presented_empty (EMPTY status for a no-feed / mimic cycle)
+    # ------------------------------------------------------------------
+
+    def test_no_feed_presented_reads_empty_not_loaded(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        node = reg.get(1)
+        assert node.dispense_state == DispenseState.Loaded  # wire state unchanged
+        assert node.presented_empty is True
+        assert node.status_label == "EMPTY"
+        assert node.status_color == (220, 200, 50, 255)
+
+    def test_heartbeat_does_not_clobber_empty_flag(self):
+        """Regression guard: the next heartbeat must not silently flip EMPTY
+        back to LOADED just because it reports dispense_state == Loaded."""
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_heartbeat(1, make_hb(state=DispenseState.Loaded, pellet=False))
+        assert reg.get(1).status_label == "EMPTY"
+
+    def test_heartbeat_with_pellet_clears_empty_flag(self):
+        """The self-healing backstop: a heartbeat proving a real pellet is on
+        the plate clears a stale EMPTY reading."""
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_heartbeat(1, make_hb(state=DispenseState.Loaded, pellet=True))
+        assert reg.get(1).presented_empty is False
+        assert reg.get(1).status_label == "LOADED"
+
+    def test_heartbeat_off_loaded_state_clears_empty_flag(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_heartbeat(1, make_hb(state=DispenseState.Idle))
+        assert reg.get(1).presented_empty is False
+
+    def test_dome_bout_on_empty_plate_keeps_empty(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_event(1, CanEvent.DomeOpened)
+        node = reg.get(1)
+        assert node.presented_empty is True
+        assert node.status_label == "EMPTY"
+
+    @pytest.mark.parametrize("event", [
+        CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading, CanEvent.OnPlate,
+        CanEvent.Dwelling, CanEvent.Raising, CanEvent.Loaded,
+        CanEvent.FeedSkipped, CanEvent.PelletTaken, CanEvent.Fault,
+    ])
+    def test_stale_empty_flag_is_cleared_by_next_cycle_event(self, event):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_event(1, event)
+        assert reg.get(1).presented_empty is False
+
+    def test_feed_skipped_on_mimic_arm_clears_empty_flag(self):
+        """A no-feed cycle that turns out to be occupied (both arms baited)
+        must never keep displaying EMPTY — that would show the exact inverse
+        of the truth."""
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_event(1, CanEvent.FeedSkipped)
+        reg.update_from_event(1, CanEvent.Loaded)
+        node = reg.get(1)
+        assert node.presented_empty is False
+        assert node.status_label == "LOADED"
+
+    def test_pellet_input_clears_empty_flag(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.update_from_input(1, InputId.Pellet, True)
+        assert reg.get(1).presented_empty is False
+
+    def test_clear_fault_clears_empty_flag(self):
+        reg = NodeRegistry(1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        reg.clear_fault(1)
+        assert reg.get(1).presented_empty is False
+
+    def test_going_offline_clears_empty_flag(self):
+        reg = NodeRegistry(1)
+        reg.set_offline_timeout(0.1)
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_event(1, CanEvent.NoFeedPresented)
+        time.sleep(0.15)
+        newly_offline = reg.check_staleness()
+        assert 1 in newly_offline
+        assert reg.get(1).presented_empty is False
