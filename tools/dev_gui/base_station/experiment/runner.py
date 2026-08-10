@@ -22,16 +22,18 @@ from typing import (
 
 from ..can_manager import CanManager
 from ..io_manager import IOManager
-from .context import ExperimentContext
+from .context import ExperimentControl
 from .events import EventKind, EventNormalizer, NodeEvent
+from .script import ScriptFn, ScriptScheduler
 
 # Callback signatures:
-#   on_start / on_end:  (ctx) -> None
-#   on(event):          (ctx, ev) -> None
-#   start/end when:     (ctx) -> bool   OR a NodeEvent predicate
-StartEndCb = Callable[[ExperimentContext], None]
-EventCb = Callable[[ExperimentContext, NodeEvent], None]
-ConditionFn = Callable[[ExperimentContext], bool]
+#   on_start / on_end:  (control) -> None
+#   on(event):          (control, event) -> None
+#   start/end when:     (control) -> bool   OR a NodeEvent predicate
+#   script:             (control) -> Generator — see script.py
+StartEndCb = Callable[[ExperimentControl], None]
+EventCb = Callable[[ExperimentControl, NodeEvent], None]
+ConditionFn = Callable[[ExperimentControl], bool]
 
 
 class Experiment:
@@ -43,13 +45,13 @@ class Experiment:
         exp = Experiment(nodes=[1, 2, 3], name="free_feeding")
 
         @exp.on_start
-        def start(ctx):
-            for n in ctx.nodes:
-                ctx.dispense(n)
+        def start(control):
+            for n in control.nodes:
+                control.dispense(n)
 
         @exp.on_pellet_taken
-        def taken(ctx, ev):
-            ctx.log("pellet_taken", node=ev.node_id)
+        def taken(control, event):
+            control.log("pellet_taken", node=event.node_id)
 
         exp.end_after(hours=12)
         exp.run(interface="vcan0")
@@ -59,9 +61,11 @@ class Experiment:
         self,
         nodes: Optional[Sequence[int]] = None,
         name: str = "experiment",
+        seed: Optional[int] = None,
     ) -> None:
         self.name = name
         self.nodes: List[int] = list(nodes) if nodes else []
+        self.seed = seed
         self._on_start: List[StartEndCb] = []
         self._on_end: List[StartEndCb] = []
         self._handlers: DefaultDict[EventKind, List[EventCb]] = defaultdict(list)
@@ -69,6 +73,7 @@ class Experiment:
         self._end_when: Optional[ConditionFn] = None
         self._end_after_s: Optional[float] = None
         self._end_pellets: Optional[int] = None
+        self._script: Optional[ScriptFn] = None
 
     # ------------------------------------------------------------------
     # Decorators / registration
@@ -82,6 +87,18 @@ class Experiment:
     def on_end(self, fn: StartEndCb) -> StartEndCb:
         """Register a callback fired once when the session ends."""
         self._on_end.append(fn)
+        return fn
+
+    def script(self, fn: ScriptFn) -> ScriptFn:
+        """
+        Register the one sequential generator that drives this experiment.
+
+        Runs alongside the @exp.on_* callbacks (both may be used on the same
+        Experiment). See script.py for the yield vocabulary and semantics.
+        """
+        if self._script is not None:
+            raise ValueError("only one @exp.script per Experiment")
+        self._script = fn
         return fn
 
     def on(self, kind: EventKind) -> Callable[[EventCb], EventCb]:
@@ -107,6 +124,10 @@ class Experiment:
     def on_feed_skipped(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.FEED_SKIPPED)(fn)
 
+    def on_no_feed_presented(self, fn: EventCb) -> EventCb:
+        """Fired when a no-feed dispense finishes raising an empty plate."""
+        return self.on(EventKind.NO_FEED_PRESENTED)(fn)
+
     def on_loaded(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.LOADED)(fn)
 
@@ -131,12 +152,12 @@ class Experiment:
     # ------------------------------------------------------------------
 
     def start_when(self, condition: ConditionFn) -> "Experiment":
-        """Defer SESSION_START until ``condition(ctx)`` returns True."""
+        """Defer SESSION_START until ``condition(control)`` returns True."""
         self._start_when = condition
         return self
 
     def end_when(self, condition: ConditionFn) -> "Experiment":
-        """End the session when ``condition(ctx)`` returns True."""
+        """End the session when ``condition(control)`` returns True."""
         self._end_when = condition
         return self
 
@@ -153,7 +174,7 @@ class Experiment:
 
         Duration uses ``hours`` + ``minutes`` + ``seconds``. Pellet count
         tracks the ``pellets`` counter (incremented by templates on
-        LOADED, or manually via ``ctx.incr("pellets")``).
+        LOADED, or manually via ``control.incr("pellets")``).
         """
         total = float(hours) * 3600.0 + float(minutes) * 60.0 + float(seconds)
         if total > 0:
@@ -173,11 +194,11 @@ class Experiment:
         log_dir: Optional[str] = None,
         use_io: bool = True,
         poll_hz: float = 50.0,
-    ) -> ExperimentContext:
+    ) -> ExperimentControl:
         """
         Blocking headless run against a SocketCAN interface.
 
-        Returns the ExperimentContext after the session ends.
+        Returns the ExperimentControl after the session ends.
         """
         can = CanManager(interface=interface, bitrate=bitrate)
         io: Optional[IOManager] = None
@@ -222,12 +243,13 @@ class ExperimentRunner:
         self.experiment = experiment
         self.can = can
         self.io = io
-        self.ctx = ExperimentContext(
+        self.ctx = ExperimentControl(
             nodes=experiment.nodes,
             can=can,
             io=io,
             log_dir=log_dir,
             session_name=experiment.name,
+            seed=experiment.seed,
         )
         self.normalizer = EventNormalizer()
         self._active = False
@@ -236,6 +258,12 @@ class ExperimentRunner:
         self._owns_can = False
         self._bnc_queue: List[NodeEvent] = []
 
+        self.script: Optional[ScriptScheduler] = (
+            ScriptScheduler(self.ctx, experiment._script) if experiment._script else None
+        )
+        if self.script is not None:
+            self.ctx.on_node_halted = self.script.on_node_halted
+
         # GUI hosts already own BNC edge callbacks; skip double-wiring.
         if wire_bnc and io is not None:
             self._wire_bnc(io)
@@ -243,6 +271,11 @@ class ExperimentRunner:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def control(self) -> ExperimentControl:
+        """Alias for ``.ctx`` — the ExperimentControl this runner drives."""
+        return self.ctx
 
     @property
     def is_active(self) -> bool:
@@ -323,9 +356,12 @@ class ExperimentRunner:
         now = now if now is not None else time.time()
         self.ctx.set_now(now)
         self.ctx.recover_node(node_id)
-        self._fire_handlers(
-            NodeEvent(kind=EventKind.NODE_RECOVERED, node_id=node_id, timestamp=now)
-        )
+        ev = NodeEvent(kind=EventKind.NODE_RECOVERED, node_id=node_id, timestamp=now)
+        self.ctx.observe_event(ev)
+        self._fire_handlers(ev)
+        if self.script is not None and self._active and not self._finished:
+            self.script.observe(ev)
+            self.script.advance(now)
 
     def step(
         self,
@@ -368,10 +404,12 @@ class ExperimentRunner:
 
         if self._active:
             self.ctx.tick_timers(now)
+            if self.script is not None:
+                self.script.advance(now)
 
         self._check_end(now)
 
-    def run_blocking(self, poll_hz: float = 50.0) -> ExperimentContext:
+    def run_blocking(self, poll_hz: float = 50.0) -> ExperimentControl:
         """Open CAN, run until the session ends, then clean up."""
         self.open()
         self.start()
@@ -427,10 +465,14 @@ class ExperimentRunner:
             "session_start",
             experiment=self.experiment.name,
             nodes=self.ctx.nodes,
+            seed=self.ctx.seed,
         )
         for cb in self.experiment._on_start:
             self._safe_call_start(cb)
         self._fire_handlers(start_ev)
+        if self.script is not None:
+            self.script.start(now)
+            self.script.advance(now)
 
     def _deactivate(self, now: float) -> None:
         if self._finished:
@@ -449,6 +491,8 @@ class ExperimentRunner:
                 end_fields["reason"] = self.ctx.stop_reason
             self.ctx.log("session_end", **end_fields)
             self._fire_handlers(end_ev)
+            if self.script is not None:
+                self.script.close()
             for cb in self.experiment._on_end:
                 self._safe_call_start(cb)
             self.ctx.end()
@@ -457,11 +501,12 @@ class ExperimentRunner:
         # Waiting for start_when?
         if self._started and not self._active and not self._finished:
             for ev in events:
+                self.ctx.observe_event(ev)
                 self._fire_handlers(ev)  # allow BNC_IN etc. before start
             if self.experiment._start_when is not None:
                 try:
                     if self.experiment._start_when(self.ctx):
-                        self._activate(now)
+                        self._activate(now)  # advances the script itself
                 except Exception as exc:  # noqa: BLE001
                     self.ctx.log("start_when_error", error=str(exc))
             return
@@ -472,6 +517,7 @@ class ExperimentRunner:
         for ev in events:
             if self.ctx.stop_requested:
                 break
+            self.ctx.observe_event(ev)
             # Auto-count Loaded milestones for end_after(pellets=...).
             if ev.kind == EventKind.LOADED:
                 self.ctx.incr("pellets")
@@ -481,6 +527,15 @@ class ExperimentRunner:
             elif ev.kind == EventKind.FAULT:
                 self.ctx.halt_node(ev.node_id)
             self._fire_handlers(ev)
+            if self.script is not None:
+                self.script.observe(ev)
+
+        # Only advance here when this batch actually carried events — an
+        # empty-batch tick is resolved once by the post-tick-timer hook in
+        # step() instead, so a runaway script isn't given two full advance
+        # budgets (MAX_ADVANCES_PER_TICK each) on every idle tick.
+        if events and self.script is not None and self._active and not self._finished:
+            self.script.advance(now)
 
     def _fire_handlers(self, ev: NodeEvent) -> None:
         for cb in self.experiment._handlers.get(ev.kind, []):

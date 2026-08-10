@@ -2,6 +2,7 @@
 
 import sys
 import os
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -112,7 +113,7 @@ class TestParseHeartbeat:
         assert hb.mouse_presence is True
 
     def test_fault_state(self):
-        hb = parse_heartbeat(self._make_data(state=6, fault=3))  # Fault, Jam
+        hb = parse_heartbeat(self._make_data(state=6, fault=2))  # Fault, Jam
         assert hb.dispense_state == DispenseState.Fault
         assert hb.fault_code == ServiceStatus.Jam
 
@@ -184,15 +185,18 @@ class TestParseEvent:
         assert ev.event == CanEvent.DomeOpenWarning
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.DomeOpenWarning] == "DomeOpenWarning"
 
-    def test_fault_payload_timeout(self):
-        ev = parse_event(bytes([CanEvent.Fault, ServiceStatus.Timeout]))
+    def test_fault_payload_jam_opcode(self):
+        # Regression guard: ServiceStatus must match ServiceTypes.h exactly.
+        # Commit 4861a97 removed firmware's `Timeout` member (value 2) without
+        # updating this mirror, so wire value 2 now means Jam, not Timeout.
+        ev = parse_event(bytes([CanEvent.Fault, 2]))
         assert ev is not None
-        assert parse_fault_code(ev) == ServiceStatus.Timeout
+        assert parse_fault_code(ev) == ServiceStatus.Jam
 
     def test_fault_payload_feed_and_actuator_timeout(self):
         from base_station.protocol import fault_user_message
-        assert ServiceStatus.FeedTimeout == 6
-        assert ServiceStatus.ActuatorTimeout == 7
+        assert ServiceStatus.FeedTimeout == 5
+        assert ServiceStatus.ActuatorTimeout == 6
         feed = parse_event(bytes([CanEvent.Fault, ServiceStatus.FeedTimeout]))
         act = parse_event(bytes([CanEvent.Fault, ServiceStatus.ActuatorTimeout]))
         assert parse_fault_code(feed) == ServiceStatus.FeedTimeout
@@ -216,7 +220,7 @@ class TestParseEvent:
         assert CanEvent.DomeOpened == 0x03
         assert CanEvent.PelletTaken == 0x0B
         assert CanEvent.FeedSkipped == 0x0C
-        assert ServiceStatus.PelletLost == 5
+        assert ServiceStatus.PelletLost == 4
 
     def test_parse_event_context_dome_opened(self):
         from base_station.protocol import parse_event_context
@@ -321,3 +325,73 @@ class TestFormatMac:
 
     def test_zeros(self):
         assert format_mac(bytes(6)) == "00:00:00:00:00:00"
+
+
+class TestServiceStatusMatchesFirmware:
+    """
+    Regression guard for the ServiceStatus wire-value mismatch (commit
+    4861a97 removed firmware's `Timeout` member without updating this
+    Python mirror, silently shifting every fault code >= 2 by one).
+
+    Parses the ServiceStatus enum straight out of ServiceTypes.h and checks
+    it against the Python mirror value-for-value, so this can't drift again.
+    """
+
+    def test_values_match_firmware_header(self):
+        import re
+
+        header = (
+            Path(__file__).resolve().parents[3]
+            / "src" / "services" / "ServiceTypes.h"
+        )
+        text = header.read_text(encoding="utf-8")
+        m = re.search(r"enum class ServiceStatus[^{]*\{([^}]*)\}", text)
+        assert m is not None, "ServiceStatus enum not found in ServiceTypes.h"
+
+        firmware_values = {}
+        next_value = 0
+        for raw_line in m.group(1).splitlines():
+            line = raw_line.split("//")[0].strip().rstrip(",")
+            if not line:
+                continue
+            if "=" in line:
+                name, value = (p.strip() for p in line.split("="))
+                next_value = int(value)
+            else:
+                name = line
+            firmware_values[name] = next_value
+            next_value += 1
+
+        python_values = {m.name: m.value for m in ServiceStatus}
+        assert python_values == firmware_values
+
+
+class TestBuildDispenseNoFeed:
+    def test_default_dwell(self):
+        from base_station.protocol import build_dispense_no_feed, DEFAULT_NO_FEED_DWELL_MS
+        payload = build_dispense_no_feed()
+        assert len(payload) == 2
+        assert payload[0] | (payload[1] << 8) == DEFAULT_NO_FEED_DWELL_MS
+
+    def test_explicit_dwell(self):
+        from base_station.protocol import build_dispense_no_feed
+        payload = build_dispense_no_feed(1000)
+        assert payload[0] | (payload[1] << 8) == 1000
+
+    def test_clamps_below_min(self):
+        from base_station.protocol import build_dispense_no_feed, NO_FEED_DWELL_MIN_MS
+        payload = build_dispense_no_feed(1)
+        assert payload[0] | (payload[1] << 8) == NO_FEED_DWELL_MIN_MS
+
+    def test_clamps_above_max(self):
+        from base_station.protocol import build_dispense_no_feed, NO_FEED_DWELL_MAX_MS
+        payload = build_dispense_no_feed(999999)
+        assert payload[0] | (payload[1] << 8) == NO_FEED_DWELL_MAX_MS
+
+    def test_dispense_no_feed_opcode_and_frame(self):
+        from base_station.protocol import CanCmd, build_cmd_frame, build_dispense_no_feed
+        assert CanCmd.DispenseNoFeed == 0x08
+        arb_id, data = build_cmd_frame(2, CanCmd.DispenseNoFeed, build_dispense_no_feed(6000))
+        assert arb_id == CAN_CMD_BASE + 2
+        assert data[0] == CanCmd.DispenseNoFeed
+        assert data[1] | (data[2] << 8) == 6000

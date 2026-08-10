@@ -72,22 +72,25 @@ except ImportError:
     from enum import IntEnum
 
     class CanCmd(IntEnum):
-        Ping=0x01; Dispense=0x02; Recover=0x03; AssignId=0x04; SetConfig=0x05; ReqStatus=0x06; ClearId=0x07
+        Ping=0x01; Dispense=0x02; Recover=0x03; AssignId=0x04; SetConfig=0x05
+        ReqStatus=0x06; ClearId=0x07; DispenseNoFeed=0x08
 
     class CanEvent(IntEnum):
         OnPlate=0x01; Loaded=0x02; DomeOpened=0x03; Fault=0x04
         Pong=0x05; InputChanged=0x06; Lowering=0x07; Loading=0x08; Raising=0x09
         DomeOpenWarning=0x0A; PelletTaken=0x0B; FeedSkipped=0x0C; Seeking=0x0D
+        NoFeedPresented=0x0E; Dwelling=0x0F
 
     class InputId(IntEnum):
         Pellet=0x01; LoadPosition=0x02; Dome=0x03; MousePresence=0x04
 
     class DispenseState(IntEnum):
-        Idle=0; Lowering=1; Loading=2; Raising=3; Loaded=4; Seeking=5; Fault=6
+        Idle=0; Lowering=1; Loading=2; Raising=3; Loaded=4; Seeking=5
+        Fault=6; Dwelling=7
 
     class ServiceStatus(IntEnum):
-        Ok=0; NotInitialized=1; Timeout=2; Jam=3; InvalidData=4; PelletLost=5
-        FeedTimeout=6; ActuatorTimeout=7
+        Ok=0; NotInitialized=1; Jam=2; InvalidData=3; PelletLost=4
+        FeedTimeout=5; ActuatorTimeout=6
 
     from dataclasses import dataclass as _dataclass
 
@@ -161,6 +164,8 @@ class SimNode:
     pellets_taken: int = 0
     dome_open_since: Optional[float] = None
     dome_warn_sent: bool = False
+    no_feed: bool = False    # current/last cycle is a no-feed dispense
+    dwell_s: float = 6.0     # no-feed dwell at the drop position
 
     # Timing
     last_heartbeat: float = field(default_factory=time.time)
@@ -333,38 +338,14 @@ class NodeSimulator:
             elif cmd == CanCmd.Dispense:
                 # Idle or Loaded (re-dispense / occupied skip)
                 if node.dispense_state in (DispenseState.Idle, DispenseState.Loaded):
+                    node.no_feed = False
                     node.phase = SimNodePhase.Dispensing
                     node.dispense_step_time = time.time()
                     node.dome_open = False
                     node.dome_open_since = None
                     node.dome_warn_sent = False
                     if node.pellet:
-                        # Occupied plate → FeedSkipped (+ raise if at load)
-                        count_extra = bytes([
-                            node.pellets_presented & 0xFF,
-                            (node.pellets_presented >> 8) & 0xFF,
-                        ])
-                        self._send_event(node, CanEvent.FeedSkipped, count_extra)
-                        if node.load_position:
-                            node.dispense_state = DispenseState.Raising
-                            self._send_event(node, CanEvent.Raising, count_extra)
-                            node.dispense_step = 3  # jump to raise travel
-                            print(
-                                f"  [SIM] Node {node.node_id}: FeedSkipped → Raising",
-                                flush=True,
-                            )
-                        else:
-                            node.dispense_state = DispenseState.Loaded
-                            self._send_event(node, CanEvent.Loaded, count_extra)
-                            taken_delay = random.uniform(
-                                self.TAKEN_DELAY_MIN, self.TAKEN_DELAY_MAX
-                            )
-                            node._taken_delay = taken_delay
-                            node.dispense_step = 4
-                            print(
-                                f"  [SIM] Node {node.node_id}: FeedSkipped (already elevated)",
-                                flush=True,
-                            )
+                        self._begin_occupied(node)
                     else:
                         node.load_position = False
                         node.dispense_state = DispenseState.Lowering
@@ -375,10 +356,36 @@ class NodeSimulator:
                             flush=True,
                         )
 
+            elif cmd == CanCmd.DispenseNoFeed:
+                # Idle or Loaded (re-dispense / occupied skip)
+                if node.dispense_state in (DispenseState.Idle, DispenseState.Loaded):
+                    node.phase = SimNodePhase.Dispensing
+                    node.dispense_step_time = time.time()
+                    node.dome_open = False
+                    node.dome_open_since = None
+                    node.dome_warn_sent = False
+                    dwell_ms = (data[1] | (data[2] << 8)) if len(data) >= 3 else 6000
+                    node.dwell_s = max(0.5, min(dwell_ms, 60000)) / 1000.0
+                    if node.pellet:
+                        # Occupied → identical to Dispense: FeedSkipped, real pellet.
+                        node.no_feed = False
+                        self._begin_occupied(node)
+                    else:
+                        node.no_feed = True
+                        node.load_position = False
+                        node.dispense_state = DispenseState.Lowering
+                        node.dispense_step = 0
+                        self._send_event(node, CanEvent.Lowering)
+                        print(
+                            f"  [SIM] Node {node.node_id}: DispenseNoFeed started (Lowering)",
+                            flush=True,
+                        )
+
             elif cmd == CanCmd.Recover:
                 node.dispense_state = DispenseState.Idle
                 node.phase          = SimNodePhase.Enabled
                 node.fault_code     = ServiceStatus.Ok
+                node.no_feed        = False
                 node.pellet = node.load_position = node.dome_open = False
                 node.dome_open_since = None
                 node.dome_warn_sent = False
@@ -407,6 +414,36 @@ class NodeSimulator:
                 # Re-announce so the base can re-assign (simulates WaitAEI→Announce)
                 self._send_announce(node)
 
+    def _begin_occupied(self, node: SimNode) -> None:
+        """Occupied plate → FeedSkipped (+ raise if needed). Shared by
+        Dispense and DispenseNoFeed — an occupied plate is always presented
+        honestly with its real pellet, never silently swapped for empty."""
+        count_extra = bytes([
+            node.pellets_presented & 0xFF,
+            (node.pellets_presented >> 8) & 0xFF,
+        ])
+        self._send_event(node, CanEvent.FeedSkipped, count_extra)
+        if node.load_position:
+            node.dispense_state = DispenseState.Raising
+            self._send_event(node, CanEvent.Raising, count_extra)
+            node.dispense_step = 3  # jump to raise travel
+            print(
+                f"  [SIM] Node {node.node_id}: FeedSkipped → Raising",
+                flush=True,
+            )
+        else:
+            node.dispense_state = DispenseState.Loaded
+            self._send_event(node, CanEvent.Loaded, count_extra)
+            taken_delay = random.uniform(
+                self.TAKEN_DELAY_MIN, self.TAKEN_DELAY_MAX
+            )
+            node._taken_delay = taken_delay
+            node.dispense_step = 4
+            print(
+                f"  [SIM] Node {node.node_id}: FeedSkipped (already elevated)",
+                flush=True,
+            )
+
     def _advance_dispense(self, node: SimNode, now: float) -> None:
         elapsed = now - node.dispense_step_time
 
@@ -414,8 +451,19 @@ class NodeSimulator:
             c = node.pellets_presented if count is None else count
             return bytes([c & 0xFF, (c >> 8) & 0xFF])
 
-        # Step 0 → 1: load position reached → Loading (M1 feeding)
+        # Step 0 → load position reached. No-feed forks here: Dwelling instead
+        # of Loading — M1 never runs, so no fault injection on this branch
+        # either (fault injection models an M1/hopper problem, which doesn't
+        # apply).
         if node.dispense_step == 0 and elapsed >= self.LOWERING_DELAY:
+            if node.no_feed:
+                node.load_position = True
+                self._send_input_changed(node, InputId.LoadPosition, True)
+                node.dispense_state = DispenseState.Dwelling
+                self._send_event(node, CanEvent.Dwelling, _count_extra())
+                node.dispense_step      = 10
+                node.dispense_step_time = now
+                return
             if self._fault_rate > 0 and random.random() < self._fault_rate:
                 node.dispense_state = DispenseState.Fault
                 node.fault_code = (
@@ -489,6 +537,49 @@ class NodeSimulator:
             print(
                 f"  [SIM] Node {node.node_id}: PelletTaken → Idle "
                 f"(taken={node.pellets_taken})",
+                flush=True,
+            )
+
+        # Step 10 → dwell elapsed → Raising (M1 never ran; pellet stays clear)
+        elif node.dispense_step == 10 and elapsed >= node.dwell_s:
+            node.dispense_state = DispenseState.Raising
+            self._send_event(node, CanEvent.Raising, _count_extra())
+            node.dispense_step      = 11
+            node.dispense_step_time = now
+
+        # Step 11 → raise travel done → NoFeedPresented. Counter NOT incremented,
+        # no pellet ever set on the plate.
+        elif node.dispense_step == 11 and elapsed >= self.RAISING_DELAY:
+            node.load_position = False
+            node.dispense_state = DispenseState.Loaded
+            self._send_event(node, CanEvent.NoFeedPresented, _count_extra())
+            node._taken_delay = random.uniform(self.TAKEN_DELAY_MIN, self.TAKEN_DELAY_MAX)
+            node.dispense_step      = 12
+            node.dispense_step_time = now
+
+        # Step 12 → dome bout on the empty plate (pellet_present = 0)
+        elif node.dispense_step == 12 and elapsed >= getattr(node, "_taken_delay", self.TAKEN_DELAY_MAX):
+            node.dome_open = True
+            node.dome_open_since = now
+            node.dome_warn_sent = False
+            self._send_input_changed(node, InputId.Dome, True)
+            extra = _count_extra() + bytes([0])  # pellet_present always false
+            self._send_event(node, CanEvent.DomeOpened, extra)
+            node.dispense_step      = 13
+            node.dispense_step_time = now
+
+        # Step 13 → dome closes. NO PelletTaken — the node stays Loaded +
+        # no_feed, exactly as the firmware does, until the next dispense command.
+        elif node.dispense_step == 13 and elapsed >= 0.4:
+            node.dome_open = False
+            node.dome_open_since = None
+            node.dome_warn_sent = False
+            self._send_input_changed(node, InputId.Dome, False)
+            node.phase = SimNodePhase.Enabled
+            node.dispense_step = 14
+            print(
+                f"  [SIM] Node {node.node_id}: NoFeedPresented dome closed "
+                f"(no PelletTaken — plate is empty)",
                 flush=True,
             )
 

@@ -13,11 +13,12 @@ GUI can render a form for it.
 Everything an experiment does flows through the same CAN bus the manual controls
 use, so **the node tiles always show live status** while an experiment runs — you
 don't have to do anything special to keep them in sync. The same is true of the
-event log: `ctx.dispense` / `ctx.recover` (and their broadcast variants) show up
-as **COMMAND**-type rows identical to a manually-clicked button — filtering the
-log by COMMAND shows every command sent, regardless of whether a human or a
-running experiment triggered it. Everything else you log with `ctx.log(...)`
-(session lifecycle, per-cycle bookkeeping, etc.) shows up as **EXPERIMENT** rows.
+event log: `control.dispense` / `control.recover` (and their broadcast variants)
+show up as **COMMAND**-type rows identical to a manually-clicked button —
+filtering the log by COMMAND shows every command sent, regardless of whether a
+human or a running experiment triggered it. Everything else you log with
+`control.log(...)` (session lifecycle, per-cycle bookkeeping, etc.) shows up as
+**EXPERIMENT** rows.
 
 ---
 
@@ -40,42 +41,39 @@ def build(nodes=None, *, name="<name>", **params) -> Experiment:
     exp = Experiment(nodes=node_list, name=name)
 
     @exp.on_start
-    def _start(ctx):
-        for n in ctx.nodes:
-            ctx.dispense(n)
+    def _start(control):
+        for n in control.nodes:
+            control.dispense(n)
 
     exp.end_after(minutes=30)
     return exp
 ```
 
 - `nodes` is injected by the GUI from the **node multi-select** in the Experiment
-  panel (or defaults inside the template). Templates iterate `ctx.nodes` — never a
-  hard-coded list — so node selection "just works".
-- Register behavior with the `@exp.on_*` decorators (below).
+  panel (or defaults inside the template). Templates iterate `control.nodes` —
+  never a hard-coded list — so node selection "just works".
+- Register behavior with the `@exp.on_*` decorators (§4), or write the task as
+  one sequential generator with `@exp.script` (§5) — you can mix both.
 - Call `exp.end_after(...)` for automatic stop conditions.
 - Return the `Experiment`.
 
+For duration/pellet-cap plumbing, timer-or-BNC trigger dispatch, and the usual
+fault/recover logging, see [`kit.py`](kit.py) — small helpers the built-in
+templates share (`kit.session(...)`, `kit.on_trigger(...)`, `kit.log_faults(...)`,
+`kit.log_cycle_summary(...)`). Using them is optional but saves boilerplate.
+
 ### Registering the template
 
-`resolve_builder()` in [`schema.py`](schema.py) maps a template name to its
-`build`. Add your template to the builtins dict there:
-
-```python
-from .templates import my_template as my_template_build
-builtins = {
-    "free_feeding": free_feeding_build,
-    "my_template": my_template_build,
-}
-```
-
-and re-export it in [`templates/__init__.py`](templates/__init__.py):
+Templates need no central registration. `resolve_builder()` in
+[`schema.py`](schema.py) dynamically imports
+`base_station.experiment.templates.<name>.build` — dropping a new
+`templates/<name>.py` (with a matching `experiments/<name>.json`) is enough. If
+you want it importable as `from .templates import my_template`, add one line to
+[`templates/__init__.py`](templates/__init__.py):
 
 ```python
 from .my_template import build as my_template
 ```
-
-(A template not in the builtins dict is still found by dynamic import
-`base_station.experiment.templates.<name>.build`, but adding it explicitly is clearer.)
 
 ### The JSON parameter file
 
@@ -92,7 +90,7 @@ from .my_template import build as my_template
 }
 ```
 
-- `template` must match the key you registered.
+- `template` must match the module name under `templates/`.
 - Each parameter's `key` becomes a keyword argument to `build(...)`.
 - Convention: `max_pellets` and duration-in-`minutes` of `0` mean "no limit".
 
@@ -157,24 +155,26 @@ BNC channels are **0-based**: `0` = first BNC input (IN1), `1` = second (IN2).
 ## 2. Two styles: loop-based vs event-based
 
 Both use the **same** callback API — the difference is only what drives the
-actions.
+actions. A third style, sequential scripts, is covered in §5 — reach for it when
+a task is naturally a series of trials rather than an open-loop reaction to
+events.
 
 ### Loop-based (timer-driven)
 
 Cycles are paced by timers on the runner clock. `free_feeding` is the canonical
-example: dispense on start, then re-dispense a node some delay after its dome
-closes.
+example: dispense on start, then re-dispense a node some delay after it takes
+the pellet.
 
 ```python
 @exp.on_start
-def _start(ctx):
-    for n in ctx.nodes:
-        ctx.dispense(n)
+def _start(control):
+    for n in control.nodes:
+        control.dispense(n)
 
-@exp.on_dome_closed
-def _reload(ctx, ev):
+@exp.on_pellet_taken
+def _reload(control, event):
     # Node-scoped timer: cancelled automatically if this node faults.
-    ctx.after(2.0, lambda: ctx.dispense(ev.node_id), node=ev.node_id)
+    control.after(2.0, lambda: control.dispense(event.node_id), node=event.node_id)
 ```
 
 ### Event-based (reacts to events)
@@ -183,9 +183,9 @@ Actions fire off events — a BNC pulse, a pellet loaded, a dome closing, etc.
 
 ```python
 @exp.on_bnc_in
-def _on_pulse(ctx, ev):
-    if ev.data.get("edge") == "rising":
-        ctx.dispense(ctx.nodes[0])   # dispense on every BNC rising edge
+def _on_pulse(control, event):
+    if event.data.get("edge") == "rising":
+        control.dispense(control.nodes[0])   # dispense on every BNC rising edge
 ```
 
 You can freely mix both in one template (e.g. a timer heartbeat plus BNC
@@ -193,55 +193,71 @@ overrides).
 
 ---
 
-## 3. The `ctx` object (`ExperimentContext`)
+## 3. The `control` object (`ExperimentControl`)
 
-`ctx` is passed as the first argument to every callback. It is your entire action
-surface — see [`context.py`](context.py).
+`control` is passed as the first argument to every callback and to your
+`@exp.script` generator. It is your entire action surface — see
+[`context.py`](context.py). (Older code may still say `ExperimentContext` — it's
+the same class, kept as an alias.)
 
 ### Actions
 
 | Call | Effect |
 |------|--------|
-| `ctx.dispense(node)` | Dispense on one node. **No-op while that node is halted by a fault** (logged). |
-| `ctx.recover(node)` | Send Recover to one node (stop motion + clear its fault). |
-| `ctx.broadcast_dispense()` / `ctx.broadcast_recover()` | Same, to all nodes. |
-| `ctx.bnc_pulse(duration_us=100)` | Pulse the BNC OUT line. |
-| `ctx.set_heartbeat_interval(node, ms)` | Reconfigure a node's heartbeat rate. |
+| `control.dispense(node)` | Dispense on one node. **No-op while that node is halted by a fault** (logged). |
+| `control.dispense(node, feed=False, dwell_s=6.0)` | Run the identical dispense motion with **no pellet**: lower, hold at the drop position for `dwell_s`, then raise an empty plate. Use it so an inactive arm still moves/sounds the same as a fed one (e.g. a bandit task where the animal shouldn't be able to tell arms apart by sound). |
+| `control.recover(node)` | Send Recover to one node (stop motion + clear its fault). |
+| `control.broadcast_dispense()` / `control.broadcast_recover()` | Same, to all nodes. |
+| `control.bnc_pulse(duration_us=100)` | Pulse the BNC OUT line. |
+| `control.set_heartbeat_interval(node, ms)` | Reconfigure a node's heartbeat rate. |
 
 ### Per-node fault handling (sticky)
 
 | Call | Effect |
 |------|--------|
-| `ctx.halt_node(node_id)` | Latch a node: cancel its timers, make its `dispense` a no-op. (The engine calls this automatically on a FAULT event — you rarely call it yourself.) |
-| `ctx.recover_node(node_id)` | Clear the halt and send Recover (clears the firmware fault). |
-| `ctx.is_halted(node_id)` → `bool` | Is this node latched? |
-| `ctx.halted_nodes` | Sorted list of halted node IDs. |
+| `control.halt_node(node_id)` | Latch a node: cancel its timers, make its `dispense` a no-op. (The engine calls this automatically on a FAULT event — you rarely call it yourself.) |
+| `control.recover_node(node_id)` | Clear the halt and send Recover (clears the firmware fault). |
+| `control.is_halted(node_id)` → `bool` | Is this node latched? |
+| `control.halted_nodes` | Sorted list of halted node IDs. |
 
 ### Timers (runner clock, not wall clock)
 
 | Call | Effect |
 |------|--------|
-| `ctx.after(seconds, cb, node=0)` | One-shot. Pass `node=` to tie it to a node so it is cancelled if that node faults. |
-| `ctx.every(seconds, cb, node=0)` | Repeating. |
-| `ctx.cancel_timer(timer)` / `ctx.cancel_node_timers(node_id)` / `ctx.cancel_all_timers()` | Cancel. |
+| `control.after(seconds, cb, node=0)` | One-shot. Pass `node=` to tie it to a node so it is cancelled if that node faults. |
+| `control.every(seconds, cb, node=0)` | Repeating. |
+| `control.cancel_timer(timer)` / `control.cancel_node_timers(node_id)` / `control.cancel_all_timers()` | Cancel. |
 
-### Counters, time, logging, stop
+### Per-node sensor state (for `@exp.script` conditions, but usable anywhere)
 
 | Call | Effect |
 |------|--------|
-| `ctx.counter(name)` / `ctx.incr(name, amount=1)` / `ctx.set_counter(name, v)` | Named integer counters. |
-| `ctx.elapsed()` | Seconds since the session became active. |
-| `ctx.log(name, node=0, **fields)` | Write an experiment log row (to the GUI log + CSV). |
-| `ctx.stop(reason="...")` | End the whole session as soon as possible (cancels all timers). |
-| `ctx.nodes` | The node IDs this session runs on. |
+| `control.quiet_for(seconds, node=None)` → `bool` | No PG/dome/presence/pellet-taken/BNC activity on the given node(s) — or all session nodes if omitted — for `seconds`. Ignores heartbeats and the node's own dispense-phase events, so it reflects the *animal*, not our own commands. |
+| `control.domes_closed(nodes=None)` → `bool` | All the given (or all session) domes currently closed. |
+| `control.dome_open(node)` / `control.pellet_on_plate(node)` / `control.is_online(node)` → `bool` | Current per-node sensor snapshot. |
+
+### Counters, trials, RNG, time, logging, stop
+
+| Call | Effect |
+|------|--------|
+| `control.counter(name)` / `control.incr(name, amount=1)` / `control.set_counter(name, v)` | Named integer counters. |
+| `control.next_trial()` → `int` | Advance and return the trial counter (also mirrored in `counter("trials")`, logged as a `trial` row). For sequential trial-based tasks. |
+| `control.trial` | Current trial number (0 before the first `next_trial()`). |
+| `control.chance(p)` / `control.pick(seq)` / `control.shuffled(seq)` | Session-seeded RNG helpers. See `control.seed` — generated and logged in `session_start` if you didn't supply one, so any run can be replayed. |
+| `control.elapsed()` | Seconds since the session became active. |
+| `control.log(name, node=0, **fields)` | Write an experiment log row (to the GUI log + CSV). |
+| `control.stop(reason="...")` | End the whole session as soon as possible (cancels all timers). |
+| `control.nodes` | The node IDs this session runs on. |
 
 The engine auto-increments the `"pellets"` counter on every **`LOADED`**
-event (a fully delivered pellet). For a per-node tally, keep your own counter:
+event (a fully delivered pellet) — a no-feed cycle's `NO_FEED_PRESENTED` does
+**not** increment it, so `end_after(pellets=...)` only counts real deliveries.
+For a per-node tally, keep your own counter:
 
 ```python
 @exp.on_loaded
-def _p(ctx, ev):
-    ctx.incr(f"pellets_{ev.node_id}")
+def _p(control, event):
+    control.incr(f"pellets_{event.node_id}")
 ```
 
 ---
@@ -249,63 +265,137 @@ def _p(ctx, ev):
 ## 4. Events you can handle
 
 Register with `@exp.on(EventKind.X)` or the sugar decorators. Handlers receive
-`(ctx, ev)` where `ev` is a `NodeEvent(kind, node_id, timestamp, data)`.
+`(control, event)` where `event` is a `NodeEvent(kind, node_id, timestamp, data)`.
 
-| Sugar decorator | EventKind | `ev.data` notes |
+| Sugar decorator | EventKind | `event.data` notes |
 |-----------------|-----------|-----------------|
-| `@exp.on_start` / `@exp.on_end` | `SESSION_START` / `SESSION_END` | `(ctx)` only — no `ev`. |
+| `@exp.on_start` / `@exp.on_end` | `SESSION_START` / `SESSION_END` | `(control)` only — no `event`. |
 | `@exp.on_on_plate` | `ON_PLATE` | `pellet_count` |
 | `@exp.on_loaded` | `LOADED` | `pellet_count` |
-| `@exp.on_catch_attempt` | `CATCH_ATTEMPT` | |
+| `@exp.on_pellet_taken` | `PELLET_TAKEN` | `pellet_count`, `dome_open` |
+| `@exp.on_feed_skipped` | `FEED_SKIPPED` | plate already occupied when dispensed |
+| `@exp.on_no_feed_presented` | `NO_FEED_PRESENTED` | a no-feed dispense finished raising an empty plate |
 | `@exp.on_dome_opened` / `@exp.on_dome_closed` | `DOME_OPENED` / `DOME_CLOSED` | derived from the dome sensor |
 | `@exp.on_fault` | `FAULT` | `fault_code` (`FeedTimeout` / `ActuatorTimeout` / `Jam` / `PelletLost`) |
 | `@exp.on_recover` | `NODE_RECOVERED` | fired when an operator recovers a node |
 | `@exp.on_bnc_in` | `BNC_IN` | `channel` (0/1), `edge` ("rising"/"falling"), `high` |
 | `@exp.on_presence_changed` | `PRESENCE_CHANGED` | |
 
-Other kinds available via `@exp.on(...)`: `LOWERING`, `LOADING`, `RAISING`,
-`DOME_OPEN_WARNING`, `PG_CHANGED`, `HEARTBEAT`, `NODE_ONLINE`, `NODE_OFFLINE`.
-See [`events.py`](events.py) for the full list.
+Other kinds available via `@exp.on(...)`: `LOWERING`, `LOADING`, `DWELLING`,
+`RAISING`, `DOME_OPEN_WARNING`, `PG_CHANGED`, `HEARTBEAT`, `NODE_ONLINE`,
+`NODE_OFFLINE`. See [`events.py`](events.py) for the full list.
 
 ### Start / end conditions
 
 ```python
-exp.start_when(lambda ctx: ctx.counter("armed") > 0)   # defer SESSION_START
-exp.end_when(lambda ctx: ctx.elapsed() > 600)          # custom end
-exp.end_after(hours=0, minutes=30, seconds=0, pellets=100)   # duration and/or cap
+exp.start_when(lambda control: control.counter("armed") > 0)   # defer SESSION_START
+exp.end_when(lambda control: control.elapsed() > 600)          # custom end
+exp.end_after(hours=0, minutes=30, seconds=0, pellets=100)     # duration and/or cap
 ```
 
 ---
 
-## 5. Faults are sticky, per node
+## 5. Sequential tasks — `@exp.script`
+
+Some tasks are naturally a series of trials: do something, wait for a specific
+outcome, wait again, repeat — a two-armed bandit is the canonical example. That
+reads far more clearly as one generator than as a handful of `@exp.on_*`
+handlers threading state through a dict. `@exp.script` runs *alongside* the
+callback API (both may be used on the same `Experiment`) — there is exactly one
+script per experiment.
+
+```python
+@exp.script
+def run(control):
+    while True:
+        trial = control.next_trial()
+        control.dispense(fed_node)
+        control.dispense(other_node, feed=False)   # motion, no pellet
+
+        result = yield control.wait_for("pellet_taken", node=fed_node, timeout=30.0)
+        if result.faulted:
+            yield control.wait(5.0)
+            continue
+
+        yield control.wait_until(
+            lambda c: c.domes_closed() and c.quiet_for(5.0),
+            timeout=30.0,
+        )
+```
+
+### The three things you can `yield`
+
+- **`control.wait_for(kind, node=None, timeout=None)`** — wait for the next
+  matching event. `kind` is an event name (`"pellet_taken"`, case-insensitive)
+  or an `EventKind`. `node` restricts to one id or a list; omit for any node.
+- **`control.wait_until(predicate, timeout=None, node=None)`** — wait until
+  `predicate(control)` returns True (checked every tick). Pass `node=` only if
+  this wait should also abort when that node faults.
+- **`control.wait(seconds)`** — wait a fixed duration on the runner clock.
+
+Each `yield` returns the same object, with fields filled in once it resolves:
+`.ok` (`bool` — succeeded cleanly), `.timed_out`, `.faulted` / `.faulted_node`,
+and `.event` (the `NodeEvent` that satisfied a `wait_for`, if any). Ignoring the
+return value is the common case and costs nothing.
+
+### What "wait" actually means
+
+- Two lines like `control.dispense(fed)` then `yield control.wait_for(...)` can
+  never race — the engine is single-threaded, so no reply can arrive before the
+  next tick regardless of how the two lines are written.
+- `@exp.on_*` handlers for an event always run **before** any script code that
+  same event unblocks (they fire earlier in the same dispatch batch).
+- **Faults never raise inside your script.** If the node a pending `wait_for`
+  is scoped to faults, the wait resolves with `.faulted=True` instead of
+  hanging or throwing — the script decides what to do (usually: log it, wait a
+  bit, and move to the next trial). This matches the callback engine's own
+  behavior: a fault halts only that node; the rest of the session keeps going.
+- A generator that **returns** ends the session (`stop(reason="script_finished")`
+  — when your `run()` function is done, the experiment is done). A generator
+  that **raises** also ends the session, with the error and your code's own
+  file/line logged as `script_error` — unlike `@exp.on_*` handlers, whose
+  errors are isolated so one broken handler can't take down the rest.
+- **Every loop must yield.** `while True:` with no `yield` inside is an
+  uninterruptible Python loop and will hang the whole engine — there is no
+  runtime protection against this, only against loops that yield awaits which
+  keep resolving immediately (bounded to 64 resumes per tick).
+
+See [`script.py`](script.py) for the full scheduler and
+[`templates/two_armed_bandit.py`](templates/two_armed_bandit.py) for a complete
+worked example.
+
+---
+
+## 6. Faults are sticky, per node
 
 When a node reports a **jam or timeout**:
 
 1. The firmware halts that node's motors and refuses further dispenses until a
    Recover — it is already sticky at the hardware level.
-2. The engine calls `ctx.halt_node(node_id)`: cancels that node's timers and makes
-   its `ctx.dispense(...)` a no-op. **The other nodes keep running.**
+2. The engine calls `control.halt_node(node_id)`: cancels that node's timers and
+   makes its `control.dispense(...)` a no-op. **The other nodes keep running.**
 3. The node stays latched until an operator presses **Recover** on its tile (or a
    BNC IN action / `runner.recover_node`). Recovery sends Recover (clears the fault)
    and fires your `@exp.on_recover` handler so you can re-arm the node.
 
 This means your template usually needs **no fault bookkeeping** — keep calling
-`ctx.dispense(n)` for every node and halted ones simply stop receiving pellets.
-Use `@exp.on_recover` to resume a node's cycle:
+`control.dispense(n)` for every node and halted ones simply stop receiving
+pellets. Use `@exp.on_recover` to resume a node's cycle (or `kit.log_faults(exp)`
+for the common log-only case):
 
 ```python
 @exp.on_fault
-def _fault(ctx, ev):
-    ctx.log("fault", node=ev.node_id, fault_code=ev.data.get("fault_code"))
+def _fault(control, event):
+    control.log("fault", node=event.node_id, fault_code=event.data.get("fault_code"))
 
 @exp.on_recover
-def _recovered(ctx, ev):
-    ctx.dispense(ev.node_id)   # resume this node
+def _recovered(control, event):
+    control.dispense(event.node_id)   # resume this node
 ```
 
 ---
 
-## 6. BNC sync I/O
+## 7. BNC sync I/O
 
 BNC is a base-station feature (Raspberry Pi GPIO); nodes are not involved.
 
@@ -316,31 +406,31 @@ also get every edge as a `BNC_IN` event, so a template can react directly:
 
 ```python
 @exp.on_bnc_in
-def _edge(ctx, ev):
-    if ev.data["edge"] == "rising" and ev.data["channel"] == 0:
-        ctx.dispense(ctx.nodes[0])
+def _edge(control, event):
+    if event.data["edge"] == "rising" and event.data["channel"] == 0:
+        control.dispense(control.nodes[0])
 ```
 
 **BNC OUT** — set the BNC OUT **Trigger** in the GUI to a CAN event name (e.g.
 `Loaded`) and it pulses whenever that event arrives from any node, during
 manual use *and* during an experiment. To pulse from template code directly, call
-`ctx.bnc_pulse(width_us)` (e.g. on each dispense).
+`control.bnc_pulse(width_us)` (e.g. on each dispense).
 
 ---
 
-## 7. Node selection
+## 8. Node selection
 
 The Experiment panel has per-node checkboxes plus **All / None**. The checked set
-is passed to `build(nodes=...)`, so `ctx.nodes` is exactly the subset the operator
-chose. Always iterate `ctx.nodes`; never assume `[1, 2, 3]`.
+is passed to `build(nodes=...)`, so `control.nodes` is exactly the subset the
+operator chose. Always iterate `control.nodes`; never assume `[1, 2, 3]`.
 
 ---
 
-## 8. Worked examples in this repo
+## 9. Worked examples in this repo
 
 - **[`templates/free_feeding.py`](templates/free_feeding.py)** — loop-based:
-  continuous reload after each dome close (default `reload_delay_s=30`, whole
-  seconds); per-node sticky fault + recover.
+  continuous reload after each pellet is taken (default `reload_delay_s=30`);
+  per-node sticky fault + recover.
 - **[`templates/fixed_and_random.py`](templates/fixed_and_random.py)** — each
   node has a **role** (`off` / `fixed` / `random`) from a `node_choice` param.
   `fixed` nodes dispense every cycle, `random` nodes dispense with `random_prob`,
@@ -355,15 +445,25 @@ chose. Always iterate `ctx.nodes`; never assume `[1, 2, 3]`.
   converges to the configured weights. `0` means that node is never picked.
   A `node_number` param supplies the per-node weights as `{node_id: pct}`
   (a comma-separated string is accepted for headless runs).
+- **[`templates/two_armed_bandit.py`](templates/two_armed_bandit.py)** —
+  `@exp.script`-based: exactly two nodes (the arms). Each trial, both arms run
+  the dispense motion (`control.dispense(fed)` / `control.dispense(empty,
+  feed=False)`), but only one delivers, chosen by a reward probability that
+  flips which arm is "rich" every `block_size` trials. Waits for the pellet to
+  be taken (bounded by `trial_timeout_s`), then for both domes closed and a
+  quiet inter-trial interval, before the next trial.
 
-Both new templates accept `seed=` for reproducible runs (used by the tests).
-Because both use the declarative node param types above, **neither needs any
-per-template GUI code** — the form (per-node dropdowns / % inputs, plus the
-trigger-gated timer/channel fields) is generated entirely from their JSON.
+Both `fixed_and_random` and `probability_delivery` accept `seed=` for
+reproducible runs (used by the tests); `two_armed_bandit` does too, and also
+logs whatever seed it used (generated if you didn't supply one) so any session
+can be replayed. Because all three use the declarative node param types above,
+none needs any per-template GUI code — the form (per-node dropdowns / % inputs,
+plus the trigger-gated timer/channel fields) is generated entirely from their
+JSON.
 
 ---
 
-## 9. Testing your template
+## 10. Testing your template
 
 Run headless against synthetic events — no CAN hardware needed:
 
@@ -386,12 +486,15 @@ print(runner.ctx.commands_sent)      # list of (node_id, CanCmd, payload)
 
 `runner.ctx.commands_sent` records every command in dry-run mode, and
 `runner.ctx.is_halted(...)`, `runner.ctx.counter(...)`, and the log entries let you
-assert behavior. See [`../../tests/test_experiment.py`](../../tests/test_experiment.py)
-for patterns.
+assert behavior. `runner.ctx` and `runner.control` are the same object — use
+whichever reads better. See
+[`../../tests/test_experiment.py`](../../tests/test_experiment.py) and
+[`../../tests/test_script.py`](../../tests/test_script.py) for patterns,
+including how to drive a `@exp.script` template through `inject()`/`step()`.
 
 ---
 
-## 10. Running headless (no GUI)
+## 11. Running headless (no GUI)
 
 The GUI is one host for the engine; you don't need it. There are two ways to run
 an experiment against a live SocketCAN interface (`can0`, or `vcan0` with the node
@@ -423,6 +526,7 @@ python run_experiment.py --list                                  # discover temp
 python run_experiment.py free_feeding -i vcan0 --minutes 10
 python run_experiment.py probability_delivery --set probabilities=1:20,2:80
 python run_experiment.py fixed_and_random --set node_roles=1:fixed,2:off,3:random
+python run_experiment.py two_armed_bandit --set block_size=50,p_high=0.9
 python run_experiment.py path/to/my_task.py --nodes 1,2,4        # your own template/script
 python run_experiment.py free_feeding --dry-run                  # build only, no CAN
 ```

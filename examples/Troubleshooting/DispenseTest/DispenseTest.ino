@@ -15,7 +15,7 @@
 //   LED 10 = pellet present
 //   LED 9  = dome open
 //
-// Defaults match library: grab=280, raise=1480, seek-away=800, feed timeout=30 s.
+// Defaults match library: grab=280, raise=1480, seek-away=800 (clear or cap), feed timeout=30 s.
 // raiseSteps is measured from the pellet-drop position (kDefaultGrabSteps below
 // the load sensor), not from the load sensor itself.
 

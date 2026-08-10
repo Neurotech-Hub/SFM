@@ -35,10 +35,12 @@ class EventKind(Enum):
     LOADED = auto()
     PELLET_TAKEN = auto()
     FEED_SKIPPED = auto()
+    NO_FEED_PRESENTED = auto()  # empty plate raised to the top (no-feed cycle)
     FAULT = auto()
     SEEKING = auto()
     LOWERING = auto()
     LOADING = auto()
+    DWELLING = auto()  # holding at the drop position, M1 idle (no-feed cycle)
     RAISING = auto()
     DOME_OPEN_WARNING = auto()
     PRESENCE_CHANGED = auto()
@@ -66,10 +68,12 @@ _CAN_EVENT_TO_KIND: Dict[CanEvent, EventKind] = {
     CanEvent.DomeOpened: EventKind.DOME_OPENED,
     CanEvent.PelletTaken: EventKind.PELLET_TAKEN,
     CanEvent.FeedSkipped: EventKind.FEED_SKIPPED,
+    CanEvent.NoFeedPresented: EventKind.NO_FEED_PRESENTED,
     CanEvent.Fault: EventKind.FAULT,
     CanEvent.Seeking: EventKind.SEEKING,
     CanEvent.Lowering: EventKind.LOWERING,
     CanEvent.Loading: EventKind.LOADING,
+    CanEvent.Dwelling: EventKind.DWELLING,
     CanEvent.Raising: EventKind.RAISING,
     CanEvent.DomeOpenWarning: EventKind.DOME_OPEN_WARNING,
 }

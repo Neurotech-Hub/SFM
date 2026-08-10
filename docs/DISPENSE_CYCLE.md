@@ -79,21 +79,28 @@ plate it does not lower and does not run the feed wheel: it reports `FeedSkipped
 the grab descent, so its raise is shortened by `kDefaultGrabSteps` to finish at the same top height.
 A node never stacks a second pellet on an occupied plate.
 
-**Seeking.** This phase is conditional. If the tracked actuator height is at or below the load sensor, M2 first
-moves up by `kDefaultSeekAwaySteps` to clear it. Entering this state emits the `Seeking` phase event (`0x0D`).
-The move is fixed rather than sensor-gated because the sensor can already read clear at the drop position.
+**Seeking.** This phase is conditional. It runs when the load sensor is asserted (plate at the load
+position) or when the node already knows the plate is at drop depth (`belowLoad_`). Entering this state
+emits the `Seeking` phase event (`0x0D`).
+
+When Seeking starts on an asserted load sensor, M2 raises until the beam clears **or**
+`kDefaultSeekAwaySteps` elapse, whichever comes first. A fixed `kDefaultSeekAwaySteps` raise (sensor
+ignored) is used only for the known drop-depth case, where the beam is already clear. Seeking is never
+started from an unknown height with a clear sensor — that path drove the plate into the stop after a
+`PelletLost` recover.
 
 **Lowering.** Only when the plate is empty. M2 approaches until the load position sensor asserts, budgeted by
 `kDefaultLowerSteps`. Entering this state emits `Lowering` (`0x07`) independently of `Seeking`; the two phases
 are not folded together. M2 then keeps going down a further `kDefaultGrabSteps` to the
 **drop position**, ignoring the sensor for that stretch. Both parts are budgeted by `kDefaultLowerTimeoutMs`.
 
-Whether to seek away is decided by the actuator's *tracked height*, not by the sensor. The sensor cannot
-answer it: at the drop position the flag has passed out of the beam and reads exactly like the elevated
-position. Reading it as "already elevated" is what drives the plate down into the stop instead of up to the
-dome. The node marks itself at-or-below the load position when the grab descent starts, and clears that only
-when a raise completes. Height is unknown after a reset, so an approach that spends its whole budget without
-seeing the sensor backs off by one seek-away and re-approaches before it will fault.
+Whether to seek away is decided by the load sensor and the tracked drop-depth flag together. The sensor alone
+cannot distinguish drop depth from the elevated position (both read clear). The node marks itself at-or-below
+the load position when the grab descent starts, and clears that only when a raise clears the load sensor or
+completes. After `recover()`, an asserted sensor re-affirms at-load; a clear sensor leaves the flag unchanged
+so a plate left at drop depth is not mistaken for elevated. An approach that spends its whole budget without
+seeing the sensor may back off once only when it is safe to raise (sensor asserted, or `belowLoad_` already
+true); otherwise it faults with `ActuatorTimeout`.
 
 **Loading.** With the plate at the drop position, M1 turns the pellet wheel at half the commanded speed
 (`kDefaultFeedSpeedScale`) until the pellet sensor asserts. The first sighting stops the wheel immediately, so
@@ -124,6 +131,40 @@ flicker as the mouse reaches past the beam.
 A node never reloads on its own. Deciding when the next `Dispense` goes out belongs to the base station or the
 running experiment.
 
+## No-feed dispense
+
+`DispenseNoFeed` runs the identical motion as `Dispense` — same lowering, same seek-away/approach, same grab
+descent to the drop position, same raise — but M1 never turns. Instead the node holds at the drop position for a
+commanded dwell (default `kDefaultNoFeedDwellMs` = 6 s, matching the time a fed cycle typically spends loading),
+then raises exactly as a fed cycle does. The animal finds an empty plate at the top. This exists so a module can
+be run through the motions — including the acoustic and vibration signature — without delivering a pellet, e.g.
+so a two-armed choice task can activate every arm each trial and the animal can't use sound alone to find the
+baited one.
+
+```
+ DispenseNoFeed
+    │
+    ▼
+ Occupancy check (pellet sensor)
+    │
+    ├─ plate occupied ─► FeedSkipped (real pellet — same as Dispense, never silently discarded)
+    │
+    └─ plate empty ─► Lowering ─► Dwelling (M1 idle, dwell_ms) ─► Raising ─► NoFeedPresented
+                                                                                  │
+                                                    ┌─ dome lifts ──────► DomeOpened (pellet_present=false)
+                                                    │
+                                                    └─ dome held open ──► DomeOpenWarning
+
+                        No PelletTaken is ever emitted — the cycle stays Loaded until the next
+                        Dispense / DispenseNoFeed command, or Recover.
+```
+
+An occupied plate is never silently swapped for empty: exactly as with `Dispense`, occupancy is checked first,
+and a plate that already holds a pellet is presented honestly (`FeedSkipped`) rather than run through the
+no-feed path. The pellet-lost guard that runs during a fed raise is skipped for a no-feed raise (an empty plate
+always has the pellet sensor clear, so that guard would otherwise fault every cycle); the load-sensor jam guard
+still applies, since it is about motion, not the pellet.
+
 ## Events
 
 Node → base on CAN ID `0x300 + nodeId`. Byte 0 is the event code.
@@ -143,10 +184,13 @@ Node → base on CAN ID `0x300 + nodeId`. Byte 0 is the event code.
 | `0x0A` | `DomeOpenWarning` | count LE16                 | The dome has been open for `kDomeOpenWarnMs`                            |
 | `0x0B` | `PelletTaken`     | count LE16, dome open      | The pellet left the plate; retrieval confirmed                          |
 | `0x0C` | `FeedSkipped`     | count LE16                 | A dispense arrived with the plate occupied; feed and lower were skipped |
-| `0x0D` | `Seeking`         | count LE16                 | Conditional phase entered: clearing the load sensor before `Lowering`   |
+| `0x0D` | `Seeking`         | count LE16                 | Conditional phase: clear load sensor (or step cap) before `Lowering`    |
+| `0x0E` | `NoFeedPresented` | count LE16 (unchanged)     | A no-feed raise finished; empty plate at the top. `count` does NOT increment |
+| `0x0F` | `Dwelling`        | count LE16                 | Phase entered: holding at the drop position, M1 idle (no-feed cycle)   |
 
 
-`count` is the running total of `Loaded` milestones from that node.
+`count` is the running total of `Loaded` milestones from that node — `NoFeedPresented` deliberately does not
+advance it, so the base station can tell an unrewarded cycle from a real delivery just by watching the count.
 
 The context byte on dome and take events separates intent from accident. `DomeOpened` carries whether a
 pellet was on the plate at the moment of the lift, so an opening with an empty plate is recognizable as
