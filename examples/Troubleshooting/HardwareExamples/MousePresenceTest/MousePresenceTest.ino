@@ -7,25 +7,29 @@
 //
 // Bench behaviour:
 //   Idle     ~ 35 000 – 35 500
-//   Present  ~ 36 000 – 1 00 000   (raw INCREASES when animal is present)
+//   Present  ~ 36 000 – 100 000   (raw INCREASES when animal is present)
 //   presence = (raw > threshold)
 //
 // Calibration (button or serial 'c'):
 //   Keep the pad CLEAR (no mouse) for 5 s.
-//   thr = max + (max - min)   // one noise-range above the highest idle reading
-//   LED 9 solid ON during capture; flashConfirm() (same as NVS clear) on success.
+//   Collect samples → mean, std_dev (population σ).
+//   thr = mean + factor * std_dev
+//   (factor is user-settable; default 3.0)
+//   LED 9 solid ON during capture; flashConfirm() on success.
 //
 // Open Serial Monitor at 115200 baud.
 //
 // Commands:
 //   s       print current raw + presence state
-//   t <n>   set threshold (e.g. t 40000)
-//   + / -   nudge threshold by 5000
+//   t <n>   set absolute threshold (e.g. t 40000)
+//   f <n>   set cal factor (e.g. f 3 or f 2.5); re-applies if σ known
+//   + / -   nudge absolute threshold by 5000
 //   m       toggle continuous monitor (default ON)
 //   c       start 5 s calibration (same as button)
 //   h       help
 
 #include <VFM.h>
+#include <math.h>
 
 using namespace vfm;
 
@@ -35,25 +39,33 @@ static constexpr uint32_t kCalDurationMs = 5000;
 static constexpr uint32_t kDefaultThr    = 35000;
 static constexpr uint32_t kNudge         = 5000;
 static constexpr uint32_t kBtnDebounceMs = 30;
+static constexpr float    kDefaultFactor = 3.0f;
+static constexpr float    kMinFactor     = 0.1f;
+static constexpr float    kMaxFactor     = 100.0f;
 
 LedService leds;
 
 uint32_t threshold   = kDefaultThr;
+float    calFactor   = kDefaultFactor;
 bool     present     = false;
 bool     prevPresent = false;
 bool     monitoring  = true;
 uint32_t lastSampleMs = 0;
 uint32_t lastRaw      = 0;
 
-// Calibration FSM
+// Last successful cal stats (for re-apply when factor changes)
+bool     calValid    = false;
+float    calMean     = 0.0f;
+float    calStdDev   = 0.0f;
+
+// Calibration FSM + Welford online mean / variance
 enum class CalState : uint8_t { Idle, Running };
-CalState calState     = CalState::Idle;
-uint32_t calStartMs   = 0;
+CalState calState        = CalState::Idle;
+uint32_t calStartMs      = 0;
 uint32_t calLastSampleMs = 0;
-uint32_t calMin       = 0;
-uint32_t calMax       = 0;
-uint64_t calSum       = 0;
-uint32_t calCount     = 0;
+uint32_t calCount        = 0;
+double   calMeanAcc      = 0.0;  // running mean
+double   calM2Acc        = 0.0;  // sum of squares of differences from mean
 
 // Button (active LOW)
 bool     btnWasPressed   = false;
@@ -66,16 +78,24 @@ static bool isPresent(uint32_t raw, uint32_t thr) {
     return raw > thr;
 }
 
+static uint32_t thresholdFromStats(float mean, float stdDev, float factor) {
+    double thr = (double)mean + (double)factor * (double)stdDev;
+    if (thr < 1.0) thr = 1.0;
+    if (thr > (double)UINT32_MAX) thr = (double)UINT32_MAX;
+    return (uint32_t)(thr + 0.5);
+}
+
 void printHelp() {
     Serial.println(F("Commands:"));
     Serial.println(F("  s       current raw + state"));
-    Serial.println(F("  t <n>   set threshold"));
-    Serial.println(F("  + / -   nudge threshold by 5000"));
+    Serial.println(F("  t <n>   set absolute threshold"));
+    Serial.println(F("  f <n>   set factor (thr = mean + factor*std_dev)"));
+    Serial.println(F("  + / -   nudge absolute threshold by 5000"));
     Serial.println(F("  m       toggle continuous monitor"));
     Serial.println(F("  c       5 s calibration (or press BTN_IO_11)"));
     Serial.println(F("  h       help"));
     Serial.println(F("Logic: raw > threshold => PRESENT"));
-    Serial.println(F("Cal: thr = idle_max + (idle_max - idle_min); pad must stay CLEAR"));
+    Serial.println(F("Cal: thr = mean + factor * std_dev; pad must stay CLEAR"));
 }
 
 void applyThreshold(uint32_t thr) {
@@ -85,8 +105,28 @@ void applyThreshold(uint32_t thr) {
 
     Serial.print(F("[PRESENCE] thr=")); Serial.print(threshold);
     Serial.print(F("  raw=")); Serial.print(lastRaw);
+    Serial.print(F("  factor=")); Serial.print(calFactor, 2);
     Serial.print(F("  -> "));
     Serial.println(present ? F("PRESENT") : F("clear"));
+}
+
+void applyFactor(float factor) {
+    if (factor < kMinFactor) factor = kMinFactor;
+    if (factor > kMaxFactor) factor = kMaxFactor;
+    calFactor = factor;
+
+    Serial.print(F("[PRESENCE] factor=")); Serial.println(calFactor, 2);
+
+    if (calValid) {
+        uint32_t thr = thresholdFromStats(calMean, calStdDev, calFactor);
+        Serial.print(F("[PRESENCE] Re-apply from last cal: mean="));
+        Serial.print(calMean, 1);
+        Serial.print(F("  std_dev=")); Serial.print(calStdDev, 1);
+        Serial.print(F("  thr=mean+f*σ=")); Serial.println(thr);
+        applyThreshold(thr);
+    } else {
+        Serial.println(F("[PRESENCE] No cal stats yet – run 'c' or press button"));
+    }
 }
 
 void printStatus() {
@@ -94,6 +134,12 @@ void printStatus() {
     Serial.print(lastRaw);
     Serial.print(F("  thr="));
     Serial.print(threshold);
+    Serial.print(F("  factor="));
+    Serial.print(calFactor, 2);
+    if (calValid) {
+        Serial.print(F("  mean=")); Serial.print(calMean, 1);
+        Serial.print(F("  σ=")); Serial.print(calStdDev, 1);
+    }
     Serial.print(F("  -> "));
     Serial.println(present ? F("PRESENT") : F("clear"));
 }
@@ -109,7 +155,8 @@ void startCalibration() {
         return;
     }
 
-    Serial.println(F("[PRESENCE] CAL START – keep pad CLEAR for 5 s..."));
+    Serial.print(F("[PRESENCE] CAL START – keep pad CLEAR for 5 s...  factor="));
+    Serial.println(calFactor, 2);
     Serial.println(F("  LED9 solid ON during capture"));
 
     leds.stopAllBlinks();
@@ -118,10 +165,9 @@ void startCalibration() {
     calState = CalState::Running;
     calStartMs = millis();
     calLastSampleMs = 0;
-    calMin = UINT32_MAX;
-    calMax = 0;
-    calSum = 0;
     calCount = 0;
+    calMeanAcc = 0.0;
+    calM2Acc = 0.0;
 }
 
 void finishCalibration(bool ok) {
@@ -133,22 +179,26 @@ void finishCalibration(bool ok) {
         return;
     }
 
-    uint32_t range = calMax - calMin;
-    uint32_t thr = calMax + range;
-    if (thr <= calMax) thr = calMax + 1; // overflow / zero-range guard
+    // Population std_dev (σ); use sample σ (n-1) if you prefer — population is fine for N~200
+    double variance = (calCount > 0) ? (calM2Acc / (double)calCount) : 0.0;
+    if (variance < 0.0) variance = 0.0;
+    float mean = (float)calMeanAcc;
+    float stdDev = (float)sqrt(variance);
 
-    uint32_t avg = (uint32_t)(calSum / calCount);
+    calValid = true;
+    calMean = mean;
+    calStdDev = stdDev;
+
+    uint32_t thr = thresholdFromStats(mean, stdDev, calFactor);
 
     Serial.print(F("[PRESENCE] CAL DONE  samples=")); Serial.print(calCount);
-    Serial.print(F("  min=")); Serial.print(calMin);
-    Serial.print(F("  max=")); Serial.print(calMax);
-    Serial.print(F("  avg=")); Serial.print(avg);
-    Serial.print(F("  range=")); Serial.println(range);
-    Serial.print(F("[PRESENCE] thr = max + range = ")); Serial.println(thr);
+    Serial.print(F("  mean=")); Serial.print(mean, 1);
+    Serial.print(F("  std_dev=")); Serial.print(stdDev, 1);
+    Serial.print(F("  factor=")); Serial.println(calFactor, 2);
+    Serial.print(F("[PRESENCE] thr = mean + factor*std_dev = ")); Serial.println(thr);
 
     applyThreshold(thr);
 
-    // Same visual confirm as NVS clear (~600 ms blocking flash)
     leds.flashConfirm();
     Serial.println(F("[PRESENCE] LED confirm flash complete"));
 }
@@ -166,11 +216,13 @@ void updateCalibration() {
     if (calLastSampleMs != 0 && (now - calLastSampleMs) < kCalSampleMs) return;
     calLastSampleMs = now;
 
-    uint32_t v = touchRead(PIN_PRESENCE);
-    if (v < calMin) calMin = v;
-    if (v > calMax) calMax = v;
-    calSum += v;
+    // Welford online algorithm
+    double x = (double)touchRead(PIN_PRESENCE);
     calCount++;
+    double delta = x - calMeanAcc;
+    calMeanAcc += delta / (double)calCount;
+    double delta2 = x - calMeanAcc;
+    calM2Acc += delta * delta2;
 }
 
 void updateButton() {
@@ -183,7 +235,6 @@ void updateButton() {
     btnLastChangeMs = now;
     btnWasPressed = pressed;
 
-    // Falling edge (press) starts calibration
     if (pressed) {
         startCalibration();
     }
@@ -204,6 +255,21 @@ void handleSerialLine(const char *line) {
             return;
         }
         applyThreshold((uint32_t)n);
+    } else if (line[0] == 'f' || line[0] == 'F') {
+        const char *p = line + 1;
+        while (*p == ' ') p++;
+        if (*p == '\0') {
+            Serial.print(F("Current factor=")); Serial.println(calFactor, 2);
+            Serial.println(F("Usage: f <n>  (e.g. f 3 or f 2.5)"));
+            return;
+        }
+        char *end = nullptr;
+        float f = strtof(p, &end);
+        if (end == p || f <= 0.0f) {
+            Serial.println(F("Invalid factor"));
+            return;
+        }
+        applyFactor(f);
     } else if (strcmp(line, "s") == 0) {
         sampleOnce();
         printStatus();
@@ -225,8 +291,10 @@ void setup() {
 
     Serial.println(F("\n===== VFM Mouse Presence Test ====="));
     Serial.println(F("PIN_PRESENCE=GPIO5  BTN=GPIO11  LED9=GPIO9"));
-    Serial.println(F("presence = raw > thr   |  press BTN or 'c' to calibrate (5 s, pad clear)"));
-    Serial.print(F("Default threshold: ")); Serial.println(kDefaultThr);
+    Serial.println(F("presence = raw > thr"));
+    Serial.println(F("Cal: thr = mean + factor*std_dev (5 s, pad CLEAR)"));
+    Serial.print(F("Default thr=")); Serial.print(kDefaultThr);
+    Serial.print(F("  factor=")); Serial.println(kDefaultFactor, 2);
     printHelp();
 
     leds.begin();
@@ -245,7 +313,6 @@ void loop() {
 
     const uint32_t now = millis();
 
-    // Pause normal presence streaming while calibrating
     if (calState == CalState::Idle && (now - lastSampleMs) >= kSampleMs) {
         lastSampleMs = now;
         sampleOnce();
