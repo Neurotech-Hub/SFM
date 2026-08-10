@@ -7,7 +7,7 @@ saved ID) frames on the CAN bus.
 
 When a MacIdRegistry is provided, past MAC↔ID assignments are reused so a
 returning module keeps a stable Node ID across base-station restarts.
-Clear All IDs (reset with ClearId) should clear that registry first so IDs
+Re-discover (reset with ClearId) should clear that registry first so IDs
 are reassigned from scratch.
 
 Discovery flow per node slot:

@@ -41,6 +41,7 @@ from .experiment.schema import (
 from .protocol import (
     CanCmd,
     CanEvent,
+    InputId,
     classify_frame,
     format_mac,
     fault_user_message,
@@ -52,6 +53,7 @@ from .protocol import (
     parse_input_changed,
     parse_heartbeat,
     parse_discovery,
+    parse_presence_cal,
     build_setconfig_heartbeat,
     CAN_EVENT_DISPLAY_NAME,
     CAN_CMD_PURPOSE,
@@ -67,15 +69,16 @@ from .protocol import (
 # Constants
 # ---------------------------------------------------------------------------
 
-WINDOW_W = 1920
-WINDOW_H = 1280        
+WINDOW_W = 1600
+WINDOW_H = 1200        
 TILE_W   = 320
-TILE_H   = 320
+TILE_H   = 280
 LOG_ROWS = 18        # visible rows in the log table before scroll
 LOG_TABLE_HEIGHT = 220  
 STALE_CHECK_INTERVAL = 1.0  # seconds between staleness sweeps
-DEFAULT_HEARTBEAT_INTERVAL_S = 5.0  # default node heartbeat interval
+DEFAULT_HEARTBEAT_INTERVAL_S = 60  # default node heartbeat interval (seconds)
 MAC_PING_RETRY_S = 3.0  # min seconds between MAC-resolution Pings to the same node
+DEFAULT_EXPERIMENT_NAME = "free_feeding"  # matches experiments/free_feeding.json "name"
 
 # Short purpose strings for COMMAND rows in the event log.
 COMMAND_PURPOSE = CAN_CMD_PURPOSE
@@ -323,7 +326,7 @@ class SFMApp:
 
     def _build_setup_screen(self) -> None:
         vp_w, vp_h = WINDOW_W, WINDOW_H
-        win_w, win_h = 480, 620
+        win_w, win_h = 480, 540
 
         with dpg.window(
             tag="setup_window",
@@ -382,14 +385,6 @@ class SFMApp:
                     min_clamped=True,
                     max_clamped=True,
                 )
-                dpg.add_spacer(height=4)
-                dpg.add_text("Mode:")
-                dpg.add_radio_button(
-                    tag="setup_mode",
-                    items=["Multi-node (discovery via AEO/AEI)", "Single-node (direct, no discovery)"],
-                    default_value="Multi-node (discovery via AEO/AEI)",
-                    horizontal=False,
-                )
 
             dpg.add_spacer(height=6)
 
@@ -446,7 +441,6 @@ class SFMApp:
         interface  = dpg.get_value("setup_interface").strip()
         bitrate    = dpg.get_value("setup_bitrate")
         num_nodes  = dpg.get_value("setup_num_nodes")
-        mode       = dpg.get_value("setup_mode")
         log_dir    = dpg.get_value("setup_log_dir").strip()
         auto_save  = dpg.get_value("setup_auto_save")
 
@@ -479,27 +473,21 @@ class SFMApp:
         self._discovery.on_node_discovered(self._on_node_discovered)
         self._discovery.on_complete(self._on_discovery_complete)
 
-        # Start discovery if multi-node
-        single_node = "Single" in mode
-        if single_node:
-            # Pre-register node 1 without discovery
-            self._registry.register_node(1, b"\x00" * 6, source="MANUAL")
-        else:
-            self._discovery.start(start_id=1)
-            if self._log and len(self._mac_registry) > 0:
-                self._log.add(LogEntry(
-                    timestamp=time.time(),
-                    direction="SYS",
-                    node_id=0,
-                    frame_type="REGISTRY",
-                    event_name="Loaded",
-                    raw_id=0,
-                    raw_data=b"",
-                    details=(
-                        f"{len(self._mac_registry)} MAC↔ID mapping(s) from "
-                        f"{self._mac_registry.path}"
-                    ),
-                ))
+        self._discovery.start(start_id=1)
+        if self._log and len(self._mac_registry) > 0:
+            self._log.add(LogEntry(
+                timestamp=time.time(),
+                direction="SYS",
+                node_id=0,
+                frame_type="REGISTRY",
+                event_name="Loaded",
+                raw_id=0,
+                raw_data=b"",
+                details=(
+                    f"{len(self._mac_registry)} MAC↔ID mapping(s) from "
+                    f"{self._mac_registry.path}"
+                ),
+            ))
 
         # Transition to main screen
         dpg.delete_item("setup_window")
@@ -533,13 +521,13 @@ class SFMApp:
             dpg.add_spacer(height=6)
             dpg.add_separator()
 
-            # -- BNC / Sync I/O --
-            self._build_bnc_panel()
+            # -- Experiment panel --
+            self._build_experiment_panel()
             dpg.add_spacer(height=6)
             dpg.add_separator()
 
-            # -- Experiment panel --
-            self._build_experiment_panel()
+            # -- BNC / Sync I/O --
+            self._build_bnc_panel()
             dpg.add_spacer(height=6)
             dpg.add_separator()
 
@@ -549,9 +537,10 @@ class SFMApp:
     def _build_broadcast_bar(self) -> None:
         with dpg.group(horizontal=True):
             dpg.add_button(
-                label="Clear All IDs",
+                tag="discovery_btn",
+                label="Re-discover",
                 width=110,
-                callback=self._on_clear_all_ids,
+                callback=self._on_rediscover,
             )
             dpg.add_spacer(width=12)
             dpg.add_text("Broadcast:", color=(160, 165, 175, 255))
@@ -561,26 +550,20 @@ class SFMApp:
                            callback=lambda: self._broadcast(CanCmd.Recover))
             dpg.add_button(label="Ping All",      width=80,
                            callback=lambda: self._broadcast(CanCmd.Ping))
-            dpg.add_button(label="ReqStatus All", width=110,
-                           callback=lambda: self._broadcast(CanCmd.ReqStatus))
             dpg.add_spacer(width=12)
             dpg.add_button(
-                tag="discovery_btn",
-                label="Re-discover",
-                width=110,
-                callback=self._on_start_discovery,
+                tag="presence_cal_btn",
+                label="Calibrate Presence",
+                width=150,
+                callback=self._on_open_presence_cal_dialog,
             )
             dpg.add_spacer(width=12)
             dpg.add_text("Heartbeat (s):", color=(160, 165, 175, 255))
-            dpg.add_input_float(
+            dpg.add_input_int(
                 tag="hb_interval_input",
                 default_value=DEFAULT_HEARTBEAT_INTERVAL_S,
-                width=70,
-                min_value=0.1,
-                max_value=120.0,
-                min_clamped=True,
-                max_clamped=True,
-                step=0.5,
+                width=100,
+                step=1,
             )
             dpg.add_button(
                 label="Apply HB",
@@ -626,6 +609,12 @@ class SFMApp:
                 )
                 tags["status_dot"] = dpg.add_text("●", color=_COLOR_GREY)
                 tags["status_text"] = dpg.add_text("OFFLINE", color=_COLOR_GREY)
+                with dpg.tooltip(tags["status_text"]):
+                    dpg.add_text(
+                        "EMPTY = plate raised with NO pellet (a no-feed / mimic\n"
+                        "dispense). Not a fault — see the Fault row below for\n"
+                        "hopper or actuator problems.",
+                    )
 
             # -- Identity --
             dpg.add_separator()
@@ -673,17 +662,6 @@ class SFMApp:
                     label="Ping", width=55, user_data=node_id,
                     callback=lambda s, a, u: self._send_cmd(u, CanCmd.Ping),
                 )
-            with dpg.group(horizontal=True):
-                dpg.add_button(
-                    label="ReqStatus", width=90, user_data=node_id,
-                    callback=lambda s, a, u: self._send_cmd(u, CanCmd.ReqStatus),
-                )
-                dpg.add_button(
-                    label="SetConfig", width=90, user_data=node_id,
-                    callback=lambda s, a, u: self._on_open_schedule_dialog(u),
-                )
-
-            tags["schedule_text"] = dpg.add_text("Schedule: Off", color=(160, 165, 175, 255))
 
             # -- AssignId override --
             with dpg.group(horizontal=True):
@@ -705,7 +683,7 @@ class SFMApp:
     # ------------------------------------------------------------------
 
     def _build_bnc_panel(self) -> None:
-        with dpg.collapsing_header(label="BNC / Sync I/O", default_open=True):
+        with dpg.collapsing_header(label="BNC / Sync I/O", default_open=False):
             dpg.add_text(
                 "BNC IN: pick an action per edge (rising / falling) — broadcast command "
                 "or start/stop the experiment; leave an edge as (none) to ignore it. "
@@ -797,10 +775,11 @@ class SFMApp:
 
     def _build_experiment_panel(self) -> None:
         labels = [d.label for d in self._exp_defs] or ["(no experiments)"]
+        default_def = self._default_experiment_def()
         with dpg.collapsing_header(label="Experiment", default_open=True):
             if self._exp_defs:
                 dpg.add_text(
-                    self._exp_defs[0].description,
+                    default_def.description if default_def else self._exp_defs[0].description,
                     tag="exp_description",
                     color=(140, 145, 155, 255),
                     wrap=WINDOW_W - 40,
@@ -810,7 +789,7 @@ class SFMApp:
                 dpg.add_combo(
                     tag="exp_template_combo",
                     items=labels,
-                    default_value=labels[0],
+                    default_value=default_def.label if default_def else labels[0],
                     width=220,
                     callback=self._on_experiment_template_changed,
                 )
@@ -829,11 +808,24 @@ class SFMApp:
             dpg.add_text("Idle", tag="exp_status_text", color=(160, 165, 175, 255))
             dpg.add_group(tag="exp_params_group")
             if self._exp_defs:
-                self._rebuild_experiment_params(self._exp_defs[0])
+                self._rebuild_experiment_params(default_def or self._exp_defs[0])
 
     def _registry_node_ids(self) -> List[int]:
         num_nodes = self._registry.num_nodes() if self._registry else 0
         return list(range(1, num_nodes + 1))
+
+    def _default_experiment_def(self) -> Optional[ExperimentDef]:
+        """
+        The template the GUI opens on. Looked up explicitly by name —
+        load_experiment_defs() sorts by filename, so index 0 is whatever
+        sorts first alphabetically, not necessarily the intended default.
+        """
+        if not self._exp_defs:
+            return None
+        for d in self._exp_defs:
+            if d.name == DEFAULT_EXPERIMENT_NAME:
+                return d
+        return self._exp_defs[0]
 
     def _selected_experiment_def(self) -> Optional[ExperimentDef]:
         if not self._exp_defs:
@@ -842,7 +834,7 @@ class SFMApp:
         for d in self._exp_defs:
             if d.label == label:
                 return d
-        return self._exp_defs[0]
+        return self._default_experiment_def()
 
     def _on_experiment_template_changed(self, sender=None, app_data=None, user_data=None) -> None:
         exp_def = self._selected_experiment_def()
@@ -1092,6 +1084,11 @@ class SFMApp:
         running = self._exp.is_running
         if dpg.does_item_exist("exp_start_btn"):
             dpg.configure_item("exp_start_btn", enabled=not running)
+        # Calibrating pauses presence sampling on every node for ~5s and
+        # rewrites NVS thresholds — never allow it mid-run, since a running
+        # experiment may depend on live presence readings.
+        if dpg.does_item_exist("presence_cal_btn"):
+            dpg.configure_item("presence_cal_btn", enabled=not running)
         # Re-enable the form when a run ends on its own (pellet cap / duration).
         if not running and self._exp_inputs_locked:
             self._set_experiment_inputs_enabled(True)
@@ -1263,6 +1260,21 @@ class SFMApp:
                             entry_name = f"Fault: {code}"
                         elif ev.event == CanEvent.DomeOpenWarning:
                             details = "dome sensor open >30s"
+                        elif ev.event == CanEvent.PresenceCalResult:
+                            cal = parse_presence_cal(ev)
+                            if cal is None:
+                                details = "malformed PresenceCalResult payload"
+                            else:
+                                details = (
+                                    f"ok={int(cal.ok)} threshold={cal.threshold} "
+                                    f"samples={cal.samples}"
+                                )
+                                if not cal.ok:
+                                    details += " — FAILED (threshold unchanged; retry with an empty cage)"
+                                node = self._registry.get(node_id)
+                                if node is not None:
+                                    node.presence_threshold = cal.threshold
+                                    node.presence_cal_ok = cal.ok
                         else:
                             ctx = parse_event_context(ev)
                             if ctx is not None:
@@ -1284,6 +1296,17 @@ class SFMApp:
                             ) and len(ev.raw_extra) >= 2:
                                 pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
                                 details = f"pellet_count={pellet_count}"
+                        # Distinguish a real delivery from a no-feed (mimic)
+                        # cycle for later analysis. Do NOT touch entry_name —
+                        # _maybe_fire_bnc_out() below matches on it verbatim,
+                        # and changing it would silently break saved BNC OUT
+                        # trigger selections.
+                        if ev.event == CanEvent.NoFeedPresented:
+                            details += " delivery=EMPTY — empty plate raised, no pellet delivered"
+                        elif ev.event == CanEvent.Dwelling:
+                            details += " delivery=EMPTY — holding at drop position, M1 idle"
+                        elif ev.event == CanEvent.Loaded:
+                            details += " delivery=PELLET"
                     self._refresh_tile(node_id)
                     self._maybe_fire_bnc_out(entry_name)
                     if ev.event in (CanEvent.Loaded, CanEvent.NoFeedPresented):
@@ -1508,21 +1531,11 @@ class SFMApp:
     # Discovery UI
     # ------------------------------------------------------------------
 
-    def _on_start_discovery(self, sender=None, app_data=None, user_data=None) -> None:
+    def _on_rediscover(self, sender=None, app_data=None, user_data=None) -> None:
         """
-        'Re-discover' — re-opens the discovery window (pulses AEO) so any
-        newly-connected nodes ANNOUNCE and get assigned, and previously
-        assigned nodes REJOIN. Does NOT clear any node's saved NVS ID and
-        does NOT wipe existing registry state — use 'Clear All IDs' for that.
-        """
-        if self._discovery:
-            self._discovery.rediscover()
-
-    def _on_clear_all_ids(self, sender=None, app_data=None, user_data=None) -> None:
-        """
-        Wipe the persistent MAC↔ID dictionary, broadcast ClearId so all nodes
-        wipe their saved NVS ID and re-enter WaitAEI, then pulse AEO to trigger
-        fresh ANNOUNCE from every node (IDs reassigned from 1).
+        Re-discover: wipe the persistent MAC↔ID dictionary, broadcast ClearId
+        so all nodes wipe their saved NVS ID and re-enter WaitAEI, then pulse
+        AEO to trigger fresh ANNOUNCE from every node (IDs reassigned from 1).
         """
         self._mac_registry.clear()
         if self._log:
@@ -1639,10 +1652,56 @@ class SFMApp:
     def _on_apply_heartbeat_interval(self, sender=None, app_data=None, user_data=None) -> None:
         """Broadcast a SetConfig frame so every node adopts the new heartbeat interval."""
         seconds = dpg.get_value("hb_interval_input") if dpg.does_item_exist("hb_interval_input") else DEFAULT_HEARTBEAT_INTERVAL_S
-        seconds = max(0.1, float(seconds))
-        self._hb_interval_s = seconds
-        payload = build_setconfig_heartbeat(int(seconds * 1000))
+        seconds = int(seconds)
+        if seconds < 1:
+            seconds = 1
+        self._hb_interval_s = float(seconds)
+        payload = build_setconfig_heartbeat(seconds * 1000)
         self._broadcast(CanCmd.SetConfig, payload)
+
+    def _on_open_presence_cal_dialog(self, sender=None, app_data=None, user_data=None) -> None:
+        """
+        Confirm before broadcasting a presence recalibration — required,
+        because a mis-click writes a new threshold into NVS on every node,
+        and calibrating with an animal present sets a threshold ABOVE real
+        presence readings (that node then stops detecting the animal until
+        recalibrated). The button is also disabled while an experiment runs.
+        """
+        if self._exp.is_running:
+            return
+        if dpg.does_item_exist("presence_cal_modal"):
+            dpg.delete_item("presence_cal_modal")
+        with dpg.window(
+            tag="presence_cal_modal",
+            label="Recalibrate Presence Pads",
+            modal=True,
+            no_resize=True,
+            width=420,
+            height=220,
+            pos=((WINDOW_W - 420) // 2, (WINDOW_H - 220) // 2),
+        ):
+            dpg.add_text("Broadcast presence recalibration to ALL nodes.",
+                         color=(100, 180, 255, 255))
+            dpg.add_separator()
+            dpg.add_text(
+                "Every cage must be EMPTY and undisturbed for ~5 seconds.\n"
+                "Each node samples its idle pad and stores the new threshold\n"
+                "in NVS. Calibrating with an animal present sets a threshold\n"
+                "ABOVE real presence readings — that node will stop detecting\n"
+                "the animal until it is recalibrated again.",
+                color=(230, 140, 30, 255), wrap=390,
+            )
+            dpg.add_separator()
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Cages are empty — Calibrate", width=230,
+                               callback=self._on_confirm_presence_cal)
+                dpg.add_button(label="Cancel", width=90,
+                               callback=lambda: dpg.delete_item("presence_cal_modal"))
+
+    def _on_confirm_presence_cal(self, sender=None, app_data=None, user_data=None) -> None:
+        if dpg.does_item_exist("presence_cal_modal"):
+            dpg.delete_item("presence_cal_modal")
+        self._broadcast(CanCmd.CalibratePresence)
 
     def _on_assign_id(self, node_id: int) -> None:
         """

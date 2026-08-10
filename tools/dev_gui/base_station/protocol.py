@@ -20,14 +20,15 @@ from typing import Optional
 
 class CanCmd(IntEnum):
     """Commands sent from base station to a node (CAN ID 0x100 + nodeId)."""
-    Ping           = 0x01
-    Dispense       = 0x02
-    Recover        = 0x03  # stop motion, clear sticky Fault, return to Idle
-    AssignId       = 0x04  # payload byte[0] = new nodeId
-    SetConfig      = 0x05  # payload TBD
-    ReqStatus      = 0x06
-    ClearId        = 0x07  # clear NVS id; node re-enters discovery
-    DispenseNoFeed = 0x08  # dispense motion with no pellet; payload = dwell ms LE16 (optional)
+    Ping              = 0x01
+    Dispense          = 0x02
+    Recover           = 0x03  # stop motion, clear sticky Fault, return to Idle
+    AssignId          = 0x04  # payload byte[0] = new nodeId
+    SetConfig         = 0x05  # payload TBD
+    ReqStatus         = 0x06
+    ClearId           = 0x07  # clear NVS id; node re-enters discovery
+    DispenseNoFeed    = 0x08  # dispense motion with no pellet; payload = dwell ms LE16 (optional)
+    CalibratePresence = 0x09  # recalibrate the presence pad; cage MUST be empty for ~5s
 
 
 # Friendly one-line purpose text for COMMAND log rows.
@@ -40,6 +41,7 @@ CAN_CMD_PURPOSE = {
     CanCmd.ReqStatus: "request heartbeat now",
     CanCmd.ClearId: "wipe stored ID",
     CanCmd.DispenseNoFeed: "run dispense motion, deliver no pellet",
+    CanCmd.CalibratePresence: "recalibrate presence pad (cage must be empty)",
 }
 
 # Dwell time (ms) the node holds at the drop position on a no-feed dispense.
@@ -50,21 +52,22 @@ NO_FEED_DWELL_MAX_MS = 60000
 
 class CanEvent(IntEnum):
     """Events sent from a node to the base station (CAN ID 0x300 + nodeId)."""
-    OnPlate         = 0x01  # pellet sensor confirmed during Loading; raise starting
-    Loaded          = 0x02  # plate at top; ready for the mouse
-    DomeOpened      = 0x03  # raw_extra: count LE16 + pellet_present
-    Fault           = 0x04  # raw_extra[0] = ServiceStatus
-    Pong            = 0x05
-    InputChanged    = 0x06
-    Lowering        = 0x07  # M2 toward load position
-    Loading         = 0x08  # M1 loading a pellet
-    Raising         = 0x09  # M2 raising plate
-    DomeOpenWarning = 0x0A  # dome open >30 s (non-sticky warning)
-    PelletTaken     = 0x0B  # raw_extra: count LE16 + dome_open
-    FeedSkipped     = 0x0C  # plate occupied on Dispense
-    Seeking         = 0x0D  # M2 clearing the load sensor before Lowering (clear or step cap)
-    NoFeedPresented = 0x0E  # no-feed raise complete; raw_extra: count LE16 (NOT incremented)
-    Dwelling        = 0x0F  # phase: holding at the drop position, M1 idle
+    OnPlate           = 0x01  # pellet sensor confirmed during Loading; raise starting
+    Loaded            = 0x02  # plate at top; ready for the mouse
+    DomeOpened        = 0x03  # raw_extra: count LE16 + pellet_present
+    Fault             = 0x04  # raw_extra[0] = ServiceStatus
+    Pong              = 0x05
+    InputChanged      = 0x06
+    Lowering          = 0x07  # M2 toward load position
+    Loading           = 0x08  # M1 loading a pellet
+    Raising           = 0x09  # M2 raising plate
+    DomeOpenWarning   = 0x0A  # dome open >30 s (non-sticky warning)
+    PelletTaken       = 0x0B  # raw_extra: count LE16 + dome_open
+    FeedSkipped       = 0x0C  # plate occupied on Dispense
+    Seeking           = 0x0D  # M2 clearing the load sensor before Lowering (clear or step cap)
+    NoFeedPresented   = 0x0E  # no-feed raise complete; raw_extra: count LE16 (NOT incremented)
+    Dwelling          = 0x0F  # phase: holding at the drop position, M1 idle
+    PresenceCalResult = 0x10  # raw_extra: ok(1), threshold LE32, samples LE16
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
@@ -81,7 +84,18 @@ CAN_EVENT_DISPLAY_NAME = {
     CanEvent.FeedSkipped: "FeedSkipped",
     CanEvent.NoFeedPresented: "NoFeedPresented",
     CanEvent.Dwelling: "Dwelling",
+    CanEvent.PresenceCalResult: "PresenceCalResult",
 }
+
+# Events whose extra bytes really are a pellet count LE16 (+ optional context
+# byte). parse_event_context() only decodes events in this set — anything
+# else (e.g. PresenceCalResult, whose byte 0 is an ok-flag) must not be
+# silently misread as a count.
+_COUNT_EVENTS = frozenset({
+    CanEvent.OnPlate, CanEvent.Loaded, CanEvent.DomeOpened, CanEvent.PelletTaken,
+    CanEvent.FeedSkipped, CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading,
+    CanEvent.Raising, CanEvent.NoFeedPresented, CanEvent.Dwelling,
+})
 
 
 class InputId(IntEnum):
@@ -279,8 +293,11 @@ def parse_event_context(event: EventPayload) -> Optional[dict]:
     Decode count LE16 (+ optional context byte) for milestone events.
 
     Returns dict with pellet_count and optional pellet_present / dome_open.
+    Only applies to events in _COUNT_EVENTS — anything else (e.g. a fault
+    payload or PresenceCalResult) is not a count and must not be misread as
+    one just because it happens to carry >= 2 extra bytes.
     """
-    if len(event.raw_extra) < 2:
+    if event.event not in _COUNT_EVENTS or len(event.raw_extra) < 2:
         return None
     out = {
         "pellet_count": event.raw_extra[0] | (event.raw_extra[1] << 8),
@@ -301,6 +318,25 @@ def parse_input_changed(event: EventPayload) -> Optional[InputChangedPayload]:
     except ValueError:
         return None
     return InputChangedPayload(input_id=input_id, active=bool(event.raw_extra[1]))
+
+
+@dataclass
+class PresenceCalPayload:
+    ok: bool
+    threshold: int
+    samples: int = 0
+
+
+def parse_presence_cal(event: EventPayload) -> Optional[PresenceCalPayload]:
+    """Decode PresenceCalResult extra bytes: ok(1), threshold LE32, samples LE16."""
+    if event.event != CanEvent.PresenceCalResult or len(event.raw_extra) < 5:
+        return None
+    return PresenceCalPayload(
+        ok=bool(event.raw_extra[0]),
+        threshold=int.from_bytes(event.raw_extra[1:5], "little"),
+        samples=(int.from_bytes(event.raw_extra[5:7], "little")
+                 if len(event.raw_extra) >= 7 else 0),
+    )
 
 
 # ---------------------------------------------------------------------------

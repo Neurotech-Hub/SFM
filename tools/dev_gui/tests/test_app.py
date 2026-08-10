@@ -42,3 +42,19 @@ def test_render_callback_wrapper_reschedules_itself(monkeypatch) -> None:
 
     assert calls == ["render"]
     assert scheduled == [(8, callback)]
+
+
+def test_default_experiment_is_free_feeding() -> None:
+    try:
+        from base_station.app import SFMApp
+    except ModuleNotFoundError as exc:
+        if "dearpygui" in str(exc).lower():
+            pytest.skip("dearpygui not installed")
+        raise
+
+    app = SFMApp(
+        argparse.Namespace(interface="can0", bitrate=250000, nodes=3, log_dir="~/sfm_logs")
+    )
+    default_def = app._default_experiment_def()
+    assert default_def is not None
+    assert default_def.name == "free_feeding"

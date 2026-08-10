@@ -24,6 +24,7 @@ from ..protocol import (
     parse_fault_code,
     parse_heartbeat,
     parse_input_changed,
+    parse_presence_cal,
 )
 
 
@@ -46,6 +47,7 @@ class EventKind(Enum):
     PRESENCE_CHANGED = auto()
     PG_CHANGED = auto()
     HEARTBEAT = auto()
+    PRESENCE_CAL_RESULT = auto()  # response to a CalibratePresence broadcast
 
     # Derived by the engine / also CanEvent.DomeOpened
     DOME_OPENED = auto()
@@ -76,6 +78,7 @@ _CAN_EVENT_TO_KIND: Dict[CanEvent, EventKind] = {
     CanEvent.Dwelling: EventKind.DWELLING,
     CanEvent.Raising: EventKind.RAISING,
     CanEvent.DomeOpenWarning: EventKind.DOME_OPEN_WARNING,
+    CanEvent.PresenceCalResult: EventKind.PRESENCE_CAL_RESULT,
 }
 
 
@@ -257,6 +260,14 @@ class EventNormalizer:
             event_data["fault_code"] = fault if fault is not None else ServiceStatus.Ok
             if payload.raw_extra:
                 event_data["raw_extra"] = bytes(payload.raw_extra)
+        elif payload.event == CanEvent.PresenceCalResult:
+            # Not a pellet count — must not fall into the generic raw_extra
+            # count fallback below, or ok/threshold get misread as a count.
+            cal = parse_presence_cal(payload)
+            if cal is not None:
+                event_data["ok"] = cal.ok
+                event_data["threshold"] = cal.threshold
+                event_data["samples"] = cal.samples
         else:
             ctx = parse_event_context(payload)
             if ctx is not None:
