@@ -1,4 +1,5 @@
 #include "PresenceService.h"
+#include <math.h>
 
 namespace vfm {
 
@@ -6,7 +7,7 @@ namespace vfm {
 ServiceStatus PresenceService::begin() {
     pinMode(PIN_PRESENCE, INPUT);
 
-    threshold_ = loadThresholdFromNvs();
+    loadFromNvs();
 
     // Seed from a real reading so the startup level does not look like an edge.
     uint32_t now   = millis();
@@ -44,19 +45,34 @@ void PresenceService::update() {
 }
 
 // ---------------------------------------------------------------------------
-void PresenceService::setThreshold(uint32_t thr) {
-    applyThreshold(thr);
-}
+bool PresenceService::setFactor(float factor) {
+    if (!isfinite(factor) || factor <= 0.0f) return false;
+    if (factor < kMinPresenceFactor) factor = kMinPresenceFactor;
+    if (factor > kMaxPresenceFactor) factor = kMaxPresenceFactor;
 
-void PresenceService::saveThreshold(uint32_t thr) {
-    applyThreshold(thr);
-    saveThresholdToNvs(thr);
+    factor_ = factor;
+    saveFactorToNvs(factor_);
+
+    if (calValid_) {
+        uint32_t thr = thresholdFromStats(calMean_, calStdDev_, factor_);
+        applyThreshold(thr);
+        saveThresholdToNvs(thr);
+    }
+    return true;
 }
 
 void PresenceService::clearStoredThreshold() {
     prefs_.begin(kNvsNamespace, false);
     prefs_.remove(kNvsKeyPresenceThr);
+    prefs_.remove(kNvsKeyPresenceFactor);
+    prefs_.remove(kNvsKeyPresenceMean);
+    prefs_.remove(kNvsKeyPresenceStd);
     prefs_.end();
+
+    calValid_  = false;
+    calMean_   = 0.0f;
+    calStdDev_ = 0.0f;
+    factor_    = kDefaultPresenceFactor;
     applyThreshold(kDefaultPresenceThreshold);
 }
 
@@ -64,13 +80,12 @@ void PresenceService::clearStoredThreshold() {
 bool PresenceService::startCalibration() {
     if (calibrating_) return false;
 
-    calibrating_      = true;
-    calStartMs_       = millis();
-    calLastSampleMs_  = 0;
-    calMin_           = UINT32_MAX;
-    calMax_           = 0;
-    calSum_           = 0;
-    calCount_         = 0;
+    calibrating_     = true;
+    calStartMs_      = millis();
+    calLastSampleMs_ = 0;
+    calCount_        = 0;
+    calMeanAcc_      = 0.0;
+    calM2Acc_        = 0.0;
 
     pendingEvent_ = PresenceEvent::CalibrationStarted;
     return true;
@@ -104,6 +119,13 @@ void PresenceService::applyThreshold(uint32_t thr) {
     lastChangeMs_ = millis();
 }
 
+uint32_t PresenceService::thresholdFromStats(float mean, float stdDev, float factor) const {
+    double thr = static_cast<double>(mean) + static_cast<double>(factor) * static_cast<double>(stdDev);
+    if (thr < 1.0) thr = 1.0;
+    if (thr > static_cast<double>(UINT32_MAX)) thr = static_cast<double>(UINT32_MAX);
+    return static_cast<uint32_t>(thr + 0.5);
+}
+
 void PresenceService::updateCalibration(uint32_t now) {
     if ((now - calStartMs_) >= kPresenceCalMs) {
         finishCalibration();
@@ -113,37 +135,51 @@ void PresenceService::updateCalibration(uint32_t now) {
     if (calLastSampleMs_ != 0 && (now - calLastSampleMs_) < kPresenceCalSampleMs) return;
     calLastSampleMs_ = now;
 
-    uint32_t v = readRaw();
-    raw_ = v;
-    if (v < calMin_) calMin_ = v;
-    if (v > calMax_) calMax_ = v;
-    calSum_ += v;
+    // Welford online algorithm
+    double x = static_cast<double>(readRaw());
+    raw_ = static_cast<uint32_t>(x);
     calCount_++;
+    double delta = x - calMeanAcc_;
+    calMeanAcc_ += delta / static_cast<double>(calCount_);
+    double delta2 = x - calMeanAcc_;
+    calM2Acc_ += delta * delta2;
 }
 
 void PresenceService::finishCalibration() {
     calibrating_ = false;
 
     lastCal_.samples = calCount_;
-    lastCal_.minRaw  = (calCount_ > 0) ? calMin_ : 0;
-    lastCal_.maxRaw  = calMax_;
-    lastCal_.avgRaw  = (calCount_ > 0) ? static_cast<uint32_t>(calSum_ / calCount_) : 0;
+    lastCal_.factor  = factor_;
 
     if (calCount_ < kPresenceCalMinSamples) {
         lastCal_.ok        = false;
+        lastCal_.mean      = 0.0f;
+        lastCal_.stdDev    = 0.0f;
         lastCal_.threshold = threshold_; // left untouched
         pendingEvent_      = PresenceEvent::CalibrationFailed;
         return;
     }
 
-    uint32_t range = calMax_ - calMin_;
-    uint32_t thr   = calMax_ + range;
-    if (thr <= calMax_) thr = calMax_ + 1; // zero-range / overflow guard
+    double variance = calM2Acc_ / static_cast<double>(calCount_);
+    if (variance < 0.0) variance = 0.0;
+    float mean   = static_cast<float>(calMeanAcc_);
+    float stdDev = static_cast<float>(sqrt(variance));
+
+    uint32_t thr = thresholdFromStats(mean, stdDev, factor_);
+
+    calValid_  = true;
+    calMean_   = mean;
+    calStdDev_ = stdDev;
 
     lastCal_.ok        = true;
+    lastCal_.mean      = mean;
+    lastCal_.stdDev    = stdDev;
     lastCal_.threshold = thr;
 
-    saveThreshold(thr);
+    saveCalStatsToNvs(mean, stdDev);
+    saveFactorToNvs(factor_);
+    applyThreshold(thr);
+    saveThresholdToNvs(thr);
     pendingEvent_ = PresenceEvent::CalibrationDone;
 }
 
@@ -153,11 +189,40 @@ void PresenceService::saveThresholdToNvs(uint32_t thr) {
     prefs_.end();
 }
 
-uint32_t PresenceService::loadThresholdFromNvs() {
-    prefs_.begin(kNvsNamespace, true); // read-only
-    uint32_t thr = prefs_.getUInt(kNvsKeyPresenceThr, kDefaultPresenceThreshold);
+void PresenceService::saveFactorToNvs(float factor) {
+    prefs_.begin(kNvsNamespace, false);
+    prefs_.putFloat(kNvsKeyPresenceFactor, factor);
     prefs_.end();
-    return thr;
+}
+
+void PresenceService::saveCalStatsToNvs(float mean, float stdDev) {
+    prefs_.begin(kNvsNamespace, false);
+    prefs_.putFloat(kNvsKeyPresenceMean, mean);
+    prefs_.putFloat(kNvsKeyPresenceStd, stdDev);
+    prefs_.end();
+}
+
+void PresenceService::loadFromNvs() {
+    prefs_.begin(kNvsNamespace, true); // read-only
+    threshold_ = prefs_.getUInt(kNvsKeyPresenceThr, kDefaultPresenceThreshold);
+    factor_    = prefs_.getFloat(kNvsKeyPresenceFactor, kDefaultPresenceFactor);
+    if (!isfinite(factor_) || factor_ < kMinPresenceFactor || factor_ > kMaxPresenceFactor) {
+        factor_ = kDefaultPresenceFactor;
+    }
+
+    // Stats are only valid when both keys were written by a successful cal.
+    const bool hasMean = prefs_.isKey(kNvsKeyPresenceMean);
+    const bool hasStd  = prefs_.isKey(kNvsKeyPresenceStd);
+    if (hasMean && hasStd) {
+        calMean_   = prefs_.getFloat(kNvsKeyPresenceMean, 0.0f);
+        calStdDev_ = prefs_.getFloat(kNvsKeyPresenceStd, 0.0f);
+        calValid_  = isfinite(calMean_) && isfinite(calStdDev_) && calStdDev_ >= 0.0f;
+    } else {
+        calValid_  = false;
+        calMean_   = 0.0f;
+        calStdDev_ = 0.0f;
+    }
+    prefs_.end();
 }
 
 } // namespace vfm

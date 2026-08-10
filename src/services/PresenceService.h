@@ -7,17 +7,22 @@
 
 namespace vfm {
 
-// NVS key for the calibrated threshold (namespace kNvsNamespace)
-constexpr char kNvsKeyPresenceThr[] = "presThr";
+// NVS keys (namespace kNvsNamespace)
+constexpr char kNvsKeyPresenceThr[]    = "presThr";
+constexpr char kNvsKeyPresenceFactor[] = "presFac";
+constexpr char kNvsKeyPresenceMean[]   = "presMean";
+constexpr char kNvsKeyPresenceStd[]    = "presStd";
 
 // Fallback used until a calibration has been stored in NVS.
 // Bench readings: idle ≈ 35 000–35 500, animal present ≈ 36 000 and up.
 constexpr uint32_t kDefaultPresenceThreshold = 35000;
 
-// Calibration samples the idle pad, then sets
-//   threshold = max + (max - min)
-// i.e. one noise range above the highest idle reading. The pad must stay clear
-// for the whole capture or the threshold lands above real presence readings.
+// Calibration samples the idle pad (Welford online mean / variance), then sets
+//   threshold = mean + factor * std_dev
+// Factor default 3.0; pad must stay clear for the whole capture.
+constexpr float    kDefaultPresenceFactor = 3.0f;
+constexpr float    kMinPresenceFactor     = 0.1f;
+constexpr float    kMaxPresenceFactor     = 100.0f;
 constexpr uint32_t kPresenceCalMs         = 5000;
 constexpr uint32_t kPresenceCalSampleMs   = 25;
 constexpr uint32_t kPresenceCalMinSamples = 10;
@@ -36,9 +41,9 @@ enum class PresenceEvent : uint8_t {
 
 struct PresenceCalibration {
     uint32_t samples   = 0;
-    uint32_t minRaw    = 0;
-    uint32_t maxRaw    = 0;
-    uint32_t avgRaw    = 0;
+    float    mean      = 0.0f;
+    float    stdDev    = 0.0f;
+    float    factor    = kDefaultPresenceFactor;
     uint32_t threshold = 0;  // threshold in force after the attempt
     bool     ok        = false;
 };
@@ -46,11 +51,14 @@ struct PresenceCalibration {
 // ---------------------------------------------------------------------------
 // PresenceService
 //
-// Animal presence detection on the capacitive pad (PIN_PRESENCE, touchRead).
-// Raw counts rise when an animal is present, so presence = raw > threshold.
+// Mouse presence detection on the capacitive pad (PIN_PRESENCE, touchRead).
+// Raw counts rise when a mouse is present, so presence = raw > threshold.
 //
-// The threshold is calibrated against the idle pad and persisted to NVS, so a
-// node keeps its calibration across reboots exactly like its CAN node ID.
+// The threshold is calibrated against the idle pad:
+//   thr = mean + factor * std_dev
+// Threshold, factor, and last-cal mean/σ are persisted to NVS so a node keeps
+// its calibration across reboots. Changing the factor re-applies from the
+// last cal stats when they are available.
 // Debounced output means one approach yields one trigger and one clear.
 // ---------------------------------------------------------------------------
 class PresenceService {
@@ -66,16 +74,18 @@ public:
     bool     present() const     { return present_; }
     uint32_t raw() const         { return raw_; }
     uint32_t threshold() const   { return threshold_; }
+    float    factor() const      { return factor_; }
     bool     calibrating() const { return calibrating_; }
+    bool     hasCalStats() const { return calValid_; }
+    float    calMean() const     { return calMean_; }
+    float    calStdDev() const   { return calStdDev_; }
 
-    // Apply for this run only — used for sketch-level overrides so they cannot
-    // overwrite a stored calibration.
-    void setThreshold(uint32_t thr);
+    // Clamp + store the calibration multiplier. If last-cal mean/σ are known,
+    // recomputes and saves the threshold immediately. Returns false if the
+    // value was rejected (non-finite / non-positive).
+    bool setFactor(float factor);
 
-    // Apply and persist to NVS (deliberate operator action / calibration).
-    void saveThreshold(uint32_t thr);
-
-    // Forget the stored value and fall back to kDefaultPresenceThreshold.
+    // Forget stored threshold / factor / cal stats; fall back to defaults.
     void clearStoredThreshold();
 
     // Begin a capture of the idle pad. Returns false if one is already running.
@@ -89,6 +99,7 @@ private:
     Preferences prefs_;
 
     uint32_t threshold_ = kDefaultPresenceThreshold;
+    float    factor_    = kDefaultPresenceFactor;
     uint32_t raw_       = 0;
 
     bool     present_      = false;  // debounced
@@ -96,23 +107,30 @@ private:
     uint32_t lastChangeMs_ = 0;      // when rawPresent_ last flipped
     uint32_t lastSampleMs_ = 0;
 
+    // Last successful calibration stats (also restored from NVS)
+    bool  calValid_  = false;
+    float calMean_   = 0.0f;
+    float calStdDev_ = 0.0f;
+
     bool     calibrating_     = false;
     uint32_t calStartMs_      = 0;
     uint32_t calLastSampleMs_ = 0;
-    uint32_t calMin_          = 0;
-    uint32_t calMax_          = 0;
-    uint64_t calSum_          = 0;
     uint32_t calCount_        = 0;
+    double   calMeanAcc_      = 0.0;  // Welford running mean
+    double   calM2Acc_        = 0.0;  // Welford sum of squares of diffs
 
     PresenceEvent       pendingEvent_ = PresenceEvent::None;
     PresenceCalibration lastCal_;
 
     uint32_t readRaw();
     void     applyThreshold(uint32_t thr);
+    uint32_t thresholdFromStats(float mean, float stdDev, float factor) const;
     void     updateCalibration(uint32_t now);
     void     finishCalibration();
     void     saveThresholdToNvs(uint32_t thr);
-    uint32_t loadThresholdFromNvs();
+    void     saveFactorToNvs(float factor);
+    void     saveCalStatsToNvs(float mean, float stdDev);
+    void     loadFromNvs();
 };
 
 } // namespace vfm

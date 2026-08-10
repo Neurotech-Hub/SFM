@@ -51,11 +51,6 @@ public:
     uint32_t presenceRaw() const       { return presence_.raw(); }
     uint32_t presenceThreshold() const { return presence_.threshold(); }
 
-    // Runtime-only threshold override for sketches; does not touch the value
-    // stored in NVS, so a hardcoded sketch default cannot clobber a
-    // calibration. Use presence().saveThreshold() to persist.
-    void setPresenceThreshold(uint32_t t) { presence_.setThreshold(t); }
-
     // Recalibrate the presence pad against its idle noise (same as a short
     // press of PIN_BTN). The pad must stay clear for kPresenceCalMs.
     bool startPresenceCalibration()   { return presence_.startCalibration(); }
