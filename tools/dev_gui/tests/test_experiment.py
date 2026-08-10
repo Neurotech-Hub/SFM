@@ -134,6 +134,42 @@ def test_context_dispense_records_command() -> None:
     assert ctx.counter("pellets") == 1
 
 
+def test_context_no_feed_dispense_uses_class_default_dwell_when_unset() -> None:
+    """dwell_s=None (the default) should pick up
+    ExperimentControl.default_no_feed_dwell_s — the Developer Menu's
+    process-wide setting — not a hardcoded per-call default."""
+    original = ExperimentContext.default_no_feed_dwell_s
+    try:
+        ExperimentContext.default_no_feed_dwell_s = 8.0
+        ctx = ExperimentContext(nodes=[1])
+        ctx.begin(now=0.0)
+        assert ctx.dispense(1, feed=False) is True
+        _, cmd, payload = ctx.commands_sent[-1]
+        assert cmd == CanCmd.DispenseNoFeed
+        assert payload[0] | (payload[1] << 8) == 8000
+
+        # Changing the class attribute mid-session changes the NEXT dispense.
+        ExperimentContext.default_no_feed_dwell_s = 2.0
+        assert ctx.dispense(1, feed=False) is True
+        _, cmd, payload = ctx.commands_sent[-1]
+        assert payload[0] | (payload[1] << 8) == 2000
+    finally:
+        ExperimentContext.default_no_feed_dwell_s = original
+
+
+def test_context_no_feed_dispense_explicit_dwell_overrides_class_default() -> None:
+    original = ExperimentContext.default_no_feed_dwell_s
+    try:
+        ExperimentContext.default_no_feed_dwell_s = 8.0
+        ctx = ExperimentContext(nodes=[1])
+        ctx.begin(now=0.0)
+        assert ctx.dispense(1, feed=False, dwell_s=1.5) is True
+        _, cmd, payload = ctx.commands_sent[-1]
+        assert payload[0] | (payload[1] << 8) == 1500
+    finally:
+        ExperimentContext.default_no_feed_dwell_s = original
+
+
 def test_context_after_timer_fires() -> None:
     ctx = ExperimentContext(nodes=[1])
     ctx.begin(now=0.0)

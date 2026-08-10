@@ -33,6 +33,11 @@ erase every difference between the arms: M1 physically turns on the fed arm
 and never on the empty one, so the dwell matches the *duration* of a fed
 cycle, not its exact sound.
 
+Fault handling: if EITHER arm faults, the whole session pauses — neither arm
+dispenses — until an operator recovers the faulted node. A healthy arm never
+runs solo while its partner is down; that would give away which node is
+armed just as surely as skipping the no-feed cycle would.
+
 One trial:
   1. Dispense the fed arm; no-feed-dispense the other.
   2. Wait for both arms to finish raising (whichever presents first, wait for
@@ -73,7 +78,7 @@ def build(
     name: str = "two_armed_bandit",
     block_size: int = 50,
     p_high: float = 0.9,
-    dwell_s: float = 3.0,
+    dwell_s: Optional[float] = None,
     next_trial_wait: str = "fixed_delay",
     fixed_delay_s: float = 5.0,
     iti_quiet_s: float = 1.0,
@@ -97,12 +102,16 @@ def build(
         lean arm delivers at ``1 - p_high``).
     dwell_s:
         Seconds the empty arm holds at the drop position on its no-feed
-        cycle. Default 3.0s approximates a typical fed cycle's M1 run
-        (a ~2.0s confirm hold plus ~1s of wheel time) — tune it per rig by
-        comparing ``Loading``/``OnPlate`` timestamps from a free-feeding
-        session; the response window is gated on both arms finishing
-        regardless, so this mainly affects how closely the two arms *sound*
-        alike rather than trial timing.
+        cycle. ``None`` (the default) picks up
+        ``ExperimentControl.default_no_feed_dwell_s`` — set from the GUI's
+        Developer Menu, since this is fundamentally a rig timing constant
+        (approximating a fed cycle's M1 run: a ~2.0s confirm hold plus ~1s of
+        wheel time — tune it per rig by comparing ``Loading``/``OnPlate``
+        timestamps from a free-feeding session), not a per-task parameter.
+        Pass an explicit value here to override the Developer Menu default
+        for this experiment specifically. The response window is gated on
+        both arms finishing regardless, so this mainly affects how closely
+        the two arms *sound* alike rather than trial timing.
     next_trial_wait:
         "fixed_delay" (wait ``fixed_delay_s``) or "presence_clear" (wait
         until the animal is off both presence pads). See ``kit.next_trial_wait``.
@@ -131,12 +140,16 @@ def build(
     kit.log_faults(exp)
     kit.log_feed_skipped(exp)
 
+    def _resolved_dwell_s(control):
+        return dwell_s if dwell_s is not None else control.default_no_feed_dwell_s
+
     @exp.on_start
     def _log_start(control):
         control.log(
             "two_armed_bandit_start",
             nodes=control.nodes, arm_a=arm_a, arm_b=arm_b,
-            block_size=block_size, p_high=p_high, dwell_s=dwell_s,
+            block_size=block_size, p_high=p_high,
+            dwell_s=_resolved_dwell_s(control),
             next_trial_wait=next_trial_wait, seed=control.seed,
         )
 
@@ -145,6 +158,26 @@ def build(
             control, next_trial_wait,
             delay_s=fixed_delay_s, nodes=(arm_a, arm_b), quiet_s=iti_quiet_s,
         )
+
+    def _wait_for_recovery(control):
+        """
+        Pause the WHOLE experiment while either arm is halted (faulted).
+
+        Both arms always move together by design (see module docstring) — if
+        one arm is down and the other kept dispensing solo, the animal would
+        get exactly the "which node is armed" cue this template exists to
+        prevent. Unscoped (no ``node=``) so this wait can never itself be
+        fault-aborted; it is the thing watching for recovery. A no-op
+        (yields nothing) on the common healthy path.
+        """
+        halted = [n for n in (arm_a, arm_b) if control.is_halted(n)]
+        if not halted:
+            return
+        control.log("bandit_paused_for_fault", nodes=halted)
+        yield control.wait_until(
+            lambda c: not c.is_halted(arm_a) and not c.is_halted(arm_b)
+        )
+        control.log("bandit_resumed_after_fault")
 
     @exp.script
     def run(control):
@@ -170,16 +203,20 @@ def build(
             control.log("bandit_startup_plates_clear")
 
         while True:
+            yield from _wait_for_recovery(control)
+
             trial = control.next_trial()
             block = (trial - 1) // block_size
             rich, lean = (arm_a, arm_b) if block % 2 == 0 else (arm_b, arm_a)
             fed = rich if control.chance(p_high) else lean
             empty = arm_b if fed == arm_a else arm_a
 
+            resolved_dwell_s = _resolved_dwell_s(control)
+
             control.clear_presentation(fed)
             control.clear_presentation(empty)
             fed_ok = control.dispense(fed)
-            empty_ok = control.dispense(empty, feed=False, dwell_s=dwell_s)
+            empty_ok = control.dispense(empty, feed=False, dwell_s=resolved_dwell_s)
             control.log(
                 "bandit_trial", trial=trial, block=block,
                 rich=rich, lean=lean, fed=fed, empty=empty,
@@ -190,7 +227,7 @@ def build(
             )
             control.log(
                 "arm_command", node=empty, trial=trial, role="empty",
-                cmd="DispenseNoFeed", dwell_s=dwell_s, accepted=int(empty_ok),
+                cmd="DispenseNoFeed", dwell_s=resolved_dwell_s, accepted=int(empty_ok),
             )
 
             if not fed_ok or not empty_ok:
@@ -213,8 +250,7 @@ def build(
             )
             if ready.faulted:
                 control.log("bandit_trial_aborted", trial=trial, node=ready.faulted_node)
-                yield control.wait(5.0)  # give the operator a moment before the next trial
-                continue
+                continue  # top of loop pauses the whole session until recovered
             if ready.timed_out:
                 control.log(
                     "bandit_trial_invalid", trial=trial, valid=0,
@@ -252,8 +288,7 @@ def build(
             r = yield control.wait_for("pellet_taken", node=watch)
             if r.faulted:
                 control.log("bandit_trial_aborted", trial=trial, node=r.faulted_node)
-                yield control.wait(5.0)
-                continue
+                continue  # top of loop pauses the whole session until recovered
 
             control.log(
                 "bandit_trial_end", trial=trial, block=block,

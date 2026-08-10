@@ -29,15 +29,6 @@
       "help": "Chance the rich arm delivers on a given trial (lean arm delivers at 1 - this)"
     },
     {
-      "key": "dwell_s",
-      "label": "Empty-arm dwell (s)",
-      "type": "float",
-      "default": 3.0,
-      "min": 0.5,
-      "max": 60,
-      "help": "How long the empty arm holds at the drop position before raising (approximates a fed cycle's M1 run)"
-    },
-    {
       "key": "next_trial_wait",
       "label": "Advance to next trial",
       "type": "choice",

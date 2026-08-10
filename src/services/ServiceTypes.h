@@ -101,6 +101,7 @@ enum class CanEvent : uint8_t {
     NoFeedPresented   = 0x0E, // no-feed raise complete; extra: count LE16 (NOT incremented)
     Dwelling          = 0x0F, // phase: holding at the drop position, M1 idle
     PresenceCalResult = 0x10, // extra: ok(1), threshold LE32, samples LE16
+    ConfigApplied     = 0x11, // extra: configType(1), ok(1), value LE32 (uint32 or float32 bit pattern, per configType)
 };
 
 // Input IDs carried by CanEvent::InputChanged.
@@ -117,6 +118,7 @@ enum class InputId : uint8_t {
 // ---------------------------------------------------------------------------
 enum class ConfigType : uint8_t {
     HeartbeatInterval = 0x01, // value = uint16 LE, heartbeat interval in ms
+    PresenceFactor    = 0x02, // value = float32 LE; threshold = mean + factor * stdDev
 };
 
 // ---------------------------------------------------------------------------

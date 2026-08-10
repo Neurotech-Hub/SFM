@@ -122,22 +122,71 @@ bool VFM::begin() {
 
                 break;
 
-            case CanCmd::SetConfig:
+            case CanCmd::SetConfig: {
 
-                if (len >= 1 && static_cast<ConfigType>(payload[0]) == ConfigType::HeartbeatInterval) {
+                if (len < 1) break;
 
-                    if (len >= 3) {
+                ConfigType type = static_cast<ConfigType>(payload[0]);
+                bool ok = false;
+                uint32_t rawValue = 0;
 
-                        uint16_t ms = static_cast<uint16_t>(payload[1]) |
-                                      (static_cast<uint16_t>(payload[2]) << 8);
+                switch (type) {
 
-                        can_.setHeartbeatIntervalMs(ms);
+                    case ConfigType::HeartbeatInterval:
 
-                    }
+                        if (len >= 3) {
+
+                            uint16_t ms = static_cast<uint16_t>(payload[1]) |
+                                          (static_cast<uint16_t>(payload[2]) << 8);
+
+                            can_.setHeartbeatIntervalMs(ms);
+                            rawValue = ms;
+                            ok = true;
+
+                        }
+
+                        break;
+
+                    case ConfigType::PresenceFactor:
+
+                        if (len >= 5) {
+
+                            float factor;
+                            memcpy(&factor, &payload[1], sizeof(factor));
+
+                            ok = presence_.setFactor(factor);
+
+                            float applied = presence_.factor();
+                            memcpy(&rawValue, &applied, sizeof(rawValue));
+
+                        }
+
+                        break;
+
+                }
+
+                // Ack every SetConfig so the base station can tell it landed
+                // (SetConfig used to be fire-and-forget; a silent rejection
+                // here is the same failure mode PresenceCalResult exists to
+                // avoid for calibration).
+                if (identity_.isEnabled() && can_.nodeId() != 0) {
+
+                    uint8_t extra[6] = {
+                        payload[0],
+                        static_cast<uint8_t>(ok ? 1 : 0),
+                        static_cast<uint8_t>( rawValue        & 0xFF),
+                        static_cast<uint8_t>((rawValue >>  8) & 0xFF),
+                        static_cast<uint8_t>((rawValue >> 16) & 0xFF),
+                        static_cast<uint8_t>((rawValue >> 24) & 0xFF),
+                    };
+
+                    can_.sendEvent(CanEvent::ConfigApplied, extra, 6);
 
                 }
 
                 break;
+
+            }
 
             case CanCmd::ClearId:
 
@@ -497,34 +546,42 @@ void VFM::handleInputEvents() {
 void VFM::handlePresenceEvents() {
 
     PresenceEvent ev = presence_.takeEvent();
-    if (ev == PresenceEvent::None) return;
+    if (ev != PresenceEvent::None) {
+        switch (ev) {
+            case PresenceEvent::CalibrationStarted:
+                leds_.setLed9BlinkMs(0);
+                leds_.setLed9(true);
+                break;
 
-    switch (ev) {
-        case PresenceEvent::CalibrationStarted:
-            leds_.setLed9BlinkMs(0);
-            leds_.setLed9(true);
-            break;
+            case PresenceEvent::CalibrationDone:
+                leds_.setLed9(false);
+                leds_.flashConfirm();
+                break;
 
-        case PresenceEvent::CalibrationDone:
-            leds_.setLed9(false);
-            leds_.flashConfirm();
-            break;
+            case PresenceEvent::CalibrationFailed:
+                leds_.setLed9(false);
+                break;
 
-        case PresenceEvent::CalibrationFailed:
-            leds_.setLed9(false);
-            break;
+            default:
+                break;
+        }
 
-        default:
-            break;
+        pendingPresenceEvent_ = ev;
+
+        if (ev == PresenceEvent::CalibrationDone || ev == PresenceEvent::CalibrationFailed) {
+            presenceCalResultPending_ = true;
+        }
     }
 
-    pendingPresenceEvent_ = ev;
-
-    // Publish the result on CAN so a broadcast CalibratePresence gets visible
-    // per-node feedback. Guarded exactly like handleInputEvents() (above):
-    // never emit operational frames before this node owns a CAN ID.
+    // Publish the most recent calibration result on CAN so a broadcast
+    // CalibratePresence gets visible per-node feedback. A result that
+    // finished before this node owned a CAN ID (discovery still running) is
+    // queued here and flushed on a later tick once identity_.isEnabled() —
+    // never dropped, since the local threshold was already applied/saved
+    // regardless of discovery state.
+    if (!presenceCalResultPending_) return;
     if (!identity_.isEnabled() || can_.nodeId() == 0) return;
-    if (ev != PresenceEvent::CalibrationDone && ev != PresenceEvent::CalibrationFailed) return;
+    presenceCalResultPending_ = false;
 
     const PresenceCalibration &cal = presence_.lastCalibration();
     uint32_t samples = cal.samples > 0xFFFF ? 0xFFFF : cal.samples;
