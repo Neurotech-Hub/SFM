@@ -244,6 +244,19 @@ class NodeRegistry:
         node.mac = mac
         node.discovery_state = "Enabled"
 
+    def clear_identities(self) -> None:
+        """
+        Drop session MAC / discovery / online state for every slot.
+
+        Used by Re-discover before ClearId + fresh assignment so tiles show
+        Pending and Ping/Pong cannot resurrect stale MAC↔ID bindings.
+        """
+        for node in self._nodes.values():
+            node.mac = None
+            node.discovery_state = "Pending"
+            node.online = False
+            node.last_heartbeat_time = None
+
     # ------------------------------------------------------------------
     # User-facing operations
     # ------------------------------------------------------------------

@@ -7,8 +7,8 @@ saved ID) frames on the CAN bus.
 
 When a MacIdRegistry is provided, past MAC↔ID assignments are reused so a
 returning module keeps a stable Node ID across base-station restarts.
-Re-discover (reset with ClearId) should clear that registry first so IDs
-are reassigned from scratch.
+Re-discover (``reset()``) clears that registry, broadcasts ``ClearId``, and
+forces fresh sequential IDs even if a node still REJOINs with a stale NVS ID.
 
 Discovery flow per node slot:
   1. AEO pin driven HIGH (done once at start, propagates through daisy chain)
@@ -95,6 +95,7 @@ class DiscoveryManager:
         self._pending_assign: Optional[bytes] = None  # MAC waiting for ACK
         self._pending_assign_id: Optional[int] = None
         self._discovered: List[DiscoveredNode] = []
+        self._force_fresh_ids: bool = False
         self._node_callback: Optional[Callable[[DiscoveredNode], None]] = None
         self._complete_callback: Optional[Callable[[], None]] = None
 
@@ -120,9 +121,17 @@ class DiscoveryManager:
 
         Args:
             start_id: first CAN Node ID to assign (usually 1).
-            clear_first: broadcast ClearId before pulsing AEO so nodes with
-                         saved NVS IDs re-enter WaitAEI and re-announce.
+            clear_first: wipe the MAC↔ID registry, broadcast ClearId, then
+                         pulse AEO so nodes re-enter WaitAEI and ANNOUNCE for
+                         fresh IDs from ``start_id``.
         """
+        if clear_first:
+            self._force_fresh_ids = True
+            if self._mac_registry is not None:
+                self._mac_registry.clear()
+        else:
+            self._force_fresh_ids = False
+
         # Prefer historically reserved IDs: start after the highest known mapping
         # (or start_id if the registry is empty / not provided).
         if self._mac_registry is not None and len(self._mac_registry) > 0:
@@ -155,7 +164,10 @@ class DiscoveryManager:
             self._io.drive_aeo(True)
 
     def reset(self) -> None:
-        """Reset and restart discovery from scratch (clears node NVS IDs)."""
+        """
+        Full Re-discover: clear the base-station MAC↔ID registry, broadcast
+        ClearId so every node wipes NVS, then pulse AEO and reassign from 1.
+        """
         self._phase = DiscoveryPhase.Idle
         self._last_activity = time.time()
         self.start(clear_first=True)
@@ -168,6 +180,7 @@ class DiscoveryManager:
         (session + persistent MAC registry). Returning nodes REJOIN; only
         genuinely new nodes ANNOUNCE.
         """
+        self._force_fresh_ids = False
         known_ids = [n.node_id for n in self._discovered]
         if self._mac_registry is not None:
             known_ids.append(self._mac_registry.max_id())
@@ -310,7 +323,20 @@ class DiscoveryManager:
         If the MAC was previously registered under a different ID, force that
         historical ID via ASSIGN so the base dictionary stays the source of
         truth across reboots and cable swaps.
+
+        After Re-discover (``_force_fresh_ids``), ignore the claimed NVS ID and
+        ASSIGN the next free ID so stale REJOINs cannot rebuild the old map.
         """
+        if self._force_fresh_ids:
+            if self._pending_assign == mac and self._pending_assign_id is not None:
+                self._can.send_assign(mac, self._pending_assign_id)
+                return
+            new_id = self._allocate_id_for_mac(mac)
+            self._pending_assign = mac
+            self._pending_assign_id = new_id
+            self._can.send_assign(mac, new_id)
+            return
+
         if self._mac_registry is not None:
             known = self._mac_registry.get_id(mac)
             if known is not None and known != node_id:

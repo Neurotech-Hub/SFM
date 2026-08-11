@@ -99,3 +99,40 @@ class TestDiscoveryMacPersistence:
 
         dm.handle_frame(CAN_ID_ANNOUNCE, MAC_A)
         assert can.assigns[-1] == (MAC_A, 1)
+
+    def test_reset_clears_registry_and_broadcasts_clear_id(self, tmp_path):
+        from base_station.protocol import CanCmd
+
+        can = FakeCan()
+        io = FakeIO()
+        mac_reg = MacIdRegistry(tmp_path / "r.json")
+        mac_reg.set(MAC_A, 7)
+        mac_reg.set(MAC_B, 3)
+
+        dm = DiscoveryManager(can, io, mac_reg)
+        dm.reset()
+
+        assert len(mac_reg) == 0
+        assert any(cmd == CanCmd.ClearId for cmd, _ in can.broadcasts)
+        assert dm.next_node_id == 1
+
+    def test_reset_forces_fresh_id_on_stale_rejoin(self, tmp_path):
+        can = FakeCan()
+        io = FakeIO()
+        mac_reg = MacIdRegistry(tmp_path / "r.json")
+        mac_reg.set(MAC_A, 9)
+
+        dm = DiscoveryManager(can, io, mac_reg)
+        discovered = []
+        dm.on_node_discovered(lambda n: discovered.append(n))
+        dm.reset()
+
+        # Node missed ClearId and REJOINs claiming old NVS id=9
+        dm.handle_frame(CAN_ID_REJOIN, MAC_A + bytes([9]))
+        assert can.assigns[-1] == (MAC_A, 1)
+        assert discovered == []
+
+        dm.handle_frame(CAN_ID_ACK, MAC_A + bytes([1]))
+        assert discovered[-1].node_id == 1
+        assert mac_reg.get_id(MAC_A) == 1
+        assert mac_reg.get_id(MAC_A) != 9
