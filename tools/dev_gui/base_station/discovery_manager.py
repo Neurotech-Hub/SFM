@@ -267,6 +267,21 @@ class DiscoveryManager:
         return self._phase == DiscoveryPhase.Running
 
     @property
+    def is_reassigning(self) -> bool:
+        """
+        True only while a Re-discover pass is actively forcing fresh IDs.
+
+        Narrower than ``is_running``: the Running phase persists for up to
+        DISCOVERY_IDLE_TIMEOUT_S (30s) after the *last* discovery frame, even
+        on a completely ordinary first-time discovery with no Re-discover
+        involved — e.g. every normal session start with already-running
+        nodes. Callers that need to guard specifically against Re-discover's
+        in-flight MAC↔ID reassignment (not routine startup discovery) should
+        use this instead of ``is_running``.
+        """
+        return self._phase == DiscoveryPhase.Running and self._force_fresh_ids
+
+    @property
     def is_complete(self) -> bool:
         return self._phase == DiscoveryPhase.Complete
 

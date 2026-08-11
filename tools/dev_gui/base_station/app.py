@@ -1427,12 +1427,16 @@ class SFMApp:
         just confirmed by the actual node. Retries are throttled so this
         doesn't flood the bus while waiting for a reply.
 
-        Suppressed while discovery is running: Re-discover clears identities
-        and Ping/Pong must not rewrite the MAC↔ID map mid-handshake.
+        Suppressed only while a Re-discover pass is actively reassigning IDs:
+        Re-discover clears identities and Ping/Pong must not rewrite the
+        MAC↔ID map mid-handshake. Ordinary startup discovery (no Re-discover)
+        must NOT block this — its Running phase can persist up to
+        DISCOVERY_IDLE_TIMEOUT_S after the last frame, which would otherwise
+        delay MAC resolution for every already-running node on every launch.
         """
         if not self._registry or not self._can:
             return
-        if self._discovery and self._discovery.is_running:
+        if self._discovery and self._discovery.is_reassigning:
             return
         node = self._registry.get(node_id)
         if node is None or node.mac is not None:
@@ -1454,9 +1458,10 @@ class SFMApp:
         """
         if not self._registry:
             return
-        # During Re-discover / active discovery, ANNOUNCE/ACK/REJOIN own
+        # During an active Re-discover reassignment, ANNOUNCE/ACK/REJOIN own
         # identity — ignore in-flight Pongs that would restore wiped IDs.
-        if self._discovery and self._discovery.is_running:
+        # (is_reassigning, not is_running — see _maybe_request_mac_via_ping.)
+        if self._discovery and self._discovery.is_reassigning:
             return
         node = self._registry.get(node_id)
         if node is None:
