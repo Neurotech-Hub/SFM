@@ -176,10 +176,19 @@ void PresenceService::finishCalibration() {
     lastCal_.stdDev    = stdDev;
     lastCal_.threshold = thr;
 
-    saveCalStatsToNvs(mean, stdDev);
-    saveFactorToNvs(factor_);
     applyThreshold(thr);
-    saveThresholdToNvs(thr);
+
+    // Single NVS transaction (not 3 separate begin/end round trips) — each
+    // commit is a flash erase/write and can stall for a while if NVS needs
+    // to compact a page, so cut that time to a third right before the
+    // non-blocking confirm blink in VFM::handlePresenceEvents().
+    prefs_.begin(kNvsNamespace, false);
+    prefs_.putFloat(kNvsKeyPresenceMean, mean);
+    prefs_.putFloat(kNvsKeyPresenceStd, stdDev);
+    prefs_.putFloat(kNvsKeyPresenceFactor, factor_);
+    prefs_.putUInt(kNvsKeyPresenceThr, thr);
+    prefs_.end();
+
     pendingEvent_ = PresenceEvent::CalibrationDone;
 }
 
@@ -192,13 +201,6 @@ void PresenceService::saveThresholdToNvs(uint32_t thr) {
 void PresenceService::saveFactorToNvs(float factor) {
     prefs_.begin(kNvsNamespace, false);
     prefs_.putFloat(kNvsKeyPresenceFactor, factor);
-    prefs_.end();
-}
-
-void PresenceService::saveCalStatsToNvs(float mean, float stdDev) {
-    prefs_.begin(kNvsNamespace, false);
-    prefs_.putFloat(kNvsKeyPresenceMean, mean);
-    prefs_.putFloat(kNvsKeyPresenceStd, stdDev);
     prefs_.end();
 }
 

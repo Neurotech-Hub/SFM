@@ -293,6 +293,8 @@ void VFM::update() {
 
     updatePingBlink();
 
+    updateCalConfirmBlink();
+
 
 
     // Once discovery completes, turn the status LED off — unless a Ping blink is
@@ -554,8 +556,14 @@ void VFM::handlePresenceEvents() {
                 break;
 
             case PresenceEvent::CalibrationDone:
+                // Non-blocking blink (see calConfirmActive_ in VFM.h) instead
+                // of LedService::flashConfirm() — that call blocks on delay()
+                // for ~600ms, which stalled can_.update() and delayed the
+                // PresenceCalResult publish below by the same amount.
+                calConfirmActive_  = true;
+                calConfirmUntilMs_ = millis() + kCalConfirmDurationMs;
                 leds_.setLed9(false);
-                leds_.flashConfirm();
+                leds_.setLed9BlinkMs(kCalConfirmBlinkMs);
                 break;
 
             case PresenceEvent::CalibrationFailed:
@@ -697,19 +705,35 @@ void VFM::updatePingBlink() {
 
 
 
+void VFM::updateCalConfirmBlink() {
+
+    if (!calConfirmActive_) return;
+
+    if ((int32_t)(millis() - calConfirmUntilMs_) >= 0) {
+        calConfirmActive_  = false;
+        calConfirmUntilMs_ = 0;
+        leds_.setLed9BlinkMs(0);
+        leds_.setLed9(false); // updateSensorLeds() reclaims LED9 next tick
+    }
+
+}
+
+
+
 // Live sensor mirrors: LED 10 = pellet present, LED 9 = dome open. Lit means
 // asserted. Both read the debounced states from DispenserService, so the LEDs
 // show what the firmware acts on rather than the raw pin.
 //
 // LED 10 has no other owner and mirrors unconditionally. LED 9 is shared with
-// the boot / discovery blink, the button-hold warning, and the presence
-// calibration capture, all of which keep it until they are done.
+// the boot / discovery blink, the button-hold warning, the presence
+// calibration capture, and its post-calibration confirm blink, all of which
+// keep it until they are done.
 
 void VFM::updateSensorLeds() {
 
     leds_.setLed10(dispenser_.pelletOnPlate());
 
-    if (identity_.isEnabled() && !btnArmed_ && !presence_.calibrating()) {
+    if (identity_.isEnabled() && !btnArmed_ && !presence_.calibrating() && !calConfirmActive_) {
 
         leds_.setLed9BlinkMs(0);
 

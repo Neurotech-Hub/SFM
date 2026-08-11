@@ -31,6 +31,7 @@ from .discovery_manager import DiscoveryManager, DiscoveryPhase
 from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
+from .dev_settings import DevSettings
 from .node_registry import NodeRegistry
 from .experiment import ExperimentController, ExperimentControl, load_experiment_defs
 from .experiment.schema import (
@@ -202,6 +203,11 @@ class SFMApp:
         self._log: Optional[LogManager] = None
         self._mac_registry = MacIdRegistry(DEFAULT_REGISTRY_PATH)
         self._last_stale_check = 0.0
+
+        # Developer Menu values (presence factor, no-feed dwell default)
+        # persisted across restarts — see dev_settings.py.
+        self._dev_settings = DevSettings()
+        ExperimentControl.default_no_feed_dwell_s = self._dev_settings.no_feed_dwell_s
 
         # IOManager owns all base-station GPIO except CAN (BNC I/O).
         # Created up front (not tied to CAN session) since it degrades to a
@@ -1785,7 +1791,7 @@ class SFMApp:
             with dpg.group(horizontal=True):
                 dpg.add_input_float(
                     tag="dev_presence_factor_input",
-                    default_value=3.0,
+                    default_value=self._dev_settings.presence_factor,
                     width=120,
                     step=0.5,
                 )
@@ -1814,14 +1820,17 @@ class SFMApp:
                 )
 
     def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
-        factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else 3.0
-        payload = build_setconfig_presence_factor(float(factor))
+        factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else self._dev_settings.presence_factor
+        factor = float(factor)
+        payload = build_setconfig_presence_factor(factor)
         self._broadcast(CanCmd.SetConfig, payload)
+        self._dev_settings.set_presence_factor(factor)
 
     def _on_apply_no_feed_dwell_default(self, sender=None, app_data=None, user_data=None) -> None:
         dwell_s = dpg.get_value("dev_no_feed_dwell_input") if dpg.does_item_exist("dev_no_feed_dwell_input") else ExperimentControl.default_no_feed_dwell_s
         dwell_s = max(0.5, float(dwell_s))
         ExperimentControl.default_no_feed_dwell_s = dwell_s
+        self._dev_settings.set_no_feed_dwell_s(dwell_s)
         if self._log:
             self._log.add(LogEntry(
                 timestamp=time.time(),

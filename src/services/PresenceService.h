@@ -129,7 +129,6 @@ private:
     void     finishCalibration();
     void     saveThresholdToNvs(uint32_t thr);
     void     saveFactorToNvs(float factor);
-    void     saveCalStatsToNvs(float mean, float stdDev);
     void     loadFromNvs();
 };
 
