@@ -3,6 +3,8 @@
 Python desktop application (DearPyGui) for the **Spatial Foraging Module (SFM)** —
 a base station plus multiple **VFM** nodes — over the CAN bus on a Raspberry Pi 5.
 
+![SFM Developer GUI](../../docs/GUI.png)
+
 ## Requirements
 
 - Raspberry Pi 5 with the station HAT (`can0`)

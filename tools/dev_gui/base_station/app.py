@@ -81,7 +81,8 @@ from .protocol import (
 WINDOW_W = 1500
 WINDOW_H = 1200        
 TILE_W   = 320
-TILE_H   = 280
+TILE_H   = 320  # room for multi-line fault instructions
+FAULT_TEXT_WRAP = TILE_W - 24  # stay inside child_window padding/border
 LOG_ROWS = 18        # visible rows in the log table before scroll
 LOG_TABLE_HEIGHT = 220  
 STALE_CHECK_INTERVAL = 1.0  # seconds between staleness sweeps
@@ -633,8 +634,8 @@ class SFMApp:
                 with dpg.tooltip(tags["status_text"]):
                     dpg.add_text(
                         "EMPTY = plate raised with NO pellet (a no-feed / mimic\n"
-                        "dispense). Not a fault — see the Fault row below for\n"
-                        "hopper or actuator problems.",
+                        "dispense). Not a fault — see Status below for hopper\n"
+                        "or actuator problems.",
                     )
 
             # -- Identity --
@@ -662,10 +663,12 @@ class SFMApp:
                 dpg.add_spacer(width=6)
                 tags["dome_text"] = dpg.add_text("Dome: ○")
 
-            with dpg.group(horizontal=True):
-                dpg.add_text("Fault:", color=(160,165,175,255))
-                tags["fault_text"] = dpg.add_text("—")
-            tags["warn_text"] = dpg.add_text("", color=_COLOR_AMBER)
+            # Single wrapped line: "Status: Offline" until online, then
+            # "Status: Healthy" or "Status: <fault instruction>" (wrapped)
+            tags["fault_text"] = dpg.add_text(
+                "Status: Offline", wrap=FAULT_TEXT_WRAP, color=_COLOR_GREY,
+            )
+            tags["warn_text"] = dpg.add_text("", color=_COLOR_AMBER, wrap=FAULT_TEXT_WRAP)
 
             dpg.add_separator()
 
@@ -1531,14 +1534,19 @@ class SFMApp:
             col = (100, 220, 120, 255) if val else (160, 165, 175, 255)
             dpg.configure_item(sensor_tag, default_value=f"{label}: {sym}", color=col)
 
-        # Fault (FeedTimeout / ActuatorTimeout / Jam / PelletLost when sticky)
-        if node.fault_code.value != 0:
-            fault_str = f"{node.fault_code.name}: {fault_user_message(node.fault_code)}"
-            fault_col = _COLOR_RED
+        # Status: Offline (grey) takes priority, then fault (red), then
+        # Healthy (green) — "Healthy" must never imply a node we have no
+        # live connection to.
+        if not node.online:
+            status_str = "Status: Offline"
+            status_col = _COLOR_GREY
+        elif node.fault_code.value != 0:
+            status_str = f"Status: {node.fault_code.name} — {fault_user_message(node.fault_code)}"
+            status_col = _COLOR_RED
         else:
-            fault_str = "OK"
-            fault_col = (160, 165, 175, 255)
-        dpg.configure_item(tags["fault_text"], default_value=fault_str, color=fault_col)
+            status_str = "Status: Healthy"
+            status_col = (100, 220, 120, 255)
+        dpg.configure_item(tags["fault_text"], default_value=status_str, color=status_col)
 
         # Dome open warning (amber, non-sticky)
         warn = "Dome open >30s" if node.dome_open_warning else ""
