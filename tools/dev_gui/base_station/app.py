@@ -31,6 +31,7 @@ from .discovery_manager import DiscoveryManager, DiscoveryPhase
 from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
+from .dev_settings import DevSettings
 from .node_registry import NodeRegistry
 from .experiment import ExperimentController, ExperimentControl, load_experiment_defs
 from .experiment.schema import (
@@ -202,6 +203,11 @@ class SFMApp:
         self._log: Optional[LogManager] = None
         self._mac_registry = MacIdRegistry(DEFAULT_REGISTRY_PATH)
         self._last_stale_check = 0.0
+
+        # Developer Menu values (presence factor, no-feed dwell default)
+        # persisted across restarts — see dev_settings.py.
+        self._dev_settings = DevSettings()
+        ExperimentControl.default_no_feed_dwell_s = self._dev_settings.no_feed_dwell_s
 
         # IOManager owns all base-station GPIO except CAN (BNC I/O).
         # Created up front (not tied to CAN session) since it degrades to a
@@ -1420,8 +1426,13 @@ class SFMApp:
         (see _handle_pong_mac), so the tile only ever shows a MAC that was
         just confirmed by the actual node. Retries are throttled so this
         doesn't flood the bus while waiting for a reply.
+
+        Suppressed while discovery is running: Re-discover clears identities
+        and Ping/Pong must not rewrite the MAC↔ID map mid-handshake.
         """
         if not self._registry or not self._can:
+            return
+        if self._discovery and self._discovery.is_running:
             return
         node = self._registry.get(node_id)
         if node is None or node.mac is not None:
@@ -1442,6 +1453,10 @@ class SFMApp:
         Mark node as online (primary indicator of connectivity).
         """
         if not self._registry:
+            return
+        # During Re-discover / active discovery, ANNOUNCE/ACK/REJOIN own
+        # identity — ignore in-flight Pongs that would restore wiped IDs.
+        if self._discovery and self._discovery.is_running:
             return
         node = self._registry.get(node_id)
         if node is None:
@@ -1575,12 +1590,24 @@ class SFMApp:
 
     def _on_rediscover(self, sender=None, app_data=None, user_data=None) -> None:
         """
-        Re-discover: wipe the persistent MAC↔ID dictionary, broadcast ClearId
-        so all nodes wipe their saved NVS ID and re-enter WaitAEI, then pulse
-        AEO to trigger fresh ANNOUNCE from every node (IDs reassigned from 1).
+        Re-discover: wipe the persistent MAC↔ID dictionary, clear live node
+        identity state, broadcast ClearId so all nodes wipe their saved NVS
+        ID and re-enter WaitAEI, then pulse AEO to trigger fresh ANNOUNCE
+        from every node (IDs reassigned from 1).
         """
-        self._mac_registry.clear()
+        self._mac_ping_sent.clear()
+        if self._registry:
+            self._registry.clear_identities()
+            self._refresh_all_tiles()
+        if self._discovery:
+            self._discovery.reset()
+            time.sleep(0.25)
+        elif self._mac_registry:
+            # No discovery manager (should not happen on main screen) —
+            # still wipe the persistent map.
+            self._mac_registry.clear()
         if self._log:
+            path = self._mac_registry.path if self._mac_registry else "?"
             self._log.add(LogEntry(
                 timestamp=time.time(),
                 direction="SYS",
@@ -1589,18 +1616,8 @@ class SFMApp:
                 event_name="Cleared",
                 raw_id=0,
                 raw_data=b"",
-                details=f"MAC↔ID file cleared ({self._mac_registry.path})",
+                details=f"MAC↔ID registry cleared + ClearId broadcast ({path})",
             ))
-        if self._registry:
-            for node in self._registry.all_nodes():
-                node.mac = None
-                node.discovery_state = "Pending"
-                node.online = False
-                node.last_heartbeat_time = None
-            self._refresh_all_tiles()
-        if self._discovery:
-            self._discovery.reset()
-            time.sleep(0.25)
 
     def _on_node_discovered(self, node) -> None:
         if self._registry:
@@ -1774,7 +1791,7 @@ class SFMApp:
             with dpg.group(horizontal=True):
                 dpg.add_input_float(
                     tag="dev_presence_factor_input",
-                    default_value=3.0,
+                    default_value=self._dev_settings.presence_factor,
                     width=120,
                     step=0.5,
                 )
@@ -1803,14 +1820,17 @@ class SFMApp:
                 )
 
     def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
-        factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else 3.0
-        payload = build_setconfig_presence_factor(float(factor))
+        factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else self._dev_settings.presence_factor
+        factor = float(factor)
+        payload = build_setconfig_presence_factor(factor)
         self._broadcast(CanCmd.SetConfig, payload)
+        self._dev_settings.set_presence_factor(factor)
 
     def _on_apply_no_feed_dwell_default(self, sender=None, app_data=None, user_data=None) -> None:
         dwell_s = dpg.get_value("dev_no_feed_dwell_input") if dpg.does_item_exist("dev_no_feed_dwell_input") else ExperimentControl.default_no_feed_dwell_s
         dwell_s = max(0.5, float(dwell_s))
         ExperimentControl.default_no_feed_dwell_s = dwell_s
+        self._dev_settings.set_no_feed_dwell_s(dwell_s)
         if self._log:
             self._log.add(LogEntry(
                 timestamp=time.time(),

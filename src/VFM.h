@@ -105,6 +105,20 @@ private:
     // silently drop that node's feedback.
     bool presenceCalResultPending_ = false;
 
+    // Non-blocking confirm blink after a successful calibration — LED9
+    // blinks briefly instead of routing through LedService::flashConfirm(),
+    // which blocks on delay() for ~600ms. flashConfirm() is fine for the
+    // rare, deliberate 3s-hold ID clear it was built for, but calibration
+    // can fire repeatedly in a session (button, serial, or a CAN broadcast
+    // hitting every node), and blocking the loop there delayed the
+    // PresenceCalResult CAN publish behind the flash and stacked on top of
+    // the NVS commit in finishCalibration() — long enough in the worst case
+    // to trip the watchdog. Mirrors blinkStatusLedForPing()/updatePingBlink().
+    static constexpr uint32_t kCalConfirmBlinkMs    = 100; // blink toggle period
+    static constexpr uint32_t kCalConfirmDurationMs = 600; // total confirm duration
+    uint32_t calConfirmUntilMs_ = 0;
+    bool     calConfirmActive_  = false;
+
     // Status LED blink triggered by a received Ping (visual "which node" aid)
     static constexpr uint32_t kPingBlinkMs         = 1500; // total blink duration
     static constexpr uint32_t kPingBlinkPeriodMs   = 150;  // blink toggle period
@@ -117,6 +131,7 @@ private:
     void sendInputChanged(InputId input, bool active);
     void sendPhaseEvent(CanEvent ev);
     void sendHeartbeatIfDue();
+    void updateCalConfirmBlink();
     void handlePresenceEvents();
     void updateButton();
     void updatePingBlink();

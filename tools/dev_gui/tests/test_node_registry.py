@@ -39,6 +39,23 @@ class TestNodeRegistry:
             assert node.label == f"Node {i}"
             assert node.online is False
 
+    def test_clear_identities(self):
+        reg = NodeRegistry(2)
+        reg.register_node(1, bytes.fromhex("AABBCCDDEE01"))
+        reg.update_from_heartbeat(1, make_hb())
+        reg.update_from_heartbeat(2, make_hb())
+        assert reg.get(1).mac is not None
+        assert reg.get(1).online is True
+
+        reg.clear_identities()
+        for i in (1, 2):
+            node = reg.get(i)
+            assert node.mac is None
+            assert node.discovery_state == "Pending"
+            assert node.online is False
+            assert node.last_heartbeat_time is None
+            assert node.label == f"Node {i}"  # labels preserved
+
     def test_update_heartbeat_marks_online(self):
         reg = NodeRegistry(3)
         reg.update_from_heartbeat(1, make_hb())
