@@ -78,6 +78,7 @@ enum class CanCmd : uint8_t {
     ClearId           = 0x07, // clear NVS id; re-enter discovery (broadcast-friendly)
     DispenseNoFeed    = 0x08, // full dispense motion, M1 never runs; payload = dwell ms LE16 (optional)
     CalibratePresence = 0x09, // recalibrate the presence pad; cage MUST be empty for ~5s
+    SyncFlash         = 0x0A, // status LED solid ON for N ms (camera sync); payload = duration ms LE16 (optional, default 500)
 };
 
 // ---------------------------------------------------------------------------

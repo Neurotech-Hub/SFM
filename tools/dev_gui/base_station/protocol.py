@@ -29,6 +29,7 @@ class CanCmd(IntEnum):
     ClearId           = 0x07  # clear NVS id; node re-enters discovery
     DispenseNoFeed    = 0x08  # dispense motion with no pellet; payload = dwell ms LE16 (optional)
     CalibratePresence = 0x09  # recalibrate the presence pad; cage MUST be empty for ~5s
+    SyncFlash         = 0x0A  # status LED solid ON for N ms (camera sync); payload = duration ms LE16 (optional, default 500)
 
 
 # Friendly one-line purpose text for COMMAND log rows.
@@ -42,12 +43,20 @@ CAN_CMD_PURPOSE = {
     CanCmd.ClearId: "wipe stored ID",
     CanCmd.DispenseNoFeed: "run dispense motion, deliver no pellet",
     CanCmd.CalibratePresence: "recalibrate presence pad (cage must be empty)",
+    CanCmd.SyncFlash: "sync flash — status LED solid ON for camera alignment",
 }
 
 # Dwell time (ms) the node holds at the drop position on a no-feed dispense.
 DEFAULT_NO_FEED_DWELL_MS = 6000
 NO_FEED_DWELL_MIN_MS = 500
 NO_FEED_DWELL_MAX_MS = 60000
+
+# Duration (ms) the status LED holds solid ON on a sync flash, for camera
+# alignment at session start. Clamp mirrors kMinSyncFlashMs/kMaxSyncFlashMs
+# in VFM.h.
+DEFAULT_SYNC_FLASH_MS = 500
+SYNC_FLASH_MIN_MS = 50
+SYNC_FLASH_MAX_MS = 5000
 
 
 class CanEvent(IntEnum):
@@ -444,6 +453,16 @@ def build_dispense_no_feed(dwell_ms: int = DEFAULT_NO_FEED_DWELL_MS) -> bytes:
     clamp rather than reject, so a bad parameter can't brick a trial.
     """
     ms = max(NO_FEED_DWELL_MIN_MS, min(int(dwell_ms), NO_FEED_DWELL_MAX_MS))
+    return struct.pack("<H", ms)
+
+
+def build_sync_flash(duration_ms: int = DEFAULT_SYNC_FLASH_MS) -> bytes:
+    """
+    Build the payload (after the SyncFlash command byte): hold duration,
+    uint16 LE ms. Clamped to [SYNC_FLASH_MIN_MS, SYNC_FLASH_MAX_MS] to match
+    firmware's kMinSyncFlashMs/kMaxSyncFlashMs clamp.
+    """
+    ms = max(SYNC_FLASH_MIN_MS, min(int(duration_ms), SYNC_FLASH_MAX_MS))
     return struct.pack("<H", ms)
 
 

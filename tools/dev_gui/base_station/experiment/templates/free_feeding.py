@@ -58,6 +58,7 @@ def build(
     def _start(control):
         control.log("free_feeding_start", nodes=control.nodes, reload_delay_s=reload_delay_s)
         for n in control.nodes:
+            control.next_trial()
             control.dispense(n)
 
     @exp.on_dome_opened
@@ -85,6 +86,7 @@ def build(
         def _do_reload():
             if control.stop_requested:
                 return
+            control.next_trial()
             control.log("reload_dispense", node=node_id)
             control.dispense(node_id)
 
@@ -118,6 +120,7 @@ def build(
     def _recovered(control, event):
         """Operator cleared the fault — resume this node's dispense cycle."""
         control.log("recovered", node=event.node_id)
+        control.next_trial()
         control.dispense(event.node_id)
 
     @exp.on_end

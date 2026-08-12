@@ -279,6 +279,69 @@ def test_start_when_defers_activation() -> None:
     assert started == [True]
 
 
+def test_on_session_start_fires_once_immediately() -> None:
+    exp = Experiment(nodes=[1])
+    fired = []
+    runner = exp.make_runner()
+    runner.ctx.on_session_start = lambda: fired.append(True)
+
+    runner.start(now=0.0)
+    assert runner.is_active
+    assert fired == [True]
+
+    runner.step(now=1.0)
+    runner.step(now=2.0)
+    assert fired == [True]  # still exactly once
+
+
+def test_on_session_start_fires_once_at_deferred_activation() -> None:
+    exp = Experiment(nodes=[1])
+    ready = {"ok": False}
+    fired = []
+    exp.start_when(lambda ctx: ready["ok"])
+
+    runner = exp.make_runner()
+    runner.ctx.on_session_start = lambda: fired.append(True)
+    runner.start(now=0.0)
+    assert not runner.is_active
+    assert fired == []  # not yet — start_when hasn't been satisfied
+
+    runner.step(now=1.0)
+    assert fired == []
+
+    ready["ok"] = True
+    runner.step(now=2.0)
+    assert runner.is_active
+    assert fired == [True]
+
+    runner.step(now=3.0)
+    assert fired == [True]  # still exactly once
+
+
+def test_on_session_start_error_is_caught_and_logged() -> None:
+    """A raising callback must not prevent on_start handlers from running."""
+    exp = Experiment(nodes=[1])
+    started = []
+
+    @exp.on_start
+    def _s(ctx):
+        started.append(True)
+
+    runner = exp.make_runner()
+
+    def _boom():
+        raise RuntimeError("camera offline")
+
+    runner.ctx.on_session_start = _boom
+    runner.start(now=0.0)
+
+    assert runner.is_active
+    assert started == [True]
+    errors = [e for e in runner.ctx.log_entries if e.name == "callback_error"]
+    assert len(errors) == 1
+    assert "camera offline" in errors[0].fields["error"]
+
+
 # ---------------------------------------------------------------------------
 # Free-feeding template
 # ---------------------------------------------------------------------------

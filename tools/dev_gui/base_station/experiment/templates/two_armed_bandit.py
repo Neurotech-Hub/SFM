@@ -149,7 +149,6 @@ def build(
             "two_armed_bandit_start",
             nodes=control.nodes, arm_a=arm_a, arm_b=arm_b,
             block_size=block_size, p_high=p_high,
-            dwell_s=_resolved_dwell_s(control),
             next_trial_wait=next_trial_wait, seed=control.seed,
         )
 
@@ -227,7 +226,7 @@ def build(
             )
             control.log(
                 "arm_command", node=empty, trial=trial, role="empty",
-                cmd="DispenseNoFeed", dwell_s=resolved_dwell_s, accepted=int(empty_ok),
+                cmd="DispenseNoFeed", accepted=int(empty_ok),
             )
 
             if not fed_ok or not empty_ok:

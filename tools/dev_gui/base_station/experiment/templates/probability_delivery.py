@@ -104,6 +104,7 @@ def build(
     weights = _weights_for_nodes(probabilities, exp.nodes)
 
     def _cycle(control) -> None:
+        control.next_trial()
         # Weighted pick of a single node from the current node list.
         target = rng.choices(control.nodes, weights=weights[: len(control.nodes)], k=1)[0]
         control.log("probability_pick", node=target)

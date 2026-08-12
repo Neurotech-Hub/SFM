@@ -70,6 +70,12 @@ public:
     // the physical node can be located on the bench. Non-blocking.
     void blinkStatusLedForPing();
 
+    // Hold the status LED solid ON for durationMs (clamped to
+    // [kMinSyncFlashMs, kMaxSyncFlashMs]) so an external camera can align its
+    // footage to session start. Non-blocking; a no-op while in Fault, since
+    // that state already holds the LED solid ON for a different reason.
+    void syncFlash(uint16_t durationMs);
+
 private:
     DispenserService dispenser_;
     CanService       can_;
@@ -125,6 +131,13 @@ private:
     uint32_t pingBlinkUntilMs_ = 0;    // millis() deadline; 0 = not blinking
     bool     pingBlinkActive_  = false;
 
+    // Status LED solid-ON hold triggered by CanCmd::SyncFlash (camera sync).
+    static constexpr uint16_t kDefaultSyncFlashMs = 500;  // used when payload omits a duration
+    static constexpr uint16_t kMinSyncFlashMs     = 50;
+    static constexpr uint16_t kMaxSyncFlashMs     = 5000;
+    uint32_t syncFlashUntilMs_ = 0;    // millis() deadline; 0 = not flashing
+    bool     syncFlashActive_  = false;
+
     void handleDispenserEvents();
     void handleDispensePhaseEvents();
     void handleInputEvents();
@@ -135,6 +148,7 @@ private:
     void handlePresenceEvents();
     void updateButton();
     void updatePingBlink();
+    void updateSyncFlash();
     void updateSensorLeds();          // LED 9 = dome open, LED 10 = pellet present
     void flashLedsClear();            // visual confirmation of NVS clear
 };

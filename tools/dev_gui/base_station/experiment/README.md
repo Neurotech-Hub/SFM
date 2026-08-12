@@ -20,6 +20,41 @@ human or a running experiment triggered it. Everything else you log with
 `control.log(...)` (session lifecycle, per-cycle bookkeeping, etc.) shows up as
 **EXPERIMENT** rows.
 
+### Session naming and the unified log (GUI)
+
+The GUI's Experiment panel requires a **session name** before Start is
+enabled. That name resolves to one CSV, `<log_dir>/<sanitized_name>.csv`
+(non-alphanumeric characters collapse to `_`) — every CAN frame, heartbeat,
+BNC edge, and experiment row lands there with columns `run_id`, `trial`,
+`source`, and a lossless `fields_json` alongside the human-readable
+`details`. Starting a new run under a **name already used** appends rather
+than overwriting, and `run_id` increments so runs can be told apart in
+analysis — this is how a session picks back up across GUI restarts. All
+GUI-hosted experiments log through this one file; passing `log_dir` to
+`ExperimentController.start()` is a no-op from the GUI (`log_dir=None` is
+always passed to `make_runner()`) so nothing is written twice. The
+per-template `experiment_<name>_<timestamp>.csv` writer in
+`ExperimentControl` still exists and is used by headless runs (§11) — it
+just isn't wired up when the GUI hosts the runner.
+
+At the moment a session actually **activates** (immediately if the template
+has no `start_when`, later otherwise — see `ExperimentControl.on_session_start`),
+the GUI broadcasts `CanCmd.SyncFlash` (every node holds its status LED solid
+for ~500 ms) and fires a coincident BNC OUT pulse, so field-camera footage can
+be aligned to session start without a manual clapperboard. A node latched in
+`Fault` ignores the command (same guard the firmware uses for a solid fault
+indication) and is called out by id in the logged `SYNC` row.
+
+### Trial numbers
+
+Call `control.next_trial()` once per delivery cycle — the built-in templates
+that dispense on a timer/BNC trigger or per-node reload all do this, so
+`trial` (and its mirror `counter("trials")`) means "one delivery decision"
+consistently across templates, not just in `@exp.script`-based tasks like
+`two_armed_bandit`. The GUI mirrors the running `control.trial` onto every
+log row (CAN and experiment alike) each frame, so trial boundaries are
+visible outside `control.log(...)` rows too.
+
 ---
 
 ## 1. Anatomy of a template

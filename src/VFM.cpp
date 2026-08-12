@@ -205,6 +205,18 @@ bool VFM::begin() {
 
                 break;
 
+            case CanCmd::SyncFlash: {
+
+                uint16_t ms = (len >= 2)
+                    ? static_cast<uint16_t>(payload[0] | (payload[1] << 8))
+                    : kDefaultSyncFlashMs;
+
+                syncFlash(ms);
+
+                break;
+
+            }
+
             default:
 
                 break;
@@ -293,15 +305,18 @@ void VFM::update() {
 
     updatePingBlink();
 
+    updateSyncFlash();
+
     updateCalConfirmBlink();
 
 
 
-    // Once discovery completes, turn the status LED off — unless a Ping blink is
-    // currently active, which takes precedence so the node stays visually
-    // identifiable for its full blink duration.
+    // Once discovery completes, turn the status LED off — unless a Ping blink
+    // or a SyncFlash hold is currently active, either of which takes
+    // precedence so the node stays visually identifiable for its full
+    // duration.
 
-    if (identity_.isEnabled() && !pingBlinkActive_) {
+    if (identity_.isEnabled() && !pingBlinkActive_ && !syncFlashActive_) {
 
         leds_.setStatusLedBlinkMs(0);
 
@@ -315,13 +330,18 @@ void VFM::update() {
 
 
 
-    // Status LED solid ON while in Fault state — always wins over a Ping blink.
+    // Status LED solid ON while in Fault state — always wins over a Ping
+    // blink or a SyncFlash hold.
 
     if (dispenser_.state() == DispenseState::Fault) {
 
         pingBlinkActive_  = false;
 
         pingBlinkUntilMs_ = 0;
+
+        syncFlashActive_  = false;
+
+        syncFlashUntilMs_ = 0;
 
         leds_.setStatusLedBlinkMs(0);
 
@@ -698,6 +718,43 @@ void VFM::updatePingBlink() {
         pingBlinkActive_  = false;
         pingBlinkUntilMs_ = 0;
         leds_.setStatusLedBlinkMs(0);
+        leds_.setStatusLed(false);
+    }
+
+}
+
+
+
+void VFM::syncFlash(uint16_t durationMs) {
+
+    // Don't interrupt a solid fault indication — it already holds the LED
+    // solid ON for a different reason, and the flash would be invisible.
+    if (dispenser_.state() == DispenseState::Fault) return;
+
+    uint16_t ms = durationMs;
+    if (ms < kMinSyncFlashMs) ms = kMinSyncFlashMs;
+    if (ms > kMaxSyncFlashMs) ms = kMaxSyncFlashMs;
+
+    // Single LED owner: a SyncFlash takes over from any in-progress Ping blink.
+    pingBlinkActive_  = false;
+    pingBlinkUntilMs_ = 0;
+    leds_.setStatusLedBlinkMs(0);
+
+    syncFlashActive_  = true;
+    syncFlashUntilMs_ = millis() + ms;
+    leds_.setStatusLed(true);
+
+}
+
+
+
+void VFM::updateSyncFlash() {
+
+    if (!syncFlashActive_) return;
+
+    if ((int32_t)(millis() - syncFlashUntilMs_) >= 0) {
+        syncFlashActive_  = false;
+        syncFlashUntilMs_ = 0;
         leds_.setStatusLed(false);
     }
 

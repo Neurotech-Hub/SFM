@@ -471,6 +471,11 @@ class ExperimentRunner:
             nodes=self.ctx.nodes,
             seed=self.ctx.seed,
         )
+        if self.ctx.on_session_start is not None:
+            try:
+                self.ctx.on_session_start()
+            except Exception as exc:  # noqa: BLE001
+                self.ctx.log("callback_error", error=str(exc))
         for cb in self.experiment._on_start:
             self._safe_call_start(cb)
         self._fire_handlers(start_ev)
