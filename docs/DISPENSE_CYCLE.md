@@ -104,12 +104,14 @@ seeing the sensor may back off once only when it is safe to raise (sensor assert
 true); otherwise it faults with `ActuatorTimeout`.
 
 **Loading.** With the plate at the drop position, M1 turns the pellet wheel at half the commanded speed
-(`kDefaultFeedSpeedScale`) until the pellet sensor asserts. The first sighting stops the wheel immediately, so
-it cannot follow with a second pellet, and starts a `kPelletLoadConfirmMs` hold. The pellet must keep the beam
-broken for that whole window to count: a fragment tumbling past clears the beam early, and the wheel simply
-resumes loading within the same budget. Once the window elapses the node reports `OnPlate` and begins the
-raise in the same tick. If no pellet is confirmed within `kDefaultFeedTimeoutMs` — an empty hopper or a wheel
-jam — the node faults with `FeedTimeout` (refill the hopper).
+(`kDefaultFeedSpeedScale`) in a run-pause pattern: `kDefaultFeedBurstSteps` (500), then coils off for
+`kDefaultFeedPauseMs` (1 s), then repeat. The pause lets a dropped pellet settle so a second pellet does not
+pile on. The raw pellet beam stops the wheel immediately — before the 100 ms debounce — so the motor does not
+keep stepping into a second pellet. Once the debounced pellet sensor asserts, a `kPelletLoadConfirmMs` hold
+begins. The pellet must keep the beam broken for that whole window to count: a fragment tumbling past clears
+the beam early, and the wheel simply resumes the run-pause pattern within the same budget. Once the window
+elapses the node reports `OnPlate` and begins the raise in the same tick. If no pellet is confirmed within
+`kDefaultFeedTimeoutMs` — an empty hopper or a wheel jam — the node faults with `FeedTimeout` (refill the hopper).
 
 **Raising.** M2 lifts the plate by `kDefaultRaiseSteps` from the drop position — the grab descent back plus
 the top height above the load sensor. Two checks run during travel:
