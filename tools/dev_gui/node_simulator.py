@@ -75,6 +75,7 @@ except ImportError:
     class CanCmd(IntEnum):
         Ping=0x01; Dispense=0x02; Recover=0x03; AssignId=0x04; SetConfig=0x05
         ReqStatus=0x06; ClearId=0x07; DispenseNoFeed=0x08; CalibratePresence=0x09
+        SyncFlash=0x0A
 
     class CanEvent(IntEnum):
         OnPlate=0x01; Loaded=0x02; DomeOpened=0x03; Fault=0x04
@@ -408,6 +409,11 @@ class NodeSimulator:
 
             elif cmd == CanCmd.ReqStatus:
                 self._send_heartbeat(node)
+
+            elif cmd == CanCmd.SyncFlash:
+                ms = (data[1] | (data[2] << 8)) if len(data) >= 3 else 500
+                ms = max(50, min(ms, 5000))
+                print(f"  [SIM] Node {node.node_id}: status LED solid ON {ms}ms (SyncFlash)", flush=True)
 
             elif cmd == CanCmd.SetConfig and len(data) >= 2:
                 config_type = data[1]

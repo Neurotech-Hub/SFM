@@ -7,8 +7,10 @@ import csv
 import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import json
+
 import pytest
-from base_station.log_manager import LogManager, LogEntry
+from base_station.log_manager import LogManager, LogEntry, sanitize_session_name
 
 
 def make_entry(**kwargs) -> LogEntry:
@@ -137,3 +139,92 @@ class TestLogManager:
         assert len(result) == 1
         assert result[0].node_id == 1
         assert result[0].frame_type == "EVENT"
+
+
+class TestSanitizeSessionName:
+    def test_basic_passthrough(self):
+        assert sanitize_session_name("cohortA_day3") == "cohortA_day3"
+
+    def test_spaces_and_punctuation_collapse(self):
+        assert sanitize_session_name("cohort A / day 3!") == "cohort_A_day_3"
+
+    def test_blank_and_punctuation_only_are_empty(self):
+        assert sanitize_session_name("   ") == ""
+        assert sanitize_session_name("***") == ""
+
+    def test_length_capped(self):
+        assert len(sanitize_session_name("x" * 200)) == 64
+
+
+class TestNamedSession:
+    def test_fresh_session_creates_file_with_run_id_1(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        run_id = lm.open_session("cohortA", str(tmp_path))
+        assert run_id == 1
+        assert lm.csv_path == tmp_path / "cohortA.csv"
+        with open(lm.csv_path) as f:
+            rows = list(csv.DictReader(f))
+        assert rows[0]["frame_type"] == "SESSION_OPEN"
+        lm.close()
+
+    def test_reopening_same_session_appends_and_increments_run_id(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        run_id_1 = lm.open_session("cohortA", str(tmp_path))
+        lm.add(make_entry(event_name="Row1"))
+        lm.close()
+
+        lm2 = LogManager(auto_save=False)
+        run_id_2 = lm2.open_session("cohortA", str(tmp_path))
+        assert run_id_2 == run_id_1 + 1
+        lm2.add(make_entry(event_name="Row2"))
+        lm2.close()
+
+        with open(tmp_path / "cohortA.csv") as f:
+            rows = list(csv.DictReader(f))
+        # SESSION_OPEN (run1) + Row1 + SESSION_OPEN (run2) + Row2
+        assert len(rows) == 4
+        assert rows[-1]["event_name"] == "Row2"
+        assert rows[-1]["run_id"] == "2"
+
+    def test_stale_header_diverts_to_timestamped_file(self, tmp_path):
+        stale = tmp_path / "cohortA.csv"
+        with open(stale, "w", newline="") as f:
+            csv.writer(f).writerow(["some", "old", "header"])
+
+        lm = LogManager(auto_save=False)
+        run_id = lm.open_session("cohortA", str(tmp_path))
+        assert run_id == 1
+        assert lm.csv_path != stale
+        assert lm.csv_path.name.startswith("cohortA_")
+        lm.close()
+        # The stale file must survive untouched.
+        with open(stale) as f:
+            assert f.readline().strip() == "some,old,header"
+
+    def test_open_session_rejects_empty_name(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        with pytest.raises(ValueError):
+            lm.open_session("   ***   ", str(tmp_path))
+
+    def test_fields_json_round_trips_spaces_and_equals(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        lm.open_session("cohortA", str(tmp_path))
+        lm.add(make_entry(
+            frame_type="EXPERIMENT",
+            fields={"note": "a=b has spaces", "count": 3},
+        ))
+        lm.close()
+        with open(tmp_path / "cohortA.csv") as f:
+            rows = list(csv.DictReader(f))
+        payload = json.loads(rows[-1]["fields_json"])
+        assert payload == {"note": "a=b has spaces", "count": 3}
+
+    def test_run_id_and_trial_stamped_from_context(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        run_id = lm.open_session("cohortA", str(tmp_path))
+        lm.set_context(trial=5)
+        lm.add(make_entry())
+        entries = lm.get_filtered(show_heartbeats=True)
+        assert entries[0].run_id == run_id
+        assert entries[0].trial == 5
+        lm.close()

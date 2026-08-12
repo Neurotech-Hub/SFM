@@ -124,6 +124,7 @@ def build(
     roles = _resolve_roles(node_roles, fixed_nodes, exp.nodes)
 
     def _cycle(control) -> None:
+        control.next_trial()
         for n in control.nodes:
             role = roles.get(n, OFF)
             if role == FIXED:

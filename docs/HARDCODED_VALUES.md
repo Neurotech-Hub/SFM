@@ -170,6 +170,7 @@ the reading did not change, the decision boundary did.
 | 50 ms          | `kBtnClickMinMs` (`VFM.h`)            | Minimum press for a click to count as "recalibrate presence"; shorter = bounce     |
 | 100 ms         | `VFM.cpp` LED9 blink while hold armed | Rapid blink warning                                                                |
 | 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                              |
+| 500 ms (50–5000 ms clamp) | `kDefaultSyncFlashMs` / `kMinSyncFlashMs` / `kMaxSyncFlashMs` (`VFM.h`) | Status LED solid-ON hold on `CanCmd::SyncFlash` (camera sync at session start)     |
 | 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                               |
 | 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                       |
 | —              | LED9 during presence calibration      | Solid ON for the whole capture; yields back to the dome mirror when done            |

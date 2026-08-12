@@ -29,7 +29,7 @@ import dearpygui.dearpygui as dpg
 from .can_manager import CanManager
 from .discovery_manager import DiscoveryManager, DiscoveryPhase
 from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
-from .log_manager import LogEntry, LogManager
+from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .dev_settings import DevSettings
 from .node_registry import NodeRegistry
@@ -43,6 +43,7 @@ from .experiment.schema import (
 from .protocol import (
     CanCmd,
     CanEvent,
+    DispenseState,
     InputId,
     classify_frame,
     format_mac,
@@ -60,6 +61,8 @@ from .protocol import (
     config_applied_factor,
     build_setconfig_heartbeat,
     build_setconfig_presence_factor,
+    build_sync_flash,
+    DEFAULT_SYNC_FLASH_MS,
     CAN_EVENT_DISPLAY_NAME,
     CAN_CMD_PURPOSE,
     CONFIG_HEARTBEAT_INTERVAL,
@@ -89,6 +92,7 @@ STALE_CHECK_INTERVAL = 1.0  # seconds between staleness sweeps
 DEFAULT_HEARTBEAT_INTERVAL_S = 60  # default node heartbeat interval (seconds)
 MAC_PING_RETRY_S = 3.0  # min seconds between MAC-resolution Pings to the same node
 DEFAULT_EXPERIMENT_NAME = "free_feeding"  # matches experiments/free_feeding.json "name"
+SYNC_FLASH_MS = DEFAULT_SYNC_FLASH_MS  # camera-sync status LED hold + BNC OUT pulse duration
 
 # Short purpose strings for COMMAND rows in the event log.
 COMMAND_PURPOSE = CAN_CMD_PURPOSE
@@ -809,6 +813,19 @@ class SFMApp:
                     wrap=WINDOW_W - 40,
                 )
             with dpg.group(horizontal=True):
+                dpg.add_text("Session name:", color=(160, 165, 175, 255))
+                dpg.add_input_text(
+                    tag="exp_session_name",
+                    width=260,
+                    callback=self._on_session_name_changed,
+                )
+            dpg.add_text(
+                "Enter a session name to begin.",
+                tag="exp_session_hint",
+                color=(140, 145, 155, 255),
+                wrap=WINDOW_W - 40,
+            )
+            with dpg.group(horizontal=True):
                 dpg.add_text("Template:", color=(160, 165, 175, 255))
                 dpg.add_combo(
                     tag="exp_template_combo",
@@ -868,6 +885,32 @@ class SFMApp:
             dpg.set_value("exp_description", exp_def.description)
         self._rebuild_experiment_params(exp_def)
 
+    def _on_session_name_changed(self, sender=None, app_data=None, user_data=None) -> None:
+        self._refresh_session_hint()
+        self._refresh_experiment_status()
+
+    def _refresh_session_hint(self) -> None:
+        """Preview what Start will do with the current session-name text."""
+        if not dpg.does_item_exist("exp_session_hint"):
+            return
+        raw = dpg.get_value("exp_session_name") if dpg.does_item_exist("exp_session_name") else ""
+        raw = (raw or "").strip()
+        if not sanitize_session_name(raw):
+            dpg.set_value("exp_session_hint", "Enter a session name to begin.")
+            return
+        info = self._log.preview_session_path(raw, self._exp_log_dir) if self._log else None
+        if info is None or info["path"] is None:
+            dpg.set_value("exp_session_hint", "Enter a session name to begin.")
+            return
+        if info["will_create"]:
+            dpg.set_value("exp_session_hint", f"→ will create {info['path']}")
+        else:
+            dpg.set_value(
+                "exp_session_hint",
+                f"→ appending to {info['path']} (run {info['next_run_id']}, "
+                f"{info['row_count']:,} existing row(s))",
+            )
+
     # ------------------------------------------------------------------
     # Schema-driven parameter form
     # ------------------------------------------------------------------
@@ -882,8 +925,11 @@ class SFMApp:
         self._exp_node_param_tags = {}
         self._exp_param_groups = []
         self._exp_input_tags = []
+        if dpg.does_item_exist("exp_session_name"):
+            self._exp_input_tags.append("exp_session_name")
         if dpg.does_item_exist("exp_template_combo"):
             self._exp_input_tags.append("exp_template_combo")
+        self._refresh_session_hint()
 
         # Keys that gate another param's visibility need a change callback.
         controllers = set()
@@ -1074,11 +1120,30 @@ class SFMApp:
             return
         if self._exp.is_running:
             return
+
+        session_name = dpg.get_value("exp_session_name").strip() if dpg.does_item_exist("exp_session_name") else ""
+        sanitized = sanitize_session_name(session_name)
+        if not sanitized:
+            dpg.set_value("exp_status_text", "Enter a session name before starting.")
+            if self._log:
+                self._log.add(LogEntry(
+                    timestamp=time.time(), direction="LOCAL", node_id=0, frame_type="ERROR",
+                    event_name="ExperimentStartRejected", raw_id=0, raw_data=b"",
+                    details="Session name is required to start an experiment.",
+                ))
+            return
+
         params = self._collect_experiment_params(exp_def)
         nodes = self._effective_nodes(exp_def)
         if not nodes:
             dpg.set_value("exp_status_text", "Enable at least one node to run.")
             return
+
+        run_id = 0
+        if self._log:
+            run_id = self._log.open_session(sanitized, self._exp_log_dir)
+            self._log.set_context(session=sanitized, run_id=run_id, trial=0, session_start_ts=time.time())
+
         ok = self._exp.start(
             exp_def,
             params=params,
@@ -1086,12 +1151,13 @@ class SFMApp:
             can=self._can,
             io=self._io,
             log=self._log,
-            log_dir=self._exp_log_dir,
+            on_session_start=self._fire_sync_marker,
         )
         if ok:
             self._set_experiment_inputs_enabled(False)  # lock config while running
             dpg.configure_item("exp_start_btn", enabled=False)
             self._refresh_experiment_status()
+            self._refresh_session_hint()
 
     def _on_experiment_stop(self, sender=None, app_data=None, user_data=None) -> None:
         if self._exp.is_running:
@@ -1101,13 +1167,49 @@ class SFMApp:
             dpg.configure_item("exp_start_btn", enabled=True)
         self._refresh_experiment_status()
 
+    def _fire_sync_marker(self) -> None:
+        """
+        Called once at true experiment-session activation (ExperimentControl
+        .on_session_start): hold every node's status LED solid for
+        SYNC_FLASH_MS and fire a coincident BNC OUT pulse, so field-camera
+        footage can be aligned to session start. Nodes latched in Fault
+        silently ignore the CAN command (firmware guard) and are called out
+        by id in the log row.
+        """
+        ts = time.time()
+        if self._can is not None:
+            self._can.send_broadcast(CanCmd.SyncFlash, build_sync_flash(SYNC_FLASH_MS))
+        if self._io is not None:
+            self._io.pulse_bnc_out(SYNC_FLASH_MS * 1000)
+
+        faulted = []
+        if self._registry is not None:
+            faulted = [
+                n.node_id for n in self._registry.all_nodes()
+                if n.dispense_state == DispenseState.Fault
+            ]
+        details = f"{SYNC_FLASH_MS}ms LED + BNC OUT"
+        if self._log:
+            details += f" · run {self._log.run_id}"
+        if faulted:
+            details += f" · skipped (fault): {faulted}"
+
+        if self._log:
+            self._log.add(LogEntry(
+                timestamp=ts, direction="TX", node_id=0, frame_type="SYNC",
+                event_name="SyncFlash (broadcast)", raw_id=0x100, raw_data=b"",
+                details=details,
+            ))
+
     def _refresh_experiment_status(self) -> None:
         if not dpg.does_item_exist("exp_status_text"):
             return
         dpg.set_value("exp_status_text", self._exp.status_line())
         running = self._exp.is_running
+        session_name = dpg.get_value("exp_session_name").strip() if dpg.does_item_exist("exp_session_name") else ""
+        has_session_name = bool(sanitize_session_name(session_name))
         if dpg.does_item_exist("exp_start_btn"):
-            dpg.configure_item("exp_start_btn", enabled=not running)
+            dpg.configure_item("exp_start_btn", enabled=not running and has_session_name)
         # Calibrating pauses presence sampling on every node for ~5s and
         # rewrites NVS thresholds — never allow it mid-run, since a running
         # experiment may depend on live presence readings.
@@ -1131,7 +1233,7 @@ class SFMApp:
             dpg.add_text("Type:", color=(160,165,175,255))
             dpg.add_combo(
                 tag="log_filter_type",
-                items=["All", "EVENT", "COMMAND", "HEARTBEAT", "DISCOVERY", "BNC", "EXPERIMENT"],
+                items=["All", "EVENT", "COMMAND", "HEARTBEAT", "DISCOVERY", "BNC", "SYNC", "EXPERIMENT"],
                 default_value="All",
                 width=120,
                 callback=self._refresh_log_table,
@@ -1195,6 +1297,8 @@ class SFMApp:
         now = time.time()
         if self._exp.is_running:
             self._exp.step(messages, now=now)
+            if self._log and self._exp.runner is not None:
+                self._log.set_context(trial=self._exp.runner.ctx.trial)
         self._refresh_experiment_status()
 
         # 2. Tick discovery timeout
@@ -2227,8 +2331,10 @@ class SFMApp:
     def _on_log_export(self) -> None:
         if not self._log:
             return
+        log_dir = self._exp_log_dir or "~/sfm_logs"
+        stem = self._log.session_name or "session"
         path = self._log.export(
-            f"~/sfm_logs/export_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+            str(Path(log_dir).expanduser() / f"{stem}_export_{time.strftime('%Y%m%d_%H%M%S')}.csv")
         )
         dpg.set_value("log_count_text", f"  Exported → {path.name}")
 

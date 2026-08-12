@@ -8,7 +8,7 @@ messages, and mirrors experiment log rows into the GUI LogManager.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence
 
 from ..log_manager import LogEntry, LogManager
 from ..protocol import CAN_CMD_PURPOSE, CanCmd
@@ -60,10 +60,15 @@ class ExperimentController:
         io: Optional["IOManager"] = None,
         log: Optional[LogManager] = None,
         log_dir: Optional[str] = None,
+        on_session_start: Optional[Callable[[], None]] = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
         Does not open CAN — the GUI session already owns the bus.
+
+        ``on_session_start``, if given, fires once at true session activation
+        (immediately if the template has no start_when, later otherwise) —
+        e.g. to fire the camera sync flash at the real start moment.
         """
         if self.is_running:
             return False
@@ -72,11 +77,16 @@ class ExperimentController:
         runner = exp.make_runner(
             can=can,
             io=io,
-            log_dir=log_dir,
+            # The GUI path logs everything through the unified LogManager
+            # (see _on_experiment_log below); passing log_dir=None here
+            # keeps ExperimentControl's own CSV writer a no-op so nothing is
+            # written twice.
+            log_dir=None,
             wire_bnc=False,
         )
         self._gui_log = log
         runner.ctx.on_log = self._on_experiment_log
+        runner.ctx.on_session_start = on_session_start
         self._runner = runner
         self._exp_def = exp_def
         runner.start()
@@ -173,6 +183,8 @@ class ExperimentController:
                 raw_id=0,
                 raw_data=b"",
                 details=field_str,
+                source="EXP",
+                fields=dict(entry.fields),
             )
         )
 
@@ -203,4 +215,6 @@ class ExperimentController:
             raw_id=0x100 if broadcast else (0x100 + node_id),
             raw_data=(bytes([cmd.value]) if cmd is not None else b"") + payload,
             details=f"{purpose} — {exp_label}",
+            source="EXP",
+            fields=dict(entry.fields),
         )

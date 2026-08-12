@@ -397,6 +397,37 @@ class TestBuildDispenseNoFeed:
         assert data[1] | (data[2] << 8) == 6000
 
 
+class TestBuildSyncFlash:
+    def test_default_duration(self):
+        from base_station.protocol import build_sync_flash, DEFAULT_SYNC_FLASH_MS
+        payload = build_sync_flash()
+        assert len(payload) == 2
+        assert payload[0] | (payload[1] << 8) == DEFAULT_SYNC_FLASH_MS
+
+    def test_explicit_duration(self):
+        from base_station.protocol import build_sync_flash
+        payload = build_sync_flash(750)
+        assert payload[0] | (payload[1] << 8) == 750
+
+    def test_clamps_below_min(self):
+        from base_station.protocol import build_sync_flash, SYNC_FLASH_MIN_MS
+        payload = build_sync_flash(0)
+        assert payload[0] | (payload[1] << 8) == SYNC_FLASH_MIN_MS
+
+    def test_clamps_above_max(self):
+        from base_station.protocol import build_sync_flash, SYNC_FLASH_MAX_MS
+        payload = build_sync_flash(99999)
+        assert payload[0] | (payload[1] << 8) == SYNC_FLASH_MAX_MS
+
+    def test_sync_flash_opcode_and_frame(self):
+        from base_station.protocol import CanCmd, build_cmd_frame, build_sync_flash
+        assert CanCmd.SyncFlash == 0x0A
+        arb_id, data = build_cmd_frame(0, CanCmd.SyncFlash, build_sync_flash(500))
+        assert arb_id == CAN_CMD_BASE  # broadcast
+        assert data[0] == CanCmd.SyncFlash
+        assert data[1] | (data[2] << 8) == 500
+
+
 class TestPresenceCalibration:
     def test_calibrate_presence_opcode(self):
         from base_station.protocol import CanCmd

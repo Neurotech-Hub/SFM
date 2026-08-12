@@ -143,6 +143,12 @@ class ExperimentControl:
         self._log_dir = log_dir
         # Optional sink so a GUI host can mirror experiment log rows.
         self.on_log: Optional[Callable[[ExperimentLogEntry], None]] = None
+        # Fired once, right after the "session_start" log row, when the
+        # session actually activates (immediately if the template has no
+        # start_when, later otherwise) — lets a GUI host fire a one-shot
+        # side effect (e.g. the camera sync flash) at the true start moment
+        # rather than at the operator's click.
+        self.on_session_start: Optional[Callable[[], None]] = None
         # Commands issued during the session (for tests / inspection).
         self.commands_sent: List[tuple] = []
         # Set by stop(); the runner ends the session on the next end-check.

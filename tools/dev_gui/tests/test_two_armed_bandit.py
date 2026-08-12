@@ -71,7 +71,7 @@ def test_no_feed_dwell_defaults_to_developer_menu_class_setting() -> None:
         assert payload[0] | (payload[1] << 8) == 4000
 
         started = [e for e in runner.ctx.log_entries if e.name == "two_armed_bandit_start"]
-        assert started[0].fields.get("dwell_s") == 4.0
+        assert started and "dwell_s" not in started[0].fields
     finally:
         ExperimentControl.default_no_feed_dwell_s = original
 
