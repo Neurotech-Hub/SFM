@@ -27,6 +27,21 @@ def _msg(arb_id: int, data: bytes):
     return SimpleNamespace(arbitration_id=arb_id, data=data)
 
 
+def _fire_bnc_and_resolve(runner, channel: int, ts: float) -> None:
+    """
+    Inject a BNC IN rising edge, then immediately resolve (LOADED) whichever
+    node it dispensed on — simulating each cycle completing before the next
+    trigger, so a statistics-over-many-triggers test isn't gated by the
+    "cycle already in flight" veto (see ExperimentControl.is_dispensing()).
+    """
+    before = len(runner.ctx.commands_sent)
+    runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=ts,
+                            data={"channel": channel, "edge": "rising", "high": True}))
+    for (node, cmd, _) in runner.ctx.commands_sent[before:]:
+        if cmd == CanCmd.Dispense:
+            runner.inject(NodeEvent(EventKind.LOADED, node_id=node, timestamp=ts + 0.001))
+
+
 # ---------------------------------------------------------------------------
 # EventNormalizer
 # ---------------------------------------------------------------------------
@@ -120,6 +135,25 @@ def test_normalizer_fault() -> None:
     assert events[0].data["fault_code"] == ServiceStatus.Jam
 
 
+def test_normalizer_set_online_timeout() -> None:
+    norm = EventNormalizer(online_timeout_s=5.0)
+    hb = HeartbeatPayload(
+        dispense_state=DispenseState.Idle,
+        mouse_presence=False,
+        pellet=False,
+        load_position=True,
+        dome_open=False,
+        fault_code=ServiceStatus.Ok,
+    )
+    arb, data = build_heartbeat_frame(1, hb)
+    norm.frame_to_events(_msg(arb, data), now=0.0)
+    assert norm.check_staleness(now=6.0)  # offline under 5s timeout
+    # Bring back online, then widen timeout so 6s silence is fine.
+    norm.frame_to_events(_msg(arb, data), now=10.0)
+    norm.set_online_timeout(180.0)
+    assert norm.check_staleness(now=16.0) == []
+
+
 # ---------------------------------------------------------------------------
 # ExperimentContext
 # ---------------------------------------------------------------------------
@@ -148,6 +182,10 @@ def test_context_no_feed_dispense_uses_class_default_dwell_when_unset() -> None:
         assert cmd == CanCmd.DispenseNoFeed
         assert payload[0] | (payload[1] << 8) == 8000
 
+        # First cycle must resolve before a second dispense on the same node
+        # is accepted (the "cycle in flight" veto — see is_dispensing()).
+        ctx.observe_event(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=1, timestamp=1.0))
+
         # Changing the class attribute mid-session changes the NEXT dispense.
         ExperimentContext.default_no_feed_dwell_s = 2.0
         assert ctx.dispense(1, feed=False) is True
@@ -168,6 +206,199 @@ def test_context_no_feed_dispense_explicit_dwell_overrides_class_default() -> No
         assert payload[0] | (payload[1] << 8) == 1500
     finally:
         ExperimentContext.default_no_feed_dwell_s = original
+
+
+def test_dispense_vetoed_when_pellet_already_on_plate() -> None:
+    """Global rule: a command that would deliver (or re-run the motion) is
+    never sent while the node's own plate already has a pellet on it."""
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    ctx.observe_event(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=0.0,
+        data={"gate": "pellet", "active": True},
+    ))
+
+    assert ctx.dispense(1) is False
+    assert ctx.dispense(1, feed=False) is False
+    assert ctx.commands_sent == []  # neither Dispense nor DispenseNoFeed was sent
+
+    warnings = [e for e in ctx.log_entries if e.name == "dispense_skipped_pellet_present"]
+    assert len(warnings) == 2
+    assert warnings[0].fields.get("warning") == 1
+    assert warnings[0].node_id == 1
+
+
+def test_dispense_allowed_once_pellet_clears() -> None:
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    ctx.observe_event(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=0.0,
+        data={"gate": "pellet", "active": True},
+    ))
+    assert ctx.dispense(1) is False
+
+    ctx.observe_event(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=1.0,
+        data={"gate": "pellet", "active": False},
+    ))
+    assert ctx.dispense(1) is True
+
+
+def test_dispense_vetoed_while_cycle_in_flight() -> None:
+    """
+    Global rule: a second dispense to the same node is never sent while its
+    previous cycle hasn't resolved yet — the plate-occupied check alone can't
+    catch this window, since the pellet hasn't reached the sensor yet.
+    """
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+
+    assert ctx.dispense(1) is True
+    assert ctx.is_dispensing(1) is True
+    assert not ctx.pellet_on_plate(1)  # plate not occupied yet — distinct signal
+
+    ctx.commands_sent.clear()
+    assert ctx.dispense(1) is False  # vetoed: still in flight
+    assert ctx.commands_sent == []
+
+    warnings = [e for e in ctx.log_entries if e.name == "dispense_skipped_in_flight"]
+    assert len(warnings) == 1
+    assert warnings[0].fields.get("warning") == 1
+    assert warnings[0].node_id == 1
+
+
+def test_dispense_allowed_after_loaded_clears_in_flight() -> None:
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1) is True
+    assert ctx.is_dispensing(1) is True
+
+    ctx.observe_event(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
+    assert ctx.is_dispensing(1) is False
+
+    ctx.observe_event(NodeEvent(  # a real pellet must be taken before re-dispensing
+        EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0,
+    ))
+    assert ctx.dispense(1) is True
+
+
+def test_dispense_no_feed_in_flight_cleared_by_no_feed_presented() -> None:
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1, feed=False) is True
+    assert ctx.is_dispensing(1) is True
+    assert ctx.dispense(1, feed=False) is False  # still in flight
+
+    ctx.observe_event(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=1, timestamp=1.0))
+    assert ctx.is_dispensing(1) is False
+    assert ctx.dispense(1, feed=False) is True
+
+
+def test_dispense_in_flight_cleared_by_feed_skipped() -> None:
+    """FeedSkipped means firmware never ran a motion — no further completion
+    event is coming, so the in-flight veto must not lock the node forever."""
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1) is True
+    assert ctx.is_dispensing(1) is True
+
+    ctx.observe_event(NodeEvent(EventKind.FEED_SKIPPED, node_id=1, timestamp=1.0))
+    assert ctx.is_dispensing(1) is False
+
+
+def test_dispense_in_flight_cleared_by_fault() -> None:
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1) is True
+    assert ctx.is_dispensing(1) is True
+
+    ctx.observe_event(NodeEvent(
+        EventKind.FAULT, node_id=1, timestamp=1.0,
+        data={"fault_code": ServiceStatus.Jam},
+    ))
+    assert ctx.is_dispensing(1) is False
+
+
+def test_dispense_in_flight_cleared_by_node_offline() -> None:
+    """A lost node's in-flight cycle must not stay stuck forever if it
+    reconnects without ever emitting a resolving event."""
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1) is True
+    assert ctx.is_dispensing(1) is True
+
+    ctx.observe_event(NodeEvent(EventKind.NODE_OFFLINE, node_id=1, timestamp=1.0))
+    assert ctx.is_dispensing(1) is False
+
+
+def test_recover_node_clears_in_flight_defensively() -> None:
+    """recover_node() clears is_dispensing() even without a prior FAULT event
+    (e.g. a fault that predates this session) — a recovered node must never
+    stay permanently veto-locked out of dispense()."""
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1) is True
+    assert ctx.is_dispensing(1) is True
+
+    ctx.halt_node(1)  # halted directly, no FAULT event observed
+    ctx.recover_node(1)
+    assert ctx.is_dispensing(1) is False
+    assert ctx.dispense(1) is True
+
+
+def test_broadcast_dispense_falls_back_when_node_in_flight() -> None:
+    ctx = ExperimentContext(nodes=[1, 2])
+    ctx.begin(now=0.0)
+    ctx.dispense(1)  # node 1 now mid-cycle
+    ctx.commands_sent.clear()
+
+    ok = ctx.broadcast_dispense()
+    assert ok is False  # node 1 was vetoed
+    sent_nodes = [n for (n, cmd, _payload) in ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert sent_nodes == [2]  # only the clear node actually got a command
+
+
+def test_broadcast_dispense_true_broadcast_marks_every_node_in_flight() -> None:
+    """The true single-frame broadcast path must ALSO mark every node as
+    dispensing — bypassing it would defeat the in-flight veto for a
+    subsequent per-node dispense() call right after a broadcast."""
+    ctx = ExperimentContext(nodes=[1, 2])
+    ctx.begin(now=0.0)
+    assert ctx.broadcast_dispense() is True
+    assert ctx.is_dispensing(1) is True
+    assert ctx.is_dispensing(2) is True
+
+    ctx.commands_sent.clear()
+    assert ctx.dispense(1) is False
+
+
+def test_broadcast_dispense_falls_back_to_unicast_when_one_node_occupied() -> None:
+    """A true broadcast can't selectively withhold from one node, so when
+    any node's plate is occupied, broadcast_dispense() must fall back to
+    per-node dispense() calls (each carrying its own veto) instead of
+    silently feeding the occupied node too."""
+    ctx = ExperimentContext(nodes=[1, 2])
+    ctx.begin(now=0.0)
+    ctx.observe_event(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=0.0,
+        data={"gate": "pellet", "active": True},
+    ))
+
+    ok = ctx.broadcast_dispense()
+    assert ok is False  # node 1 was vetoed
+    sent_nodes = [n for (n, cmd, _payload) in ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert sent_nodes == [2]  # only the clear node actually got a command
+
+    partial = [e for e in ctx.log_entries if e.name == "broadcast_dispense_partial_pellet_present"]
+    assert len(partial) == 1
+    assert partial[0].fields.get("occupied") == [1]
+
+
+def test_broadcast_dispense_true_broadcast_when_all_clear() -> None:
+    ctx = ExperimentContext(nodes=[1, 2])
+    ctx.begin(now=0.0)
+    assert ctx.broadcast_dispense() is True
+    assert ctx.commands_sent[-1] == (0, CanCmd.Dispense, b"")
 
 
 def test_context_after_timer_fires() -> None:
@@ -361,7 +592,9 @@ def test_free_feeding_reloads_after_pellet_taken() -> None:
     exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
-    # Clear the initial dispenses from the command log for easier asserts.
+    # The on_start dispense is still in flight until it resolves — complete
+    # it (a real pellet reaches the plate) before continuing.
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))
     runner.ctx.commands_sent.clear()
 
     runner.inject(NodeEvent(EventKind.DOME_OPENED, node_id=1, timestamp=1.0,
@@ -387,6 +620,8 @@ def test_free_feeding_immediate_reload_when_delay_zero() -> None:
     exp = build_free_feeding(nodes=[2], reload_delay_s=0.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    # Complete the on_start dispense before the reload cycle.
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=2, timestamp=0.5))
     runner.ctx.commands_sent.clear()
 
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=1.0))
@@ -401,6 +636,9 @@ def test_fault_halts_only_that_node_session_continues() -> None:
     exp = build_free_feeding(nodes=[1, 2], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    # Complete both on_start dispenses before the reload/fault sequence.
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=2, timestamp=0.5))
     runner.ctx.commands_sent.clear()
 
     # Schedule a pending reload on node 2, then fault on node 1.
@@ -523,7 +761,9 @@ def test_fixed_and_random_roles_fixed_random_off() -> None:
     )
     runner = exp.make_runner()
     runner.start(now=0.0)   # immediate first cycle
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))  # resolve before next cycle
     runner.step(now=5.0)    # second cycle
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=5.5))
     runner.step(now=10.0)   # third cycle
 
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
@@ -541,7 +781,11 @@ def test_fixed_and_random_multiple_fixed_roles() -> None:
     )
     runner = exp.make_runner()
     runner.start(now=0.0)
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))  # resolve before next cycle
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=3, timestamp=0.5))
     runner.step(now=5.0)
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=5.5))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=3, timestamp=5.5))
     runner.step(now=10.0)
 
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
@@ -610,10 +854,7 @@ def test_probability_delivery_zero_weight_node_never_picked() -> None:
     runner = exp.make_runner()
     runner.start(now=0.0)
     for i in range(200):
-        runner.inject(
-            NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=float(i + 1),
-                      data={"channel": 0, "edge": "rising", "high": True})
-        )
+        _fire_bnc_and_resolve(runner, 0, float(i + 1))
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert len(dispenses) == 200
     assert set(dispenses) == {2}
@@ -632,10 +873,7 @@ def test_probability_delivery_is_weighted_random_not_uniform() -> None:
     runner.start(now=0.0)
     n_trials = 2000
     for i in range(n_trials):
-        runner.inject(
-            NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=float(i + 1),
-                      data={"channel": 0, "edge": "rising", "high": True})
-        )
+        _fire_bnc_and_resolve(runner, 0, float(i + 1))
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert len(dispenses) == n_trials
 
@@ -652,6 +890,141 @@ def test_probability_delivery_is_weighted_random_not_uniform() -> None:
 
     # Consecutive picks are not a fixed pattern (proves per-cycle randomness).
     assert len(set(dispenses[:20])) == 2
+
+
+def test_probability_delivery_exactly_one_node_per_cycle() -> None:
+    """
+    Mutual exclusivity: each trigger dispenses on exactly ONE node — never two
+    (or zero) nodes at once — even with several eligible nodes at equal weight.
+    """
+    exp = build_probability_delivery(
+        nodes=[1, 2, 3, 4], probabilities="25,25,25,25", trigger="bnc",
+        bnc_channel=0, seed=5,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+
+    used = set()
+    for i in range(500):
+        runner.ctx.commands_sent.clear()
+        ts = float(i + 1)
+        runner.inject(
+            NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=ts,
+                      data={"channel": 0, "edge": "rising", "high": True})
+        )
+        dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+        assert len(dispenses) == 1, f"cycle {i}: expected exactly 1 dispense, got {dispenses}"
+        used.add(dispenses[0])
+        # Resolve this pick before the next trigger — this test is about
+        # mutual exclusivity WITHIN a cycle, not the separate "cycle already
+        # in flight" veto (see is_dispensing()), which is tested elsewhere.
+        runner.inject(NodeEvent(EventKind.LOADED, node_id=dispenses[0], timestamp=ts + 0.001))
+
+    # Over 500 equal-weight cycles every node should have been picked at least
+    # once (rules out an accidental single-node lock), but never two per cycle.
+    assert used == {1, 2, 3, 4}
+
+
+def test_dispense_veto_pellet_on_plate_is_template_independent() -> None:
+    """
+    The 'ignore dispense while a pellet is still on the plate' guard lives in
+    ExperimentControl.dispense() — so it applies to EVERY template, not just
+    two_armed_bandit. Demonstrated here on probability_delivery.
+    """
+    exp = build_probability_delivery(
+        nodes=[1, 2], probabilities="0,100", trigger="bnc", bnc_channel=0, seed=1,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+
+    # A pellet is sitting on node 2's plate (sensor mirror updated from events).
+    runner.inject(NodeEvent(EventKind.ON_PLATE, node_id=2, timestamp=1.0))
+    assert runner.ctx.pellet_on_plate(2)
+
+    # A cycle that targets node 2 must NOT send a dispense (plate occupied).
+    runner.ctx.commands_sent.clear()
+    runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=2.0,
+                            data={"channel": 0, "edge": "rising", "high": True}))
+    assert [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense] == []
+
+    # Once the pellet is taken the plate clears and dispensing resumes.
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=3.0))
+    assert not runner.ctx.pellet_on_plate(2)
+    runner.ctx.commands_sent.clear()
+    runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=4.0,
+                            data={"channel": 0, "edge": "rising", "high": True}))
+    dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert dispenses == [2]
+
+
+def test_probability_delivery_resolves_timing_overlap_via_in_flight_veto() -> None:
+    """
+    The 'cycle already in flight' guard lives in ExperimentControl.dispense()
+    too — so a fast BNC trigger that repeatedly forces the SAME node (weight
+    100) never sends a second Dispense while the first cycle hasn't reached
+    the plate yet, with ZERO code in probability_delivery.py itself.
+    """
+    exp = build_probability_delivery(
+        nodes=[1, 2], probabilities="0,100", trigger="bnc", bnc_channel=0, seed=1,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+
+    # First trigger: node 2 dispenses.
+    runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=1.0,
+                            data={"channel": 0, "edge": "rising", "high": True}))
+    dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert dispenses == [2]
+    assert runner.ctx.is_dispensing(2)
+    assert not runner.ctx.pellet_on_plate(2)  # in flight, but not on the plate yet
+
+    # A second trigger arrives before node 2's motor cycle finishes — the
+    # weighted pick still lands on node 2 (weight 100), but dispense() vetoes
+    # it: still in flight.
+    runner.ctx.commands_sent.clear()
+    runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=1.5,
+                            data={"channel": 0, "edge": "rising", "high": True}))
+    assert [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense] == []
+
+    # Once the cycle resolves (pellet reaches the plate), the next trigger
+    # is free to dispense on node 2 again.
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=2, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=2.5))
+    runner.ctx.commands_sent.clear()
+    runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=3.0,
+                            data={"channel": 0, "edge": "rising", "high": True}))
+    dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert dispenses == [2]
+
+
+def test_fixed_and_random_resolves_timing_overlap_via_in_flight_veto() -> None:
+    """
+    Same standardized guard applied to fixed_and_random: a 'fixed' node fired
+    every timer cycle only actually dispenses once its previous cycle has
+    resolved — again, ZERO code in fixed_and_random.py itself.
+    """
+    exp = build_fixed_and_random(
+        nodes=[1], node_roles={1: "fixed"}, trigger="timer", interval_s=1.0, seconds=60,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)  # first cycle dispenses immediately
+
+    dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert dispenses == [1]
+    assert runner.ctx.is_dispensing(1)
+
+    # Timer fires again before node 1's cycle resolves — vetoed.
+    runner.ctx.commands_sent.clear()
+    runner.step(now=1.0)
+    assert [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense] == []
+
+    # Resolve, then the next timer cycle dispenses again.
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.5))
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=1.6))
+    runner.ctx.commands_sent.clear()
+    runner.step(now=2.0)
+    dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert dispenses == [1]
 
 
 def test_probability_delivery_bnc_channel_zero_based() -> None:
@@ -784,7 +1157,9 @@ def test_controller_step_and_on_log() -> None:
 
     exp_rows = [e for e in log.all_entries() if e.frame_type == "EXPERIMENT"]
     assert any(e.event_name == "session_start" for e in exp_rows)
-    assert any(e.event_name == "loaded" for e in exp_rows)
+    assert any(e.event_name == "free_feeding_start" for e in exp_rows)
+    # Loaded is a CAN EVENT row only — free_feeding no longer mirrors it.
+    assert not any(e.event_name == "loaded" for e in exp_rows)
 
 
 def test_experiment_commands_appear_under_command_filter() -> None:

@@ -13,13 +13,20 @@ occasionally, at probability ``1 - p_high``, so a fixed rule never fully
 explains the outcome.
 
 Mutual exclusion is guaranteed by construction — exactly one arm is chosen
-"fed" per trial and the other is always dispensed with ``feed=False``. The one
-way BOTH arms can end up baited is if the empty arm's plate already held a
-real pellet from earlier: firmware detects that occupancy and presents it
-honestly (``FeedSkipped``) rather than silently discarding it. This template
-sweeps both plates clear before trial 1 and detects (never silently accepts)
-a mid-session occurrence — logged ``bandit_trial_invalid`` and the session
-keeps running.
+"fed" per trial and the other is always dispensed with ``feed=False``. Before
+every trial (not just the first), the template waits for both plates to be
+clear — pellet sensing, not presence, gates the next trial; see
+``_wait_plates_clear`` — and ``ExperimentControl.dispense()`` itself vetoes
+(never transmits) a Dispense/DispenseNoFeed command to a node whose plate is
+already occupied, logging ``dispense_skipped_pellet_present`` and returning
+False. That veto is the primary defense; this template treats it the same as
+a halted arm (see the "not fed_ok or not empty_ok" branch below) and logs
+``bandit_trial_invalid`` with a distinguishing reason. Firmware's own
+occupancy guard (``DispenserService::dispense()`` — presents an already-there
+pellet honestly via ``FeedSkipped`` rather than discarding it) remains as a
+backstop for the small race between the client-side check and the command
+reaching the bus; ``presented_pellet(empty)`` below still detects that rare
+case and logs ``baited_arms=2``.
 
 Sync note: both dispense commands are sent back-to-back synchronously, so the
 two nodes start within microseconds of each other. But a fed cycle's M1 run
@@ -158,6 +165,29 @@ def build(
             delay_s=fixed_delay_s, nodes=(arm_a, arm_b), quiet_s=iti_quiet_s,
         )
 
+    def _wait_plates_clear(control):
+        """
+        Pause until both arms' plates are clear of a pellet.
+
+        Pellet sensing outranks presence: this runs before every trial,
+        not just the first, so a stray/leftover pellet (missed by the
+        animal, or sitting there from before the session started) blocks
+        the next dispense instead of racing it. In the common case both
+        plates are already clear and this returns immediately.
+        """
+        occupied = [n for n in (arm_a, arm_b) if control.pellet_on_plate(n)]
+        if not occupied:
+            return
+        control.log(
+            "bandit_plate_occupied_wait", warning=1,
+            occupied=occupied, action="waiting for plate(s) to clear",
+        )
+        yield control.wait_until(
+            lambda c: not any(c.pellet_on_plate(n) for n in (arm_a, arm_b)),
+            node=(arm_a, arm_b),
+        )
+        control.log("bandit_plates_clear")
+
     def _wait_for_recovery(control):
         """
         Pause the WHOLE experiment while either arm is halted (faulted).
@@ -189,20 +219,11 @@ def build(
                 "bandit_startup_nodes_offline",
                 nodes=[n for n in (arm_a, arm_b) if not control.is_online(n)],
             )
-        if any(control.pellet_on_plate(n) for n in (arm_a, arm_b)):
-            control.log(
-                "bandit_startup_plate_occupied", warning=1,
-                occupied=[n for n in (arm_a, arm_b) if control.pellet_on_plate(n)],
-                action="waiting for both plates to clear",
-            )
-            yield control.wait_until(
-                lambda c: not any(c.pellet_on_plate(n) for n in (arm_a, arm_b)),
-                node=(arm_a, arm_b),
-            )
-            control.log("bandit_startup_plates_clear")
+        yield from _wait_plates_clear(control)
 
         while True:
             yield from _wait_for_recovery(control)
+            yield from _wait_plates_clear(control)
 
             trial = control.next_trial()
             block = (trial - 1) // block_size
@@ -219,21 +240,20 @@ def build(
             control.log(
                 "bandit_trial", trial=trial, block=block,
                 rich=rich, lean=lean, fed=fed, empty=empty,
-            )
-            control.log(
-                "arm_command", node=fed, trial=trial, role="fed",
-                cmd="Dispense", accepted=int(fed_ok),
-            )
-            control.log(
-                "arm_command", node=empty, trial=trial, role="empty",
-                cmd="DispenseNoFeed", accepted=int(empty_ok),
+                fed_accepted=int(fed_ok), empty_accepted=int(empty_ok),
             )
 
             if not fed_ok or not empty_ok:
-                reason = "fed_arm_halted" if not fed_ok else "empty_arm_halted"
+                # dispense() vetoes (returns False, no command sent) for two
+                # distinct reasons — a halted node, or this node's own plate
+                # already occupied (the _wait_plates_clear gate above should
+                # make the latter rare, but a pellet can land in the gap
+                # between that check and the command going out).
+                node, role = (fed, "fed") if not fed_ok else (empty, "empty")
+                cause = "halted" if control.is_halted(node) else "plate_occupied"
                 control.log(
                     "bandit_trial_invalid", trial=trial, valid=0,
-                    invalid_reason=reason, baited_arms=0,
+                    invalid_reason=f"{role}_arm_{cause}", baited_arms=0,
                 )
                 yield _advance(control)
                 continue

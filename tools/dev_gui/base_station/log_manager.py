@@ -15,12 +15,17 @@ Two kinds of CSV sink exist:
     time the same name is reopened (in this process or a prior one) so a
     session can be resumed across GUI restarts without losing history.
 
+HEARTBEAT rows are always diverted to a sibling file
+(``session_*_heartbeats.csv`` / ``{session}_heartbeats.csv``) so the main
+session CSV stays event/command/experiment traffic only. Heartbeats still
+enter the in-memory ring (hidden in the GUI by default).
+
 ``open_session()`` closes whichever sink is currently open and switches to
 the named one; it is not a second, parallel writer, so anything logged
 before the first experiment session lives only in the unnamed file.
 
 Performance note:
-  At 9 nodes × 1 Hz heartbeat + events ≈ ~36 msgs/sec peak.
+  At 9 nodes × ~1/60 Hz heartbeat + events the CSV load is light.
   A 1,000-entry deque update is O(1) amortized.  CSV writes use line-buffered
   IO so each append is a single fwrite — no performance concern.
 """
@@ -136,6 +141,9 @@ class LogManager:
         self._csv_path: Optional[Path] = None
         self._csv_file = None
         self._csv_writer = None
+        self._hb_csv_path: Optional[Path] = None
+        self._hb_csv_file = None
+        self._hb_csv_writer = None
 
         # Named-session context, applied to any entry that doesn't already
         # carry its own non-default value (see add()).
@@ -155,6 +163,9 @@ class LogManager:
         """
         Append an entry to the ring buffer and (optionally) CSV.
 
+        HEARTBEAT rows go only to the sibling ``*_heartbeats.csv`` sink.
+        All other types write to the main session CSV.
+
         Writes whenever a CSV sink is open — the constructor's ``auto_save``
         flag only controls whether the *unnamed* per-process sink opens; an
         explicit ``open_session()`` call always opens a writer, since naming
@@ -163,6 +174,11 @@ class LogManager:
         """
         self._stamp_context(entry)
         self._buffer.append(entry)
+        if entry.frame_type == "HEARTBEAT":
+            if self._hb_csv_writer is not None:
+                self._hb_csv_writer.writerow(self._entry_to_row(entry))
+                self._hb_csv_file.flush()
+            return
         if self._csv_writer is not None:
             self._csv_writer.writerow(self._entry_to_row(entry))
             self._csv_file.flush()
@@ -216,12 +232,21 @@ class LogManager:
         return self._csv_path
 
     @property
+    def heartbeat_csv_path(self) -> Optional[Path]:
+        return self._hb_csv_path
+
+    @property
     def session_name(self) -> str:
         return self._session
 
     @property
     def run_id(self) -> int:
         return self._run_id
+
+    @staticmethod
+    def heartbeat_path_for(main_path: Path) -> Path:
+        """Sibling path: ``foo.csv`` → ``foo_heartbeats.csv``."""
+        return main_path.with_name(f"{main_path.stem}_heartbeats.csv")
 
     # ------------------------------------------------------------------
     # Named session management
@@ -314,6 +339,7 @@ class LogManager:
         self._csv_writer = csv.writer(self._csv_file)
         if mode == "w":
             self._csv_writer.writerow(self.CSV_HEADER)
+        self._open_heartbeat_csv(self.heartbeat_path_for(path), mode)
 
         self._session = sanitized
         self._run_id = run_id
@@ -391,12 +417,17 @@ class LogManager:
         return path
 
     def close(self) -> None:
-        """Flush and close the CSV file."""
+        """Flush and close the main and heartbeat CSV files."""
         if self._csv_file is not None:
             self._csv_file.flush()
             self._csv_file.close()
             self._csv_file = None
             self._csv_writer = None
+        if self._hb_csv_file is not None:
+            self._hb_csv_file.flush()
+            self._hb_csv_file.close()
+            self._hb_csv_file = None
+            self._hb_csv_writer = None
 
     # ------------------------------------------------------------------
     # Internal
@@ -410,6 +441,31 @@ class LogManager:
         self._csv_file = open(self._csv_path, "w", newline="", buffering=1)
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(self.CSV_HEADER)
+        self._open_heartbeat_csv(self.heartbeat_path_for(self._csv_path), "w")
+
+    def _open_heartbeat_csv(self, path: Path, mode: str) -> None:
+        """
+        Open the sibling heartbeat sink.
+
+        For append mode, if an existing file has a foreign/stale header,
+        fall back to create (truncate) rather than mixing schemas — heartbeats
+        are diagnostic and safer to reset than to corrupt.
+        """
+        write_header = mode == "w"
+        if mode == "a" and path.exists():
+            _max_run, _count, header_ok = self._scan_existing(path)
+            if not header_ok:
+                mode = "w"
+                write_header = True
+        elif mode == "a" and not path.exists():
+            mode = "w"
+            write_header = True
+
+        self._hb_csv_path = path
+        self._hb_csv_file = open(path, mode, newline="", buffering=1)
+        self._hb_csv_writer = csv.writer(self._hb_csv_file)
+        if write_header:
+            self._hb_csv_writer.writerow(self.CSV_HEADER)
 
     def _entry_to_row(self, entry: LogEntry) -> list:
         elapsed_s = ""

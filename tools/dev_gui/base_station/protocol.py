@@ -81,16 +81,19 @@ class CanEvent(IntEnum):
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
+# Behavioral names: one log line per animal/mechanism event — raw InputChanged
+# edges for pellet/load/dome are suppressed or renamed in the GUI so they do
+# not double these milestones (see behavioral_input_log_name).
 CAN_EVENT_DISPLAY_NAME = {
-    CanEvent.OnPlate: "OnPlate",
+    CanEvent.OnPlate: "Pellet OnPlate",
     CanEvent.Loaded: "Loaded",
     CanEvent.Seeking: "Seeking",
     CanEvent.Lowering: "Lowering",
     CanEvent.Loading: "Loading",
     CanEvent.Raising: "Raising",
-    CanEvent.DomeOpened: "DomeOpened",
+    CanEvent.DomeOpened: "Dome Opened",
     CanEvent.DomeOpenWarning: "DomeOpenWarning",
-    CanEvent.PelletTaken: "PelletTaken",
+    CanEvent.PelletTaken: "Pellet Taken",
     CanEvent.FeedSkipped: "FeedSkipped",
     CanEvent.NoFeedPresented: "NoFeedPresented",
     CanEvent.Dwelling: "Dwelling",
@@ -127,6 +130,37 @@ class DispenseState(IntEnum):
     Seeking       = 5  # M2 up until load sensor clears or seekAwaySteps_
     Fault         = 6  # FeedTimeout / ActuatorTimeout / jam / pellet lost
     Dwelling      = 7  # no-feed: holding at the drop position, M1 idle
+
+
+def behavioral_input_log_name(
+    input_id: InputId,
+    active: bool,
+    dispense_state: Optional[DispenseState] = None,
+) -> Optional[str]:
+    """
+    Map a raw InputChanged edge to a single behavioral log name, or None to
+    suppress the row (a phase/milestone CanEvent already covers that event).
+
+    - Pellet sensor → suppressed (``Pellet OnPlate`` / ``Pellet Taken``)
+    - Load position → suppressed (``Seeking`` / ``Lowering`` / ``Raising`` / ``Loading``)
+    - Dome open while Loaded → suppressed (``Dome Opened`` milestone follows)
+    - Dome otherwise → ``Dome Opened`` / ``Dome closed``
+    - Mouse presence → unchanged ``MousePresence Detected`` / ``Cleared``
+    """
+    if input_id == InputId.MousePresence:
+        return f"MousePresence {'Detected' if active else 'Cleared'}"
+    if input_id in (InputId.Pellet, InputId.LoadPosition):
+        return None
+    if input_id == InputId.Dome:
+        if active and dispense_state == DispenseState.Loaded:
+            return None
+        return "Dome Opened" if active else "Dome closed"
+    return f"{input_id.name} {'Triggered' if active else 'Cleared'}"
+
+
+def normalize_event_match_key(name: str) -> str:
+    """BNC trigger match key: ignore case, spaces, hyphens, underscores."""
+    return name.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
 
 
 class ServiceStatus(IntEnum):

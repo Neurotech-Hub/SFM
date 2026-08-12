@@ -23,8 +23,18 @@ from .protocol import (
     format_mac,
 )
 
-# A node is marked OFFLINE if no heartbeat arrives within this window.
-DEFAULT_OFFLINE_TIMEOUT_S: float = 10.0
+# Offline detection scales with the configured heartbeat interval (GUI default
+# 60s). A node is marked OFFLINE after this many missed-beat multiples.
+DEFAULT_HEARTBEAT_INTERVAL_S: float = 60.0
+HEARTBEAT_OFFLINE_MULTIPLIER: float = 3.0
+DEFAULT_OFFLINE_TIMEOUT_S: float = (
+    DEFAULT_HEARTBEAT_INTERVAL_S * HEARTBEAT_OFFLINE_MULTIPLIER
+)
+
+
+def offline_timeout_for_heartbeat(hb_interval_s: float) -> float:
+    """Seconds without a heartbeat before a node is considered offline."""
+    return max(float(hb_interval_s), 0.1) * HEARTBEAT_OFFLINE_MULTIPLIER
 
 
 @dataclass

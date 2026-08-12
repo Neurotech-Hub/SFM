@@ -293,14 +293,44 @@ def test_startup_sweep_waits_for_occupied_plate() -> None:
         NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
         NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0),
     ])
-    occupied = [e for e in runner.ctx.log_entries if e.name == "bandit_startup_plate_occupied"]
+    occupied = [e for e in runner.ctx.log_entries if e.name == "bandit_plate_occupied_wait"]
     assert len(occupied) == 1
     assert runner.ctx.trial == 0  # trial 1 hasn't started yet
 
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=1.0))
-    cleared = [e for e in runner.ctx.log_entries if e.name == "bandit_startup_plates_clear"]
+    cleared = [e for e in runner.ctx.log_entries if e.name == "bandit_plates_clear"]
     assert len(cleared) == 1
     assert runner.ctx.trial == 1
+
+
+def test_plate_occupied_after_trial_blocks_next_trial_until_clear() -> None:
+    """The plate-clear gate must run before every trial, not just the
+    first — a stray pellet on either arm blocks trial 2 exactly as it
+    would have blocked trial 1."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    _present_both_arms(runner, fed=1, empty=2, ts=1.0)
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0))
+    assert runner.ctx.trial == 1
+
+    # A pellet unexpectedly shows up on arm 2's plate before trial 2 starts
+    # (leftover debris, sensor artifact, ...) — must block trial 2 exactly
+    # like the startup sweep blocks trial 1.
+    runner.inject(NodeEvent(EventKind.ON_PLATE, node_id=2, timestamp=2.05))
+    runner.step(now=2.2)  # past fixed_delay_s
+    occupied = [e for e in runner.ctx.log_entries if e.name == "bandit_plate_occupied_wait"]
+    assert len(occupied) == 1
+    assert occupied[0].fields.get("occupied") == [2]
+    assert runner.ctx.trial == 1  # trial 2 has NOT started
+    assert _dispense_cmds(runner) == [(1, CanCmd.Dispense, b"")]  # only trial 1's command
+
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=3.0))
+    cleared = [e for e in runner.ctx.log_entries if e.name == "bandit_plates_clear"]
+    assert len(cleared) == 1
+    assert runner.ctx.trial == 2
 
 
 def test_presence_clear_mode_gates_next_trial() -> None:

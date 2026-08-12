@@ -131,10 +131,15 @@ def next_trial_wait(
 
     ``mode`` is one of:
       "fixed_delay"    — wait ``delay_s`` seconds (default 5s).
-      "presence_clear" — wait until presence is clear on ``nodes`` (all
-                         session nodes if omitted), and — if ``quiet_s`` > 0 —
-                         stays clear with no dome/sensor/presence activity for
-                         that long. See ``ExperimentControl.presence_clear``.
+      "presence_clear" — wait until the plate is clear AND presence is clear
+                         on ``nodes`` (all session nodes if omitted), and —
+                         if ``quiet_s`` > 0 — presence stays clear with no
+                         dome/sensor/presence activity for that long. Pellet
+                         state is checked first and unconditionally: an
+                         animal walking off the pad never counts as "ready"
+                         while a pellet is still sitting on the plate — see
+                         ``ExperimentControl.pellet_clear`` /
+                         ``presence_clear``.
 
     An unrecognized mode falls back to "fixed_delay" so a stale saved
     parameter can never crash a session outright.
@@ -150,6 +155,8 @@ def next_trial_wait(
     """
     if mode == "presence_clear":
         def _ready(c) -> bool:
+            if not c.pellet_clear(nodes):
+                return False
             if not c.presence_clear(nodes):
                 return False
             if quiet_s > 0 and not c.quiet_for(quiet_s, nodes):

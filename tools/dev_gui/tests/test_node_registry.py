@@ -6,7 +6,13 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from base_station.node_registry import NodeRegistry, NodeState
+from base_station.node_registry import (
+    NodeRegistry,
+    NodeState,
+    offline_timeout_for_heartbeat,
+    DEFAULT_HEARTBEAT_INTERVAL_S,
+    DEFAULT_OFFLINE_TIMEOUT_S,
+)
 from base_station.protocol import (
     CanEvent,
     InputId,
@@ -353,3 +359,13 @@ class TestNodeRegistry:
         newly_offline = reg.check_staleness()
         assert 1 in newly_offline
         assert reg.get(1).presented_empty is False
+
+
+class TestOfflineTimeoutHelper:
+    def test_scales_with_heartbeat(self):
+        assert offline_timeout_for_heartbeat(60) == 180.0
+        assert offline_timeout_for_heartbeat(DEFAULT_HEARTBEAT_INTERVAL_S) == (
+            DEFAULT_OFFLINE_TIMEOUT_S
+        )
+        assert offline_timeout_for_heartbeat(30) == 90.0
+        assert offline_timeout_for_heartbeat(0) == pytest.approx(0.3)

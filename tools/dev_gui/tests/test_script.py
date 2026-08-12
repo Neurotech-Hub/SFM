@@ -458,6 +458,37 @@ def test_kit_next_trial_wait_presence_clear() -> None:
     assert fired == [True]
 
 
+def test_kit_next_trial_wait_presence_clear_also_requires_pellet_clear() -> None:
+    """Pellet sensing outranks presence: even with presence already clear,
+    the wait must not resolve while a pellet is still on the plate."""
+    from base_station.experiment import kit
+
+    exp = Experiment(nodes=[1, 2])
+    fired = []
+
+    @exp.script
+    def run(control):
+        yield kit.next_trial_wait(control, "presence_clear", nodes=(1, 2))
+        fired.append(True)
+
+    runner = exp.make_runner()
+    # Prime a pellet on node 1's plate BEFORE starting, so wait_until does
+    # not resolve trivially at arm time (mirrors test_kit_next_trial_wait_
+    # presence_clear's presence priming, for the same reason).
+    runner.ctx.observe_event(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=0.0,
+        data={"gate": "pellet", "active": True},
+    ))
+    runner.start(now=0.0)
+    assert fired == []  # presence is clear, but the plate is not
+
+    runner.inject(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=1.0,
+        data={"gate": "pellet", "active": False},
+    ))
+    assert fired == [True]
+
+
 def test_kit_next_trial_wait_unknown_mode_falls_back_to_fixed_delay() -> None:
     from base_station.experiment import kit
 

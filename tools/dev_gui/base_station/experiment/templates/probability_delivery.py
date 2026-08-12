@@ -12,6 +12,11 @@ comma-separated string mapped to ``nodes`` in order.
 The trigger is either a periodic timer (``interval_s``) or a BNC IN rising edge
 on ``bnc_channel`` (0 = first BNC input, 1 = second).
 
+If the same node is picked again while its previous dispense cycle hasn't
+resolved yet (a fast trigger, or a slow mechanical cycle), ``ctx.dispense()``
+vetoes it — no special handling needed here; that guard is standardized
+across every template (see ``ExperimentControl.is_dispensing()``).
+
 Usage::
 
     from base_station.experiment.templates.probability_delivery import build
