@@ -32,7 +32,10 @@ from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .dev_settings import DevSettings
-from .node_registry import NodeRegistry
+from .node_registry import (
+    NodeRegistry,
+    offline_timeout_for_heartbeat,
+)
 from .experiment import ExperimentController, ExperimentControl, load_experiment_defs
 from .experiment.schema import (
     DEFAULT_EXPERIMENTS_DIR,
@@ -65,6 +68,8 @@ from .protocol import (
     DEFAULT_SYNC_FLASH_MS,
     CAN_EVENT_DISPLAY_NAME,
     CAN_CMD_PURPOSE,
+    behavioral_input_log_name,
+    normalize_event_match_key,
     CONFIG_HEARTBEAT_INTERVAL,
     CONFIG_PRESENCE_FACTOR,
     CONFIG_TYPE_NAME,
@@ -94,6 +99,12 @@ MAC_PING_RETRY_S = 3.0  # min seconds between MAC-resolution Pings to the same n
 DEFAULT_EXPERIMENT_NAME = "free_feeding"  # matches experiments/free_feeding.json "name"
 SYNC_FLASH_MS = DEFAULT_SYNC_FLASH_MS  # camera-sync status LED hold + BNC OUT pulse duration
 
+# Commands that must never be sent to a node whose plate is already occupied
+# — a real pellet is never delivered twice, system-wide, whether the command
+# comes from a running experiment (see ExperimentControl.dispense()) or a
+# manually-clicked GUI button.
+_PELLET_GATED_CMDS = {CanCmd.Dispense, CanCmd.DispenseNoFeed}
+
 # Short purpose strings for COMMAND rows in the event log.
 COMMAND_PURPOSE = CAN_CMD_PURPOSE
 
@@ -109,6 +120,13 @@ BNC_IN_ACTIONS = [
 
 def _bnc_out_trigger_items() -> list:
     display_names_set = set(CAN_EVENT_DISPLAY_NAME.values())
+    # Behavioral InputChanged names that appear in the log (pellet/load
+    # edges are suppressed; dome close has no CanEvent milestone).
+    display_names_set.update({
+        "Dome closed",
+        "MousePresence Detected",
+        "MousePresence Cleared",
+    })
     # Start with display names
     names = sorted(display_names_set)
     # Add raw event names not already in display map (exclude Pong, InputChanged)
@@ -233,7 +251,15 @@ class SFMApp:
         self._log_filter_node = 0                # 0 = all
         self._log_filter_type = "All"
         self._show_heartbeats = False
-        self._hb_interval_s = DEFAULT_HEARTBEAT_INTERVAL_S
+        self._hb_interval_s = float(DEFAULT_HEARTBEAT_INTERVAL_S)
+        # Nodes that have already received (or been covered by) a SetConfig
+        # HeartbeatInterval push this session. Cleared on Re-discover so a
+        # rebooted node at firmware's 5s default gets reconfigured.
+        self._hb_configured_nodes: set = set()
+        self._hb_last_push_ts: float = 0.0
+        # True after SetConfig was pushed because every expected node slot
+        # has been recognized (discovery MAC present). Cleared on Re-discover.
+        self._hb_roster_configured: bool = False
 
         # Throttle for MAC-resolution Pings (node_id -> last-sent time.time()).
         self._mac_ping_sent: Dict[int, float] = {}
@@ -485,6 +511,11 @@ class SFMApp:
 
         # Create subsystems
         self._registry = NodeRegistry(num_nodes)
+        self._registry.set_offline_timeout(
+            offline_timeout_for_heartbeat(self._hb_interval_s)
+        )
+        self._hb_configured_nodes.clear()
+        self._hb_roster_configured = False
         self._log = LogManager(log_dir=log_dir, auto_save=auto_save)
         # Reload persistent MAC↔ID map in case it was edited on disk
         self._mac_registry.load()
@@ -1144,6 +1175,9 @@ class SFMApp:
             run_id = self._log.open_session(sanitized, self._exp_log_dir)
             self._log.set_context(session=sanitized, run_id=run_id, trial=0, session_start_ts=time.time())
 
+        # Re-push GUI heartbeat interval so experiment runs never inherit the
+        # firmware 5s default, and align experiment offline detection to 3× HB.
+        self._sync_heartbeat_policy(broadcast=True)
         ok = self._exp.start(
             exp_def,
             params=params,
@@ -1152,6 +1186,7 @@ class SFMApp:
             io=self._io,
             log=self._log,
             on_session_start=self._fire_sync_marker,
+            online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
         )
         if ok:
             self._set_experiment_inputs_enabled(False)  # lock config while running
@@ -1233,7 +1268,7 @@ class SFMApp:
             dpg.add_text("Type:", color=(160,165,175,255))
             dpg.add_combo(
                 tag="log_filter_type",
-                items=["All", "EVENT", "COMMAND", "HEARTBEAT", "DISCOVERY", "BNC", "SYNC", "EXPERIMENT"],
+                items=["All", "EVENT", "COMMAND", "HEARTBEAT", "DISCOVERY", "BNC", "SYNC", "WARNING", "EXPERIMENT"],
                 default_value="All",
                 width=120,
                 callback=self._refresh_log_table,
@@ -1332,6 +1367,7 @@ class SFMApp:
 
         entry_name = ""
         details    = ""
+        skip_log   = False
 
         if ftype == "HEARTBEAT":
             node_id = node_id_from_hb_id(arb_id)
@@ -1340,6 +1376,7 @@ class SFMApp:
                 if hb:
                     self._maybe_request_mac_via_ping(node_id)
                     self._registry.update_from_heartbeat(node_id, hb)
+                    self._ensure_node_heartbeat_config(node_id)
                     self._refresh_tile(node_id)
                     details = (
                         f"state={hb.dispense_state.name} "
@@ -1366,15 +1403,24 @@ class SFMApp:
                     if ev.event == CanEvent.InputChanged:
                         changed = parse_input_changed(ev)
                         if changed:
+                            # Read dispense state BEFORE applying the input so a
+                            # dome rising edge while Loaded can defer to DomeOpened.
+                            node = self._registry.get(node_id)
+                            prior_state = node.dispense_state if node is not None else None
                             self._registry.update_from_input(
                                 node_id, changed.input_id, changed.active
                             )
-                            if changed.input_id == InputId.MousePresence:
-                                state_name = "Detected" if changed.active else "Cleared"
+                            entry_name = behavioral_input_log_name(
+                                changed.input_id, changed.active, prior_state
+                            )
+                            if entry_name is None:
+                                skip_log = True
+                                entry_name = ""
                             else:
-                                state_name = "Triggered" if changed.active else "Cleared"
-                            entry_name = f"{changed.input_id.name} {state_name}"
-                            details = f"input={changed.input_id.name} active={int(changed.active)}"
+                                details = (
+                                    f"input={changed.input_id.name} "
+                                    f"active={int(changed.active)}"
+                                )
                         else:
                             entry_name = "Invalid Input Event"
                             details = "InputChanged payload must contain input ID and state"
@@ -1452,10 +1498,10 @@ class SFMApp:
                                 pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
                                 details = f"pellet_count={pellet_count}"
                         # Distinguish a real delivery from a no-feed (mimic)
-                        # cycle for later analysis. Do NOT touch entry_name —
-                        # _maybe_fire_bnc_out() below matches on it verbatim,
-                        # and changing it would silently break saved BNC OUT
-                        # trigger selections.
+                        # cycle for later analysis. Keep entry_name from
+                        # CAN_EVENT_DISPLAY_NAME — BNC OUT matching normalizes
+                        # spaces/underscores so "Dome Opened" and legacy
+                        # "DomeOpened" both match.
                         if ev.event == CanEvent.NoFeedPresented:
                             details += " delivery=EMPTY — empty plate raised, no pellet delivered"
                         elif ev.event == CanEvent.Dwelling:
@@ -1463,7 +1509,8 @@ class SFMApp:
                         elif ev.event == CanEvent.Loaded:
                             details += " delivery=PELLET"
                     self._refresh_tile(node_id)
-                    self._maybe_fire_bnc_out(entry_name)
+                    if not skip_log:
+                        self._maybe_fire_bnc_out(entry_name)
                     if ev.event in (CanEvent.Loaded, CanEvent.NoFeedPresented):
                         self._arm_chained_schedules(node_id)
 
@@ -1504,7 +1551,7 @@ class SFMApp:
         else:
             node_id = 0
 
-        if self._log:
+        if self._log and not skip_log:
             self._log.add(LogEntry(
                 timestamp=time.time(),
                 direction="RX",
@@ -1581,6 +1628,7 @@ class SFMApp:
         if self._mac_registry is not None:
             self._mac_registry.set(mac, node_id)
         self._refresh_tile(node_id)
+        self._maybe_apply_heartbeat_when_roster_complete()
 
     # ------------------------------------------------------------------
     # Tile refresh
@@ -1713,6 +1761,8 @@ class SFMApp:
         from every node (IDs reassigned from 1).
         """
         self._mac_ping_sent.clear()
+        self._hb_configured_nodes.clear()
+        self._hb_roster_configured = False
         if self._registry:
             self._registry.clear_identities()
             self._refresh_all_tiles()
@@ -1755,9 +1805,87 @@ class SFMApp:
                 raw_data=node.mac,
                 details=f"MAC={format_mac(node.mac)} id={node.node_id}",
             ))
+        # As soon as every expected slot has a MAC, push the GUI heartbeat
+        # interval — do not wait for the 30s discovery idle timeout.
+        self._maybe_apply_heartbeat_when_roster_complete()
 
     def _on_discovery_complete(self) -> None:
-        pass
+        """Idle-timeout fallback: push interval even if roster stayed incomplete."""
+        self._sync_heartbeat_policy(broadcast=True)
+
+    # ------------------------------------------------------------------
+    # Heartbeat interval policy
+    # ------------------------------------------------------------------
+
+    def _expected_nodes_recognized(self) -> bool:
+        """True when every setup slot (1..N) has a MAC from discovery/Ping."""
+        if self._registry is None:
+            return False
+        expected = self._registry.num_nodes()
+        if expected <= 0:
+            return False
+        for node_id in range(1, expected + 1):
+            node = self._registry.get(node_id)
+            if node is None or node.mac is None:
+                return False
+        return True
+
+    def _maybe_apply_heartbeat_when_roster_complete(self) -> None:
+        """Push SetConfig once when the full expected node roster is recognized."""
+        if self._hb_roster_configured:
+            return
+        if not self._expected_nodes_recognized():
+            return
+        self._hb_roster_configured = True
+        self._sync_heartbeat_policy(broadcast=True)
+
+    def _read_hb_interval_input_s(self) -> int:
+        if dpg.does_item_exist("hb_interval_input"):
+            seconds = int(dpg.get_value("hb_interval_input"))
+        else:
+            seconds = int(self._hb_interval_s)
+        return max(1, seconds)
+
+    def _sync_heartbeat_policy(
+        self,
+        seconds: Optional[int] = None,
+        *,
+        broadcast: bool = True,
+    ) -> None:
+        """
+        Adopt ``seconds`` (or the GUI spinbox) as the live heartbeat interval,
+        scale registry / experiment offline timeouts to 3× that value, and
+        optionally broadcast SetConfig so every node matches.
+        """
+        if seconds is None:
+            seconds = self._read_hb_interval_input_s()
+        else:
+            seconds = max(1, int(seconds))
+        self._hb_interval_s = float(seconds)
+        timeout_s = offline_timeout_for_heartbeat(self._hb_interval_s)
+        if self._registry is not None:
+            self._registry.set_offline_timeout(timeout_s)
+        runner = self._exp.runner if self._exp is not None else None
+        if runner is not None:
+            runner.normalizer.set_online_timeout(timeout_s)
+        if broadcast and self._can is not None:
+            payload = build_setconfig_heartbeat(seconds * 1000)
+            self._broadcast(CanCmd.SetConfig, payload)
+            self._hb_last_push_ts = time.time()
+
+    def _ensure_node_heartbeat_config(self, node_id: int) -> None:
+        """
+        Late-join / post-reboot nodes boot at the firmware 5s default.
+        First heartbeat from an unconfigured node triggers a SetConfig push.
+        Debounced so a burst of first-seen nodes shares one broadcast.
+        """
+        if node_id in self._hb_configured_nodes:
+            return
+        self._hb_configured_nodes.add(node_id)
+        last = getattr(self, "_hb_last_push_ts", 0.0)
+        if time.time() - last < 1.0:
+            return
+        self._sync_heartbeat_policy(broadcast=True)
 
     # ------------------------------------------------------------------
     # Command helpers
@@ -1792,6 +1920,8 @@ class SFMApp:
     def _send_cmd(self, node_id: int, cmd: CanCmd, payload: bytes = b"") -> None:
         if not self._can:
             return
+        if cmd in _PELLET_GATED_CMDS and self._pellet_gate_blocks(node_id, cmd):
+            return
         ok = self._can.send_command(node_id, cmd, payload)
         if cmd == CanCmd.Recover and self._registry:
             self._registry.clear_fault(node_id)
@@ -1808,9 +1938,44 @@ class SFMApp:
                 details=self._command_details(cmd, payload, ok),
             ))
 
+    def _pellet_gate_blocks(self, node_id: int, cmd: CanCmd) -> bool:
+        """
+        True (and logs a WARNING row) if ``cmd`` must be withheld from
+        ``node_id`` because its plate already has a pellet on it — the
+        manual-GUI counterpart to ExperimentControl.dispense()'s veto.
+        Silently allows the command through when node/registry state isn't
+        known (e.g. no session started) rather than blocking on missing data.
+        """
+        node = self._registry.get(node_id) if self._registry else None
+        if node is None or not node.pellet:
+            return False
+        if self._log:
+            self._log.add(LogEntry(
+                timestamp=time.time(), direction="LOCAL", node_id=node_id, frame_type="WARNING",
+                event_name=f"{cmd.name} skipped (pellet present)", raw_id=0, raw_data=b"",
+                details="Command withheld — pellet already on plate.",
+            ))
+        return True
+
     def _broadcast(self, cmd: CanCmd, payload: bytes = b"") -> None:
         if not self._can:
             return
+        if cmd in _PELLET_GATED_CMDS and self._registry:
+            occupied = [n.node_id for n in self._registry.all_nodes() if n.pellet]
+            if occupied:
+                clear_nodes = [n.node_id for n in self._registry.all_nodes() if not n.pellet]
+                if self._log:
+                    self._log.add(LogEntry(
+                        timestamp=time.time(), direction="TX", node_id=0, frame_type="WARNING",
+                        event_name=f"{cmd.name} (broadcast) partially skipped", raw_id=0, raw_data=b"",
+                        details=(
+                            f"pellet already on plate — withheld for {occupied}; "
+                            f"sent individually to {clear_nodes}"
+                        ),
+                    ))
+                for node_id in clear_nodes:
+                    self._send_cmd(node_id, cmd, payload)
+                return
         ok = self._can.send_broadcast(cmd, payload)
         if cmd == CanCmd.Recover and self._registry:
             for node in self._registry.all_nodes():
@@ -1830,13 +1995,7 @@ class SFMApp:
 
     def _on_apply_heartbeat_interval(self, sender=None, app_data=None, user_data=None) -> None:
         """Broadcast a SetConfig frame so every node adopts the new heartbeat interval."""
-        seconds = dpg.get_value("hb_interval_input") if dpg.does_item_exist("hb_interval_input") else DEFAULT_HEARTBEAT_INTERVAL_S
-        seconds = int(seconds)
-        if seconds < 1:
-            seconds = 1
-        self._hb_interval_s = float(seconds)
-        payload = build_setconfig_heartbeat(seconds * 1000)
-        self._broadcast(CanCmd.SetConfig, payload)
+        self._sync_heartbeat_policy(broadcast=True)
 
     def _on_open_presence_cal_dialog(self, sender=None, app_data=None, user_data=None) -> None:
         """
@@ -2254,9 +2413,9 @@ class SFMApp:
         cfg = self._bnc_out_cfg
         if not cfg.enabled or not cfg.trigger:
             return
-        trigger = cfg.trigger.strip().lower().replace("-", "_")
-        event_key = event_name.strip().lower()
-        matched = trigger in ("any", "any_event", "all") or trigger == event_key
+        trigger = normalize_event_match_key(cfg.trigger)
+        event_key = normalize_event_match_key(event_name)
+        matched = trigger in ("any", "anyevent", "all") or trigger == event_key
         if not matched:
             return
 

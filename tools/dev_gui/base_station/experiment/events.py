@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional
 
+from ..node_registry import DEFAULT_OFFLINE_TIMEOUT_S
 from ..protocol import (
     CanEvent,
     InputId,
@@ -112,9 +113,13 @@ class EventNormalizer:
     events (DOME_OPENED/CLOSED, NODE_ONLINE/OFFLINE).
     """
 
-    def __init__(self, online_timeout_s: float = 10.0) -> None:
+    def __init__(self, online_timeout_s: float = DEFAULT_OFFLINE_TIMEOUT_S) -> None:
         self._tracks: Dict[int, _NodeTrack] = {}
         self._online_timeout_s = online_timeout_s
+
+    def set_online_timeout(self, seconds: float) -> None:
+        """Update the silence window used by check_staleness / NODE_OFFLINE."""
+        self._online_timeout_s = float(seconds)
 
     def _track(self, node_id: int) -> _NodeTrack:
         if node_id not in self._tracks:

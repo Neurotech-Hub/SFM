@@ -107,13 +107,47 @@ class TestLogManager:
         lm = LogManager(max_entries=100, log_dir=str(tmp_path), auto_save=True)
         lm.add(make_entry(event_name="AutoSaved"))
         lm.close()
-        # Find the session file
-        csv_files = list(tmp_path.glob("session_*.csv"))
+        # Find the session file (exclude sibling heartbeat file)
+        csv_files = [p for p in tmp_path.glob("session_*.csv") if "_heartbeats" not in p.name]
         assert len(csv_files) == 1
         with open(csv_files[0]) as f:
             rows = list(csv.DictReader(f))
         assert len(rows) == 1
         assert rows[0]["event_name"] == "AutoSaved"
+        hb_files = list(tmp_path.glob("session_*_heartbeats.csv"))
+        assert len(hb_files) == 1
+
+    def test_heartbeats_go_to_sibling_csv_not_main(self, tmp_path):
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        lm.add(make_entry(frame_type="EVENT", event_name="OnPlate"))
+        lm.add(make_entry(frame_type="HEARTBEAT", event_name="", node_id=2))
+        lm.close()
+        main = [p for p in tmp_path.glob("session_*.csv") if "_heartbeats" not in p.name][0]
+        hb = list(tmp_path.glob("session_*_heartbeats.csv"))[0]
+        with open(main) as f:
+            main_rows = list(csv.DictReader(f))
+        with open(hb) as f:
+            hb_rows = list(csv.DictReader(f))
+        assert [r["frame_type"] for r in main_rows] == ["EVENT"]
+        assert [r["frame_type"] for r in hb_rows] == ["HEARTBEAT"]
+        assert hb_rows[0]["node_id"] == "2"
+        # Still in the ring buffer for the GUI
+        assert any(e.frame_type == "HEARTBEAT" for e in lm.all_entries())
+
+    def test_named_session_heartbeats_sibling(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        lm.open_session("cohortA", str(tmp_path))
+        lm.add(make_entry(frame_type="HEARTBEAT", node_id=1))
+        lm.add(make_entry(frame_type="EVENT", event_name="DomeClosed"))
+        lm.close()
+        with open(tmp_path / "cohortA.csv") as f:
+            main_rows = list(csv.DictReader(f))
+        with open(tmp_path / "cohortA_heartbeats.csv") as f:
+            hb_rows = list(csv.DictReader(f))
+        assert all(r["frame_type"] != "HEARTBEAT" for r in main_rows)
+        assert any(r["frame_type"] == "EVENT" for r in main_rows)
+        assert len(hb_rows) == 1
+        assert hb_rows[0]["frame_type"] == "HEARTBEAT"
 
     def test_timestamp_str_format(self):
         entry = make_entry(timestamp=0.0)  # epoch midnight

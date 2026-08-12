@@ -3,14 +3,18 @@ free_feeding.py — Free-feeding (continuous reload) experiment template.
 
 Behavior:
   1. On session start, dispense a pellet on every configured node.
-  2. On DomeOpened, log the lift (optional pellet_present from event data).
-  3. On PelletTaken, wait ``reload_delay_s`` then re-dispense that node.
-  4. On Fault (jam / timeout / pellet lost), the faulted node is **halted**
+  2. On PelletTaken, wait ``reload_delay_s`` then re-dispense that node.
+  3. On Fault (jam / timeout / pellet lost), the faulted node is **halted**
      (latched) and stops reloading; the other nodes keep free-feeding. The
      node resumes only after an operator **Recover** (``on_recover``
      re-dispenses it).
-  5. End after ``duration`` and/or when total `Loaded` milestones reaches
+  4. End after ``duration`` and/or when total `Loaded` milestones reaches
      ``max_pellets``.
+
+CAN EVENT rows already carry Loaded / Dome Opened / Pellet Taken with
+behavioral names — this template does not re-log those as EXPERIMENT rows
+(one line per event). It only logs session lifecycle, reload decisions, and
+fault/recover.
 
 Usage::
 
@@ -64,11 +68,6 @@ def build(
     @exp.on_dome_opened
     def _opened(control, event):
         control.incr("dome_openings")
-        control.log(
-            "dome_opened",
-            node=event.node_id,
-            pellet_present=event.data.get("pellet_present"),
-        )
 
     @exp.on_pellet_taken
     def _reload(control, event):
@@ -76,12 +75,6 @@ def build(
             return
         node_id = event.node_id
         control.incr("pellets_taken")
-        control.log(
-            "pellet_taken",
-            node=node_id,
-            dome_open=event.data.get("dome_open"),
-            total=control.counter("pellets_taken"),
-        )
 
         def _do_reload():
             if control.stop_requested:
@@ -95,15 +88,6 @@ def build(
         else:
             # Node-scoped so a fault on this node cancels its pending reload.
             control.after(reload_delay_s, _do_reload, node=node_id)
-
-    @exp.on_loaded
-    def _loaded(control, event):
-        # Runner already incr("pellets"); just log for the experiment CSV.
-        control.log(
-            "loaded",
-            node=event.node_id,
-            total=control.counter("pellets"),
-        )
 
     @exp.on_fault
     def _fault(control, event):

@@ -139,6 +139,10 @@ bool VFM::begin() {
                             uint16_t ms = static_cast<uint16_t>(payload[1]) |
                                           (static_cast<uint16_t>(payload[2]) << 8);
 
+                            if (ms < kMinHeartbeatIntervalMs) {
+                                ms = static_cast<uint16_t>(kMinHeartbeatIntervalMs);
+                            }
+
                             can_.setHeartbeatIntervalMs(ms);
                             rawValue = ms;
                             ok = true;

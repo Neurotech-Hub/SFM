@@ -14,7 +14,10 @@ fixed and every other node in ``nodes`` becomes random.
 The trigger is either a periodic timer (``interval_s``) or a BNC IN rising edge
 on ``bnc_channel`` (0 = first BNC input, 1 = second). Faulted nodes are halted
 by the engine, so their dispenses become no-ops until an operator Recover — no
-special handling needed here.
+special handling needed here. Likewise, a ``fixed`` node whose previous cycle
+hasn't resolved yet (a trigger interval shorter than a mechanical cycle) is
+automatically skipped by ``ctx.dispense()``'s standardized "cycle in flight"
+veto — see ``ExperimentControl.is_dispensing()``.
 
 Usage::
 

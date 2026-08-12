@@ -30,7 +30,8 @@ TimerCallback = Callable[[], None]
 T = TypeVar("T")
 
 # Events that count as "the animal did something" for quiet_for(). Deliberately
-# excludes HEARTBEAT (arrives every ~5s regardless of activity) and the node's
+# excludes HEARTBEAT (arrives on the configured interval; firmware boots at
+# ~5s until the base station pushes SetConfig) and the node's
 # own phase events (SEEKING/LOWERING/LOADING/RAISING/DWELLING/ON_PLATE/LOADED/
 # NO_FEED_PRESENTED), which are caused by our own dispense command, not the
 # animal.
@@ -64,6 +65,13 @@ class _NodeView:
     # of these two is ever True — see ExperimentControl.observe_event().
     presented_pellet: bool = False
     presented_empty: bool = False
+    # True from the moment dispense()/dispense(feed=False) actually sends a
+    # command until the cycle resolves (LOADED / NO_FEED_PRESENTED /
+    # FEED_SKIPPED / FAULT / NODE_OFFLINE) — see ExperimentControl.dispense()
+    # and observe_event(). Distinct from `pellet`: a cycle in flight has NOT
+    # yet reached the plate (ON_PLATE hasn't fired), so `pellet` alone can't
+    # catch "this node is still mid-motion from a previous command."
+    dispensing: bool = False
 
 
 @dataclass
@@ -243,27 +251,88 @@ class ExperimentControl:
         the GUI's Developer Menu writes directly, so every template shares one
         rig-tuned dwell unless it explicitly overrides it.
 
-        No-op (logged) while the node is halted by a fault — templates can keep
-        calling ``dispense(n)`` unconditionally; a faulted node simply stops
-        receiving pellets until recovered.
+        Three standardized, top-priority vetoes apply here — automatically,
+        for every template, with no per-template wiring — since this is the
+        single choke point every ``dispense(...)`` call in the codebase goes
+        through:
+
+        1. **Halted.** No-op (logged) while the node is halted by a fault —
+           templates can keep calling ``dispense(n)`` unconditionally; a
+           faulted node simply stops receiving pellets until recovered.
+        2. **Cycle already in flight.** No-op (logged as a warning) while a
+           previous ``dispense()``/``dispense(feed=False)`` on this node
+           hasn't resolved yet (see ``is_dispensing()``) — this is what
+           stops a fast timer/BNC trigger from re-picking the SAME node
+           while its last command is still mid-motion (before a pellet even
+           reaches the plate, so the plate-occupied check below can't see
+           it yet).
+        3. **Pellet already on the plate.** No-op (logged as a warning) when
+           this node's own sensor mirror already shows a pellet on the
+           plate — a real pellet was never delivered twice, and a plate
+           that's already occupied when a dispense is requested is treated
+           as an unexpected/"strange" state worth flagging, not something to
+           silently retry motion for.
+
+        Firmware's own occupancy guard (``DispenserService::dispense()`` /
+        ``dispenseNoFeed()`` — see FeedSkipped) remains as a backstop for the
+        small race between these client-side checks and the command reaching
+        the bus.
         """
         if node in self._halted:
             self.log("dispense_skipped_halted", node=node)
             return False
+        if self.is_dispensing(node):
+            self.log("dispense_skipped_in_flight", node=node, warning=1, feed=feed)
+            return False
+        if self.pellet_on_plate(node):
+            self.log(
+                "dispense_skipped_pellet_present", node=node, warning=1,
+                feed=feed,
+            )
+            return False
         if feed:
-            return self._send(node, CanCmd.Dispense)
-        dwell = dwell_s if dwell_s is not None else self.default_no_feed_dwell_s
-        return self._send(
-            node, CanCmd.DispenseNoFeed, build_dispense_no_feed(int(dwell * 1000))
-        )
+            ok = self._send(node, CanCmd.Dispense)
+        else:
+            dwell = dwell_s if dwell_s is not None else self.default_no_feed_dwell_s
+            ok = self._send(
+                node, CanCmd.DispenseNoFeed, build_dispense_no_feed(int(dwell * 1000))
+            )
+        if ok:
+            self._view(node).dispensing = True
+        return ok
 
     def recover(self, node: int) -> bool:
         """Send Recover to one node."""
         return self._send(node, CanCmd.Recover)
 
     def broadcast_dispense(self) -> bool:
-        """Send Dispense to all nodes (broadcast)."""
-        return self._send(0, CanCmd.Dispense)
+        """
+        Send Dispense to all session nodes.
+
+        Sends one true broadcast frame (synchronized arrival) when every node
+        is clear — no pellet on its plate AND no cycle already in flight (see
+        ``dispense()``'s standardized vetoes). If any node isn't clear, the
+        single-frame broadcast can't selectively withhold the command from
+        just that node — so this falls back to individual ``dispense(n)``
+        calls (each carrying its own vetoes) and returns False, matching
+        ``dispense()``'s "not clear = no command sent" contract for at least
+        one node.
+        """
+        blocked = [
+            n for n in self.nodes
+            if self.pellet_on_plate(n) or self.is_dispensing(n)
+        ]
+        if blocked:
+            self.log("broadcast_dispense_partial_pellet_present", warning=1, occupied=blocked)
+            ok = True
+            for n in self.nodes:
+                ok = self.dispense(n) and ok
+            return ok
+        ok = self._send(0, CanCmd.Dispense)
+        if ok:
+            for n in self.nodes:
+                self._view(n).dispensing = True
+        return ok
 
     def broadcast_recover(self) -> bool:
         """Send Recover to all nodes (broadcast)."""
@@ -307,8 +376,13 @@ class ExperimentControl:
         Sends ``Recover`` to the node (firmware ``recover()`` resets the fault to
         Idle) and un-latches it so ``dispense`` works again. The runner fires
         ``on_recover`` handlers afterwards so a template can re-arm the node.
+        Also clears the "cycle in flight" veto defensively — a FAULT event
+        should already have cleared it, but a node whose fault predates this
+        experiment session (never saw the FAULT event) must not stay
+        veto-locked out of dispense() after being recovered.
         """
         self._halted.discard(node_id)
+        self._view(node_id).dispensing = False
         self._send(node_id, CanCmd.Recover)
         self.log("node_recovered", node=node_id)
 
@@ -501,10 +575,12 @@ class ExperimentControl:
         elif ev.kind is EventKind.LOADED:
             # Raise finished with a real pellet at the top.
             view.presented_pellet, view.presented_empty = True, False
+            view.dispensing = False
         elif ev.kind is EventKind.NO_FEED_PRESENTED:
             # Raise finished with an empty plate at the top (a no-feed /
             # mimic cycle — see ExperimentControl.dispense(feed=False)).
             view.presented_pellet, view.presented_empty = False, True
+            view.dispensing = False
         elif ev.kind is EventKind.PELLET_TAKEN:
             # Deliberately does NOT clear presented_pellet/presented_empty.
             # "Presented" describes the outcome of the last COMPLETED cycle,
@@ -518,14 +594,24 @@ class ExperimentControl:
             view.pellet = False
         elif ev.kind in (
             EventKind.SEEKING, EventKind.LOWERING, EventKind.LOADING,
-            EventKind.DWELLING, EventKind.RAISING, EventKind.FEED_SKIPPED,
-            EventKind.FAULT,
+            EventKind.DWELLING, EventKind.RAISING,
         ):
-            # A new cycle starting (or a fault) means whatever was presented
-            # before is no longer current. DOME_OPENED is deliberately NOT in
-            # this list — a dome bout on an already-presented plate (pellet
-            # or empty) must not erase what was actually presented.
+            # A new cycle starting means whatever was presented before is no
+            # longer current. DOME_OPENED is deliberately NOT in this list —
+            # a dome bout on an already-presented plate (pellet or empty)
+            # must not erase what was actually presented. `dispensing` is
+            # NOT cleared here — the cycle is still in flight through these
+            # phases; see LOADED/NO_FEED_PRESENTED/FEED_SKIPPED/FAULT.
             view.presented_pellet = view.presented_empty = False
+        elif ev.kind in (EventKind.FEED_SKIPPED, EventKind.FAULT):
+            # Terminal without a normal raise: FeedSkipped means firmware
+            # never ran a motion (plate already occupied), and a fault aborts
+            # whatever was in progress — either way no further completion
+            # event is coming for this cycle, so clear `dispensing` here too
+            # (not just presented_*) or the node would stay veto-locked out
+            # of every future dispense() call forever.
+            view.presented_pellet = view.presented_empty = False
+            view.dispensing = False
         elif ev.kind in (EventKind.NODE_ONLINE, EventKind.HEARTBEAT):
             view.online = True
             if ev.kind is EventKind.HEARTBEAT:
@@ -534,7 +620,11 @@ class ExperimentControl:
                 view.dome_open = bool(ev.data.get("dome_open", view.dome_open))
                 view.presence = bool(ev.data.get("mouse_presence", view.presence))
         elif ev.kind is EventKind.NODE_OFFLINE:
+            # A lost node's in-flight cycle will never resolve on its own —
+            # clear `dispensing` so it isn't stuck vetoing dispense() forever
+            # if/when the node reconnects.
             view.online = False
+            view.dispensing = False
 
     def quiet_for(self, seconds: float, node: Union[int, Sequence[int], None] = None) -> bool:
         """True if no activity (PG/dome/presence/pellet-taken/BNC) on the
@@ -552,6 +642,24 @@ class ExperimentControl:
 
     def pellet_on_plate(self, node: int) -> bool:
         return self._view(node).pellet
+
+    def is_dispensing(self, node: int) -> bool:
+        """
+        True from the moment ``dispense(node)`` sends a command until that
+        cycle resolves (a real pellet, an empty plate, FeedSkipped, a fault,
+        or the node going offline). See ``dispense()`` — this is the
+        standardized "cycle already in flight" veto every ``dispense()`` call
+        checks, regardless of template.
+        """
+        return self._view(node).dispensing
+
+    def pellet_clear(self, nodes: Union[int, Sequence[int], None] = None) -> bool:
+        """True when no pellet is on the plate on every given node (all
+        session nodes if omitted). Mirrors ``presence_clear()``/
+        ``domes_closed()`` — pellet state, not presence, is the ground truth
+        for whether it's safe to dispense again."""
+        targets = self._node_list(nodes)
+        return all(not self._view(n).pellet for n in targets)
 
     def is_online(self, node: int) -> bool:
         return self._view(node).online

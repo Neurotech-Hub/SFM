@@ -232,19 +232,26 @@ overrides).
 
 `control` is passed as the first argument to every callback and to your
 `@exp.script` generator. It is your entire action surface — see
-[`context.py`](context.py). (Older code may still say `ExperimentContext` — it's
-the same class, kept as an alias.)
+[`context.py`](context.py).
 
 ### Actions
 
 | Call | Effect |
 |------|--------|
-| `control.dispense(node)` | Dispense on one node. **No-op while that node is halted by a fault** (logged). |
-| `control.dispense(node, feed=False, dwell_s=6.0)` | Run the identical dispense motion with **no pellet**: lower, hold at the drop position for `dwell_s`, then raise an empty plate. Use it so an inactive arm still moves/sounds the same as a fed one (e.g. a bandit task where the animal shouldn't be able to tell arms apart by sound). |
+| `control.dispense(node)` | Dispense on one node. **No-op while that node is halted, mid-cycle from a previous dispense, or already has a pellet on the plate** (all three logged — see below). |
+| `control.dispense(node, feed=False, dwell_s=6.0)` | Run the identical dispense motion with **no pellet**: lower, hold at the drop position for `dwell_s`, then raise an empty plate. Use it so an inactive arm still moves/sounds the same as a fed one (e.g. a bandit task where the animal shouldn't be able to tell arms apart by sound). Same vetoes apply. |
 | `control.recover(node)` | Send Recover to one node (stop motion + clear its fault). |
-| `control.broadcast_dispense()` / `control.broadcast_recover()` | Same, to all nodes. |
+| `control.broadcast_dispense()` / `control.broadcast_recover()` | Same, to all nodes. If any node isn't clear (occupied plate or a cycle in flight), `broadcast_dispense()` can't withhold the command from just that one node in a single CAN frame, so it falls back to individual `dispense(n)` calls (each carrying its own vetoes) and returns `False`. |
 | `control.bnc_pulse(duration_us=100)` | Pulse the BNC OUT line. |
 | `control.set_heartbeat_interval(node, ms)` | Reconfigure a node's heartbeat rate. |
+
+**Three standardized, top-priority vetoes (system-wide, every template, zero wiring needed).** `dispense()` is the single choke point every dispense in the codebase goes through — templates, scripts, the GUI — so these three checks apply everywhere automatically, in this order, before anything is transmitted:
+
+1. **Halted** (`is_halted(node)`) — a faulted node; logs `dispense_skipped_halted`.
+2. **Cycle in flight** (`is_dispensing(node)`) — a previous `dispense()`/`dispense(feed=False)` on this node hasn't resolved yet (no `LOADED`/`NO_FEED_PRESENTED`/`FEED_SKIPPED`/fault/offline event since it was sent). This is what stops a fast timer/BNC-triggered template from re-picking the *same* node while it's still mid-motion — the plate-occupied check below can't catch that window, since the pellet hasn't reached the plate yet. Logs `dispense_skipped_in_flight` (`warning=1`).
+3. **Pellet already on the plate** (`pellet_on_plate(node)`) — logs `dispense_skipped_pellet_present` (`warning=1`).
+
+All three return `False` with no command sent. Firmware's own occupancy guard (`DispenserService::dispense()`/`dispenseNoFeed()` — see `FeedSkipped`) remains a backstop for the small race between these client-side checks and the command reaching the bus, but the common case never reaches it. `control.pellet_clear(nodes=None)` / `control.is_dispensing(node)` let you gate your own wait on either signal — see `kit.next_trial_wait`'s `"presence_clear"` mode, which checks pellet state first, unconditionally, before presence.
 
 ### Per-node fault handling (sticky)
 
@@ -270,6 +277,8 @@ the same class, kept as an alias.)
 | `control.quiet_for(seconds, node=None)` → `bool` | No PG/dome/presence/pellet-taken/BNC activity on the given node(s) — or all session nodes if omitted — for `seconds`. Ignores heartbeats and the node's own dispense-phase events, so it reflects the *animal*, not our own commands. |
 | `control.domes_closed(nodes=None)` → `bool` | All the given (or all session) domes currently closed. |
 | `control.dome_open(node)` / `control.pellet_on_plate(node)` / `control.is_online(node)` → `bool` | Current per-node sensor snapshot. |
+| `control.pellet_clear(nodes=None)` → `bool` | No pellet on the plate on every given (or all session) node. Mirrors `presence_clear()`/`domes_closed()` — this is what `dispense()`'s own veto checks. |
+| `control.is_dispensing(node)` → `bool` | True from the moment `dispense(node)` sends a command until that cycle resolves. This is what `dispense()`'s "cycle already in flight" veto checks — see above. |
 | `control.presence(node)` → `bool` / `control.presence_clear(nodes=None)` → `bool` | Animal on the capacitive presence pad; clear on every given (or all session) node. Defaults `False`/clear until the first reading arrives for a node — gate on `is_online(node)` first if you need to tell "confirmed clear" from "not yet known". |
 | `control.presented_pellet(node)` / `control.presented_empty(node)` → `bool` | What the last **completed** dispense cycle on this node raised — a real pellet, or an empty plate from `dispense(node, feed=False)`. At most one is ever `True`. |
 | `control.presentation(node)` → `str` | `'pellet'` \| `'empty'` \| `'none'` (`'none'` while a cycle is in flight). |

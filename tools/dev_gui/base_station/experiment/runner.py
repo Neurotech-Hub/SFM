@@ -22,6 +22,7 @@ from typing import (
 
 from ..can_manager import CanManager
 from ..io_manager import IOManager
+from ..node_registry import DEFAULT_OFFLINE_TIMEOUT_S
 from .context import ExperimentControl
 from .events import EventKind, EventNormalizer, NodeEvent
 from .script import ScriptFn, ScriptScheduler
@@ -221,10 +222,16 @@ class Experiment:
         io: Optional[IOManager] = None,
         log_dir: Optional[str] = None,
         wire_bnc: bool = True,
+        online_timeout_s: Optional[float] = None,
     ) -> "ExperimentRunner":
         """Build a runner for GUI hosting or synthetic testing."""
         return ExperimentRunner(
-            self, can=can, io=io, log_dir=log_dir, wire_bnc=wire_bnc
+            self,
+            can=can,
+            io=io,
+            log_dir=log_dir,
+            wire_bnc=wire_bnc,
+            online_timeout_s=online_timeout_s,
         )
 
 
@@ -243,6 +250,7 @@ class ExperimentRunner:
         io: Optional[IOManager] = None,
         log_dir: Optional[str] = None,
         wire_bnc: bool = True,
+        online_timeout_s: Optional[float] = None,
     ) -> None:
         self.experiment = experiment
         self.can = can
@@ -255,7 +263,14 @@ class ExperimentRunner:
             session_name=experiment.name,
             seed=experiment.seed,
         )
-        self.normalizer = EventNormalizer()
+        # Default matches GUI 60s heartbeat × 3 offline multiplier.
+        self.normalizer = EventNormalizer(
+            online_timeout_s=(
+                DEFAULT_OFFLINE_TIMEOUT_S
+                if online_timeout_s is None
+                else float(online_timeout_s)
+            )
+        )
         self._active = False
         self._finished = False
         self._started = False

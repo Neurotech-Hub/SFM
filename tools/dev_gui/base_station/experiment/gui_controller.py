@@ -61,6 +61,7 @@ class ExperimentController:
         log: Optional[LogManager] = None,
         log_dir: Optional[str] = None,
         on_session_start: Optional[Callable[[], None]] = None,
+        online_timeout_s: Optional[float] = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
@@ -69,6 +70,9 @@ class ExperimentController:
         ``on_session_start``, if given, fires once at true session activation
         (immediately if the template has no start_when, later otherwise) —
         e.g. to fire the camera sync flash at the real start moment.
+
+        ``online_timeout_s`` should match 3× the configured heartbeat interval
+        so experiment NODE_OFFLINE tracking stays consistent with the GUI.
         """
         if self.is_running:
             return False
@@ -83,6 +87,7 @@ class ExperimentController:
             # written twice.
             log_dir=None,
             wire_bnc=False,
+            online_timeout_s=online_timeout_s,
         )
         self._gui_log = log
         runner.ctx.on_log = self._on_experiment_log

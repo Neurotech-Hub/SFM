@@ -118,3 +118,106 @@ def test_experiment_start_rejects_missing_session_name(monkeypatch, session_name
     error_rows = [e for e in app._log.all_entries() if e.frame_type == "ERROR"]
     assert len(error_rows) == 1
     assert error_rows[0].event_name == "ExperimentStartRejected"
+
+
+class _FakeCan:
+    """Minimal CanManager stand-in: records calls, always reports success."""
+
+    def __init__(self) -> None:
+        self.commands: list = []
+        self.broadcasts: list = []
+
+    def send_command(self, node_id, cmd, payload=b""):
+        self.commands.append((node_id, cmd, payload))
+        return True
+
+    def send_broadcast(self, cmd, payload=b""):
+        self.broadcasts.append((cmd, payload))
+        return True
+
+
+def _make_app_with_registry(num_nodes: int):
+    from base_station.app import SFMApp
+    from base_station.log_manager import LogManager
+    from base_station.node_registry import NodeRegistry
+
+    app = SFMApp(
+        argparse.Namespace(interface="can0", bitrate=250000, nodes=num_nodes, log_dir="~/sfm_logs")
+    )
+    app._can = _FakeCan()
+    app._registry = NodeRegistry(num_nodes)
+    app._log = LogManager(auto_save=False)
+    return app
+
+
+def test_send_cmd_vetoes_dispense_when_pellet_present() -> None:
+    try:
+        app = _make_app_with_registry(2)
+    except ModuleNotFoundError as exc:
+        if "dearpygui" in str(exc).lower():
+            pytest.skip("dearpygui not installed")
+        raise
+
+    app._registry.get(1).pellet = True
+    app._send_cmd(1, CanCmd.Dispense)
+
+    assert app._can.commands == []
+    warnings = [e for e in app._log.all_entries() if e.frame_type == "WARNING"]
+    assert len(warnings) == 1
+    assert warnings[0].node_id == 1
+
+
+def test_send_cmd_allows_dispense_when_plate_clear() -> None:
+    try:
+        app = _make_app_with_registry(2)
+    except ModuleNotFoundError as exc:
+        if "dearpygui" in str(exc).lower():
+            pytest.skip("dearpygui not installed")
+        raise
+
+    app._send_cmd(1, CanCmd.Dispense)
+    assert app._can.commands == [(1, CanCmd.Dispense, b"")]
+
+
+def test_send_cmd_pellet_gate_does_not_block_other_commands() -> None:
+    try:
+        app = _make_app_with_registry(2)
+    except ModuleNotFoundError as exc:
+        if "dearpygui" in str(exc).lower():
+            pytest.skip("dearpygui not installed")
+        raise
+
+    app._registry.get(1).pellet = True
+    app._send_cmd(1, CanCmd.Recover)
+    assert app._can.commands == [(1, CanCmd.Recover, b"")]
+
+
+def test_broadcast_dispense_falls_back_to_unicast_when_one_node_occupied() -> None:
+    try:
+        app = _make_app_with_registry(3)
+    except ModuleNotFoundError as exc:
+        if "dearpygui" in str(exc).lower():
+            pytest.skip("dearpygui not installed")
+        raise
+
+    app._registry.get(2).pellet = True
+    app._broadcast(CanCmd.Dispense)
+
+    assert app._can.broadcasts == []  # no true broadcast frame sent
+    assert app._can.commands == [(1, CanCmd.Dispense, b""), (3, CanCmd.Dispense, b"")]
+    warnings = [e for e in app._log.all_entries() if e.frame_type == "WARNING"]
+    assert len(warnings) == 1
+    assert "[2]" in warnings[0].details
+
+
+def test_broadcast_dispense_true_broadcast_when_all_clear() -> None:
+    try:
+        app = _make_app_with_registry(3)
+    except ModuleNotFoundError as exc:
+        if "dearpygui" in str(exc).lower():
+            pytest.skip("dearpygui not installed")
+        raise
+
+    app._broadcast(CanCmd.Dispense)
+    assert app._can.broadcasts == [(CanCmd.Dispense, b"")]
+    assert app._can.commands == []

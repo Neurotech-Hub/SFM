@@ -170,10 +170,11 @@ class TestParseEvent:
             assert ev.event == ev_type
 
     def test_phase_display_names(self):
-        assert CAN_EVENT_DISPLAY_NAME[CanEvent.OnPlate] == "OnPlate"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.OnPlate] == "Pellet OnPlate"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Loaded] == "Loaded"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Seeking] == "Seeking"
-        assert CAN_EVENT_DISPLAY_NAME[CanEvent.DomeOpened] == "DomeOpened"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.DomeOpened] == "Dome Opened"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.PelletTaken] == "Pellet Taken"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Lowering] == "Lowering"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Loading] == "Loading"
         assert CAN_EVENT_DISPLAY_NAME[CanEvent.Raising] == "Raising"

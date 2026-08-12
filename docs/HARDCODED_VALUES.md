@@ -152,7 +152,8 @@ the reading did not change, the decision boundary did.
 
 | Value  | Constant                      | Location         | Notes                                                                       |
 | ------ | ----------------------------- | ---------------- | --------------------------------------------------------------------------- |
-| 5 s    | `kDefaultHeartbeatIntervalMs` | `CanService.h`   | Default status heartbeat; **runtime** via `SetConfig` / `HeartbeatInterval` |
+| 5 s    | `kDefaultHeartbeatIntervalMs` | `CanService.h`   | Boot default until `SetConfig`; **min** `kMinHeartbeatIntervalMs` = 100 ms; GUI typically pushes 60 s |
+| 100 ms | `kMinHeartbeatIntervalMs`     | `CanService.h`   | Floor applied on `SetConfig` / `HeartbeatInterval`                                                  |
 | 500 ms | `kAnnounceRetryMs`            | `NodeIdentity.h` | Retry ANNOUNCE while awaiting ASSIGN                                        |
 | 5 s    | `kDiscoveryTimeoutMs`         | `NodeIdentity.h` | Give up waiting for ASSIGN                                                  |
 
