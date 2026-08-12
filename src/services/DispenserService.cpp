@@ -37,6 +37,10 @@ DispenserService::DispenserService()
       lastTakenWithDomeOpen_(false),
       motorSpeed_(kDefaultMotorSpeed),
       feedSpeedScale_(kDefaultFeedSpeedScale),
+      feedBurstSteps_(kDefaultFeedBurstSteps),
+      feedPauseMs_(kDefaultFeedPauseMs),
+      feedBurstLeft_(0),
+      feedPauseUntilMs_(0),
       lowerSteps_(kDefaultLowerSteps),
       seekAwaySteps_(kDefaultSeekAwaySteps),
       grabSteps_(kDefaultGrabSteps),
@@ -180,13 +184,19 @@ void DispenserService::update() {
                 faultNow(ServiceStatus::FeedTimeout);
                 break;
             }
+
+            // Stop M1 the instant the raw beam breaks — do not wait for the
+            // 100 ms debounce, and do not keep stepping into a second pellet.
+            if (pg1Raw_) {
+                stopFeedMotor();
+            }
+
             if (pg1State_) {
                 if (pelletSeenSinceMs_ == 0) {
-                    // First sighting. Stop the wheel immediately so it cannot
-                    // follow with a second pellet, then hold and confirm.
+                    // Debounced sighting: hold and confirm. Motor already
+                    // stopped on the raw edge above when the beam first broke.
                     pelletSeenSinceMs_ = millis();
-                    motor1_.setSpeed(0);
-                    motor1_.disableOutputs();
+                    stopFeedMotor();
                 } else if ((millis() - pelletSeenSinceMs_) >= kPelletLoadConfirmMs) {
                     // Held for the full window: a pellet is genuinely on the plate,
                     // not a fragment tumbling past the beam.
@@ -199,12 +209,15 @@ void DispenserService::update() {
             } else {
                 if (pelletSeenSinceMs_ != 0) {
                     // The sighting did not hold — nothing settled on the plate.
-                    // Re-energise and keep loading within the same budget.
+                    // Resume the run-pause pattern within the same feed budget.
                     pelletSeenSinceMs_ = 0;
-                    motor1_.enableOutputs();
-                    motor1_.setSpeed(motorSpeed_ * feedSpeedScale_);
+                    beginFeedBurst();
                 }
-                motor1_.runSpeed();
+                // Stay quiet while the raw beam is still flickering high so we
+                // do not re-energise into a pellet that has not yet debounced.
+                if (!pg1Raw_) {
+                    updateFeedMotor();
+                }
             }
             break;
 
@@ -434,10 +447,49 @@ void DispenserService::startGrabDescent() {
 }
 
 void DispenserService::startFeed() {
-    motor1_.enableOutputs();
     motionStartMs_ = millis();
     pelletSeenSinceMs_ = 0;
+    beginFeedBurst();
+}
+
+// One burst of feedBurstSteps_ at feed speed, then a feedPauseMs_ coil-off pause
+// (see StepperMotorTest continuous mode). Uses setSpeed()+runSpeed() only.
+void DispenserService::beginFeedBurst() {
+    feedBurstLeft_    = feedBurstSteps_;
+    feedPauseUntilMs_ = 0;
+    motor1_.enableOutputs();
+    motor1_.setCurrentPosition(0);
     motor1_.setSpeed(motorSpeed_ * feedSpeedScale_);
+}
+
+void DispenserService::stopFeedMotor() {
+    motor1_.setSpeed(0);
+    motor1_.disableOutputs();
+    feedBurstLeft_    = 0;
+    feedPauseUntilMs_ = 0;
+}
+
+void DispenserService::updateFeedMotor() {
+    if (feedPauseUntilMs_ != 0) {
+        if ((int32_t)(millis() - feedPauseUntilMs_) >= 0) {
+            beginFeedBurst();
+        }
+        return;
+    }
+
+    if (feedBurstLeft_ <= 0) {
+        beginFeedBurst();
+        return;
+    }
+
+    if (motor1_.runSpeed()) {
+        feedBurstLeft_--;
+        if (feedBurstLeft_ == 0) {
+            motor1_.setSpeed(0);
+            motor1_.disableOutputs();
+            feedPauseUntilMs_ = millis() + feedPauseMs_;
+        }
+    }
 }
 
 void DispenserService::startDwell() {
@@ -502,6 +554,8 @@ void DispenserService::haltMotors() {
     motor2_.setSpeed(0);
     motor1_.disableOutputs();
     motor2_.disableOutputs();
+    feedBurstLeft_    = 0;
+    feedPauseUntilMs_ = 0;
 }
 
 void DispenserService::faultNow(ServiceStatus code) {

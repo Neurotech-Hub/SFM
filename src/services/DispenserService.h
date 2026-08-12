@@ -17,6 +17,11 @@ constexpr float    kDefaultMotorSpeed      = 500.0f; // steps/s
 // M1 runs at half the commanded speed: a slower wheel drops one pellet at a
 // time and gives the plate time to settle before the load confirm window.
 constexpr float    kDefaultFeedSpeedScale  = 0.5f;   // M1 speed = motorSpeed_ * this
+// M1 run-pause pattern (same idea as StepperMotorTest continuous mode): run a
+// short burst, pause so pellets can settle, repeat until the pellet sensor
+// asserts or the feed budget expires. Avoids stacking pellets on the plate.
+constexpr long     kDefaultFeedBurstSteps  = 500;
+constexpr uint32_t kDefaultFeedPauseMs     = 1000;
 // Approach budget. Worst case is an approach that starts from a seek-away taken
 // at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
 // kDefaultSeekAwaySteps ≈ 2000 steps. 2048 left almost no margin for that path.
@@ -82,6 +87,8 @@ public:
         motor2_.setMaxSpeed(motorSpeed_ * 2.0f);
     }
     void setFeedSpeedScale(float scale)       { feedSpeedScale_ = scale; }
+    void setFeedBurstSteps(long steps)        { feedBurstSteps_ = steps; }
+    void setFeedPauseMs(uint32_t ms)          { feedPauseMs_ = ms; }
     void setLowerSteps(long steps)            { lowerSteps_ = steps; }
     void setSeekAwaySteps(long steps)         { seekAwaySteps_ = steps; }
     void setGrabSteps(long steps)             { grabSteps_ = steps; }
@@ -138,6 +145,10 @@ private:
 
     float    motorSpeed_;
     float    feedSpeedScale_;
+    long     feedBurstSteps_;
+    uint32_t feedPauseMs_;
+    long     feedBurstLeft_;      // steps remaining in the current M1 burst
+    uint32_t feedPauseUntilMs_;   // non-zero while paused between bursts
     long     lowerSteps_;
     long     seekAwaySteps_;
     long     grabSteps_;
@@ -163,6 +174,9 @@ private:
     void startGrabDescent();
     void startRaise(long steps);
     void startFeed();
+    void beginFeedBurst();
+    void stopFeedMotor();
+    void updateFeedMotor();
     void startDwell();
     void beginLoweringPhase();
     void beginOccupiedDispense();

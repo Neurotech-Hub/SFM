@@ -16,8 +16,10 @@ These are the ones called out most often during bring-up.
 | Value         | Constant                | Location             | Notes                                                                                   |
 | ------------- | ----------------------- | -------------------- | --------------------------------------------------------------------------------------- |
 | **200 ms**    | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while `Loaded` → `PelletTaken`. Set from bench data: too short and a reach-in flicker counts as a take |
-| **2 s**       | `kPelletLoadConfirmMs`  | `DispenserService.h` | Pellet sensor held this long during `Loading` → `OnPlate`. M1 stops on the first sighting and holds; if the beam clears before the window elapses the wheel resumes. Rejects a fragment tumbling past the beam |
+| **2 s**       | `kPelletLoadConfirmMs`  | `DispenserService.h` | Pellet sensor held this long during `Loading` → `OnPlate`. Raw beam stops M1 immediately; if the beam clears before the window elapses the wheel resumes the run-pause pattern. Rejects a fragment tumbling past the beam |
 | **0.5×**      | `kDefaultFeedSpeedScale`| `DispenserService.h` | M1 runs at this fraction of `motorSpeed_` — half speed, so the wheel drops one pellet at a time |
+| **500 steps** | `kDefaultFeedBurstSteps`| `DispenserService.h` | M1 steps per run burst before a settle pause (same idea as `StepperMotorTest`) |
+| **1 s**       | `kDefaultFeedPauseMs`   | `DispenserService.h` | M1 coils-off pause between feed bursts — avoids pellet build-up on the plate |
 | **30 s**      | `kDomeOpenWarnMs`       | `DispenserService.h` | Dome held open continuously → `DomeOpenWarning` (non-sticky)                             |
 | **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
 | **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
@@ -32,7 +34,7 @@ These are the ones called out most often during bring-up.
 
 ## Dispenser — motion defaults
 
-Defined in `src/services/DispenserService.h`. Overridable before `begin()` via setters (`setRaiseSteps`, `setGrabSteps`, `setSeekAwaySteps`, `setFeedTimeoutMs`, etc.).
+Defined in `src/services/DispenserService.h`. Overridable before `begin()` via setters (`setRaiseSteps`, `setGrabSteps`, `setSeekAwaySteps`, `setFeedTimeoutMs`, `setFeedBurstSteps`, `setFeedPauseMs`, etc.).
 
 The three travel numbers are one calibrated set — the load sensor is a reference point, not the
 drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-check
@@ -43,6 +45,8 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | ----------- | ------------------------ | -------------------------------------- |
 | 500 steps/s | `kDefaultMotorSpeed`     | AccelStepper commanded speed; M2 runs at this, M1 at `× kDefaultFeedSpeedScale` |
 | 0.5×        | `kDefaultFeedSpeedScale` | M1 feed speed as a fraction of `motorSpeed_`. Kept as a scale, not an absolute, so `setMotorSpeed()` and the bench `+`/`-` keys move both motors together |
+| 500 steps   | `kDefaultFeedBurstSteps` | M1 steps per burst during `Loading`, then pause |
+| 1 s         | `kDefaultFeedPauseMs`    | Coils-off settle pause between M1 feed bursts |
 | 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2000 steps. Exhausting it retries only when the load sensor is asserted or the plate is already known to be at drop depth; otherwise it faults (a blind seek-up after `PelletLost` can drive into the stop) |
 | 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel cap to clear the load sensor (sensor-clear or this many steps, whichever first, when seek starts on the sensor) |
 | 280 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
