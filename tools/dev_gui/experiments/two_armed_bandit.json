@@ -29,6 +29,13 @@
       "help": "Chance the rich arm delivers on a given trial (lean arm delivers at 1 - this)"
     },
     {
+      "key": "mimic",
+      "label": "Mimic non-delivering nodes",
+      "type": "bool",
+      "default": true,
+      "help": "When on, the empty arm still runs a no-feed dispense so both arms move. Off = only the fed arm moves."
+    },
+    {
       "key": "next_trial_wait",
       "label": "Advance to next trial",
       "type": "choice",

@@ -1,0 +1,27 @@
+{
+  "name": "fixed_and_random",
+  "label": "Fixed & Random — Behavior Report",
+  "description": "Per-node role is off/fixed/random. Compares take rate and latency across roles, and the observed random-fire rate against the configured probability.",
+  "matches": ["fixed_and_random"],
+  "sections": [
+    { "ref": "generic.provenance" },
+    { "ref": "generic.data_quality" },
+    { "ref": "timeline.session_raster", "options": { "window_s": 600 } },
+    { "ref": "fixed_random.role_comparison" },
+    { "ref": "fixed_random.random_rate" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.presence" },
+    { "ref": "generic.interaction_funnel" },
+    { "ref": "generic.throughput" },
+    { "ref": "generic.faults" },
+    { "ref": "generic.apparatus_health" }
+  ],
+  "combined_sections": [
+    { "ref": "compare.cohort_table" },
+    { "ref": "compare.quality_matrix" },
+    { "ref": "fixed_random.role_comparison" },
+    { "ref": "fixed_random.random_rate" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.faults" }
+  ]
+}

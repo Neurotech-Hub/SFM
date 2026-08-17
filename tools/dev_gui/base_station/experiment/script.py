@@ -13,7 +13,10 @@ a web of ``@exp.on_*`` callbacks:
             if r.faulted:
                 yield control.wait(5.0)
                 continue
-            yield control.wait_until(lambda c: c.domes_closed() and c.quiet_for(5.0))
+            yield control.wait_until(
+                lambda c: c.domes_closed() and c.quiet_for(5.0),
+                label="iti_quiet",
+            )
 
 ``control.wait_for`` / ``wait_until`` / ``wait`` are pure constructors — they
 build an ``_Await`` and do nothing else. All arming happens in
@@ -112,6 +115,27 @@ def _node_suffix(nodes: Tuple[int, ...]) -> str:
     if not nodes:
         return ""
     return f"(node={','.join(str(n) for n in nodes)})"
+
+
+def _until_label(
+    predicate: Callable[..., Any],
+    nodes: Tuple[int, ...],
+    label: Optional[str] = None,
+) -> str:
+    """
+    Human-readable wait name for ``script_stalled`` / ``script_timeout``.
+
+    Anonymous lambdas are named ``<lambda>`` in Python, which is useless in
+    the log — pass ``label=`` at the call site. Unlabeled lambdas fall back
+    to ``condition`` rather than leaking that internal name.
+    """
+    if label is not None:
+        name = str(label).strip() or "condition"
+    else:
+        name = getattr(predicate, "__name__", "") or "condition"
+        if name == "<lambda>":
+            name = "condition"
+    return f"{name}{_node_suffix(nodes)}"
 
 
 class ScriptScheduler:

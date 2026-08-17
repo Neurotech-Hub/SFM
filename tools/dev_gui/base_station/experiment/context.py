@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional,
 
 from ..protocol import CanCmd, build_dispense_no_feed, build_setconfig_heartbeat
 from .events import EventKind, NodeEvent
-from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind
+from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind, _until_label
 
 if TYPE_CHECKING:
     from ..can_manager import CanManager
@@ -510,19 +510,27 @@ class ExperimentControl:
         predicate: Callable[["ExperimentControl"], bool],
         timeout: Optional[float] = None,
         node: Union[int, Sequence[int], None] = None,
+        label: Optional[str] = None,
     ) -> _Await:
         """
         Wait until ``predicate(control)`` returns True (polled every tick).
 
         Pass ``node`` only if this condition should also abort when that node
         faults; otherwise it is purely time/state-driven.
+
+        ``label`` is what ``script_stalled`` / ``script_timeout`` /
+        ``script_await_aborted`` print as ``waiting_on``. Give lambdas a
+        short name (``"plates_clear"``, ``"fault_recovery"``) — otherwise
+        an unlabeled lambda is logged as ``condition``, not ``<lambda>``.
+        Named helper functions keep their ``__name__`` if ``label`` is omitted.
         """
+        nodes = _as_node_tuple(node)
         return _Await(
             kind=_AwaitKind.UNTIL,
             predicate=predicate,
-            nodes=_as_node_tuple(node),
+            nodes=nodes,
             timeout=timeout,
-            label=getattr(predicate, "__name__", "condition"),
+            label=_until_label(predicate, nodes, label),
         )
 
     def wait(self, seconds: float) -> _Await:
@@ -707,10 +715,17 @@ class ExperimentControl:
     def clear_presentation(self, node: int) -> None:
         """Reset this node's presentation state. Call at the start of a new
         trial so a stale reading from the previous cycle can't be mistaken
-        for this one's result before the new cycle completes."""
+        for this one's result before the new cycle completes.
+
+        Also releases the in-flight dispense veto. A multi-node cycle aborted
+        by a fault on one node never delivers LOADED/NO_FEED_PRESENTED on the
+        siblings — without this, those siblings would stay veto-locked out of
+        ``dispense()`` forever after Recover.
+        """
         view = self._view(node)
         view.presented_pellet = False
         view.presented_empty = False
+        view.dispensing = False
 
     # ------------------------------------------------------------------
     # Mouse presence (capacitive pad)

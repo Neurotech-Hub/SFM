@@ -92,10 +92,12 @@ def build(nodes=None, *, name="<name>", **params) -> Experiment:
 - Call `exp.end_after(...)` for automatic stop conditions.
 - Return the `Experiment`.
 
-For duration/pellet-cap plumbing, timer-or-BNC trigger dispatch, and the usual
-fault/recover logging, see [`kit.py`](kit.py) — small helpers the built-in
-templates share (`kit.session(...)`, `kit.on_trigger(...)`, `kit.log_faults(...)`,
-`kit.log_cycle_summary(...)`). Using them is optional but saves boilerplate.
+For duration/pellet-cap plumbing, the shared next-trial wait (`fixed_delay` /
+`presence_clear` / `bnc`), and the usual fault/recover logging, see
+[`kit.py`](kit.py) — small helpers the built-in templates share
+(`kit.session(...)`, `kit.wire_advance(...)`, `kit.next_trial_wait(...)`,
+`kit.after_advance(...)`, `kit.log_faults(...)`, `kit.log_cycle_summary(...)`).
+Using them is optional but saves boilerplate.
 
 ### Registering the template
 
@@ -162,14 +164,18 @@ which declares a `nodes` param).
 Any param may declare `"visible_when": {"<other_key>": <value | [values]>}`; it
 is shown (and collected) only when the controlling param currently equals one of
 the values. Hidden params fall back to their JSON `default`. Example — show the
-timer field only for the timer trigger, the channel only for BNC:
+delay only for `fixed_delay`, the settle time only for `presence_clear`, the
+channel only for BNC:
 
 ```json
-{ "key": "trigger", "type": "choice", "options": ["timer", "bnc"], "default": "timer" },
-{ "key": "interval_s", "type": "float", "default": 10.0,
-  "visible_when": {"trigger": "timer"} },
+{ "key": "next_trial_wait", "type": "choice",
+  "options": ["fixed_delay", "presence_clear", "bnc"], "default": "fixed_delay" },
+{ "key": "fixed_delay_s", "type": "float", "default": 10.0,
+  "visible_when": {"next_trial_wait": "fixed_delay"} },
+{ "key": "iti_quiet_s", "type": "float", "default": 1.0,
+  "visible_when": {"next_trial_wait": "presence_clear"} },
 { "key": "bnc_channel", "type": "int", "default": 0, "min": 0, "max": 1,
-  "visible_when": {"trigger": "bnc"} }
+  "visible_when": {"next_trial_wait": "bnc"} }
 ```
 
 A per-node role dropdown looks like:
@@ -369,6 +375,7 @@ def run(control):
         yield control.wait_until(
             lambda c: c.domes_closed() and c.quiet_for(5.0),
             timeout=30.0,
+            label="iti_quiet",
         )
 ```
 
@@ -377,9 +384,11 @@ def run(control):
 - **`control.wait_for(kind, node=None, timeout=None)`** — wait for the next
   matching event. `kind` is an event name (`"pellet_taken"`, case-insensitive)
   or an `EventKind`. `node` restricts to one id or a list; omit for any node.
-- **`control.wait_until(predicate, timeout=None, node=None)`** — wait until
+- **`control.wait_until(predicate, timeout=None, node=None, label=None)`** — wait until
   `predicate(control)` returns True (checked every tick). Pass `node=` only if
-  this wait should also abort when that node faults.
+  this wait should also abort when that node faults. Pass `label=` so
+  `script_stalled` / `script_timeout` name the wait (`"plates_clear"`) instead
+  of logging an unlabeled lambda as `condition`.
 - **`control.wait(seconds)`** — wait a fixed duration on the runner clock.
 
 Each `yield` returns the same object, with fields filled in once it resolves:
@@ -478,14 +487,18 @@ operator chose. Always iterate `control.nodes`; never assume `[1, 2, 3]`.
 ## 9. Worked examples in this repo
 
 - **[`templates/free_feeding.py`](templates/free_feeding.py)** — loop-based:
-  continuous reload after each pellet is taken (default `reload_delay_s=30`);
-  per-node sticky fault + recover.
+  continuous reload after each pellet is taken, using the shared advance
+  (`next_trial_wait`: `fixed_delay` default 30 s, or `presence_clear`);
+  per-node sticky fault + recover. (`reload_delay_s=` is a headless alias
+  of `fixed_delay_s`.)
 - **[`templates/fixed_and_random.py`](templates/fixed_and_random.py)** — each
   node has a **role** (`off` / `fixed` / `random`) from a `node_choice` param.
   `fixed` nodes dispense every cycle, `random` nodes dispense with `random_prob`,
-  `off` nodes are inactive. `build(node_roles={1:"fixed", 2:"off", ...})`. Trigger
-  by timer or BNC rising edge. (A legacy `fixed_nodes` string is still accepted
-  for headless runs.)
+  `off` nodes are inactive. `build(node_roles={1:"fixed", 2:"off", ...})`.
+  Advance with the same `next_trial_wait` as two-armed bandit (`fixed_delay` /
+  `presence_clear`), plus `bnc` for an external rising edge. (A legacy
+  `fixed_nodes` string and `trigger="timer"` / `interval_s=` are still
+  accepted for headless runs.)
 - **[`templates/probability_delivery.py`](templates/probability_delivery.py)** —
   each cycle delivers on **one** node, chosen by an independent **weighted
   random draw** (`random.choices`) — e.g. weights `20,80` mean node 1 has a 20%
@@ -493,7 +506,8 @@ operator chose. Always iterate `control.nodes`; never assume `[1, 2, 3]`.
   20-of-100 allocation or round-robin, and over many cycles the observed split
   converges to the configured weights. `0` means that node is never picked.
   A `node_number` param supplies the per-node weights as `{node_id: pct}`
-  (a comma-separated string is accepted for headless runs).
+  (a comma-separated string is accepted for headless runs). Same shared
+  `next_trial_wait` as `fixed_and_random`.
 - **[`templates/two_armed_bandit.py`](templates/two_armed_bandit.py)** —
   `@exp.script`-based: exactly two nodes (the arms). Each trial, both arms run
   the dispense motion (`control.dispense(fed)` / `control.dispense(empty,
@@ -517,7 +531,7 @@ reproducible runs (used by the tests); `two_armed_bandit` does too, and also
 logs whatever seed it used (generated if you didn't supply one) so any session
 can be replayed. Because all three use the declarative node param types above,
 none needs any per-template GUI code — the form (per-node dropdowns / % inputs,
-plus the trigger-gated timer/channel fields) is generated entirely from their
+plus the advance-gated delay / settle / BNC fields) is generated entirely from their
 JSON.
 
 ---

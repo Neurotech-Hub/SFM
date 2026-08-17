@@ -142,9 +142,9 @@ A script may expose either `exp = Experiment(...)` or
 
 | Name | Module | Behavior |
 |------|--------|----------|
-| `free_feeding` | `base_station.experiment.templates.free_feeding` | Dispense on all nodes at start; after each pellet taken, wait `reload_delay_s` and re-dispense; end on duration and/or pellet cap |
-| `fixed_and_random` | `base_station.experiment.templates.fixed_and_random` | Per-node role (off/fixed/random) on a timer or BNC trigger |
-| `probability_delivery` | `base_station.experiment.templates.probability_delivery` | Each trigger delivers on one node, chosen by weighted random draw |
+| `free_feeding` | `base_station.experiment.templates.free_feeding` | Dispense on all nodes at start; after each pellet taken, wait (`fixed_delay` or `presence_clear`) and re-dispense; end on duration and/or pellet cap |
+| `fixed_and_random` | `base_station.experiment.templates.fixed_and_random` | Per-node role (off/fixed/random); advance by fixed delay, presence-clear, or BNC |
+| `probability_delivery` | `base_station.experiment.templates.probability_delivery` | Each cycle delivers on one node, chosen by weighted random draw; same shared advance |
 | `two_armed_bandit` | `base_station.experiment.templates.two_armed_bandit` | Two-armed bandit: both arms move each trial, only one delivers, reward probability flips every `block_size` trials |
 
 ### API surface
@@ -164,6 +164,66 @@ A script may expose either `exp = Experiment(...)` or
 
 Experiment-level CSV logs go to `--log-dir` as
 `experiment_<name>_YYYYMMDD_HHMMSS.csv` (separate from the raw-CAN session log).
+
+## Behavior reports (session CSV → printable HTML)
+
+`run_report.py` turns one or more session CSVs into a self-contained,
+printable HTML behavior report — no server, no JavaScript, no external
+dependencies beyond the standard library. Charts are inline SVG; print
+with Ctrl+P / Cmd+P.
+
+```bash
+# List sessions found on the storage drive (or ~/sfm_logs as a fallback):
+python run_report.py --list
+
+# One session, opened in the default browser when done:
+python run_report.py EXP-Test-02 --open
+
+# Every session for a cohort, combined into one comparative report:
+python run_report.py "cohortA_*" --combine -o /tmp/cohortA.html
+python run_report.py --all --since 2026-08-01 --combine
+
+# Check how session names parse into subject/cohort/day (see naming.py):
+python run_report.py --check-names
+```
+
+```
+python run_report.py --help
+
+  target...        Session name, shell glob, or path to a .csv (repeatable)
+  --log-dir         Default: auto-detected external drive / ~/sfm_logs
+  --list            List discovered sessions and exit
+  --list-designs    List report designs and exit
+  --check-names     Show how each session name parses and exit
+  --combine         One comparative report over all targets
+  --all             Every session in --log-dir
+  --since, --until  Filter by date (YYYY-MM-DD)
+  --run             Only this run_id (a file can hold several)
+  --design          Force a report design instead of resolving by experiment
+  --align           Combined-report time alignment: relative | wall | trial | event:<name>
+  --out, -o         Output file (single report) or directory (multiple)
+  --open            Open the result with xdg-open when done
+```
+
+**How it's structured** (mirrors the experiment engine's own
+JSON-schema/Python split): a report **design** — `reports/<name>.json` —
+declares which **sections** to render and in what order; sections are
+plain Python functions registered under
+[`base_station/report/sections/`](base_station/report/sections/). The
+design is picked automatically from the session's `experiment` field
+(`session_start`'s `fields_json`), falling back to
+[`reports/default.json`](../reports/default.json) for anything without a
+matching design or with no `session_start` at all. Metrics (retrieval
+latency, presence bouts, dispense cycles, bandit choice/WSLS/reversal,
+…) live in [`base_station/report/analyses/`](base_station/report/analyses/)
+and [`base_station/report/metrics.py`](base_station/report/metrics.py),
+separately from the HTML that renders them, so `--json` output (planned)
+and the numbers themselves are testable without parsing HTML.
+
+Add a new comparative view or per-experiment section by writing a
+function returning a `SectionResult` (see `report/schema.py`) and adding
+its `module.function` ref to the relevant `reports/*.json` — no changes
+to `run_report.py` or the render pipeline needed.
 
 ## Base station I/O (BNC, AEO, button)
 
@@ -193,11 +253,19 @@ tools/dev_gui/
 ├── requirements.txt
 ├── run.py                    # GUI entry point
 ├── run_experiment.py         # Headless experiment CLI
+├── run_report.py             # Behavior-report CLI (session CSV → HTML)
 ├── node_simulator.py         # Fake VFM nodes for vcan0 testing
+├── reports/                  # Report designs (JSON) — mirrors experiments/
+│   ├── default.json
+│   ├── two_armed_bandit.json
+│   ├── free_feeding.json
+│   ├── probability_delivery.json
+│   └── fixed_and_random.json
 ├── deploy/                   # One-time Pi setup: MCP2515 device tree overlay,
 │                              # systemd-networkd unit — see deploy/README.md
 ├── tests/
 │   ├── test_hat.py           # Interactive hardware validation (not pytest)
+│   ├── report_fixtures.py    # Shared CSV builders for report_*.py tests
 │   └── test_*.py             # Automated unit tests (pytest)
 ├── base_station/
     ├── protocol.py           # CAN protocol constants + parsers
@@ -207,18 +275,32 @@ tools/dev_gui/
     ├── mac_id_registry.py    # Persistent MAC ↔ Node ID dictionary (~/.sfm/…)
     ├── node_registry.py      # Per-node live state (session)
     ├── log_manager.py        # Ring buffer + CSV auto-save
+    ├── storage.py            # Log-dir resolution (headless-safe; no dearpygui import)
     ├── app.py                # DearPyGui screens + render loop
-    └── experiment/           # Headless event-driven task engine
-        ├── events.py         # EventKind + CAN → NodeEvent normalizer
-        ├── context.py        # ExperimentControl: actions, timers, counters, experiment CSV
-        ├── script.py         # @exp.script sequential-generator scheduler
-        ├── runner.py         # Experiment API + tick loop
-        ├── kit.py            # Shared template boilerplate (session/trigger/fault logging)
-        └── templates/
-            ├── free_feeding.py
-            ├── fixed_and_random.py
-            ├── probability_delivery.py
-            └── two_armed_bandit.py
+    ├── experiment/           # Headless event-driven task engine
+    │   ├── events.py         # EventKind + CAN → NodeEvent normalizer
+    │   ├── context.py        # ExperimentControl: actions, timers, counters, experiment CSV
+    │   ├── script.py         # @exp.script sequential-generator scheduler
+    │   ├── runner.py         # Experiment API + tick loop
+    │   ├── kit.py            # Shared template boilerplate (session/trigger/fault logging)
+    │   └── templates/
+    │       ├── free_feeding.py
+    │       ├── fixed_and_random.py
+    │       ├── probability_delivery.py
+    │       └── two_armed_bandit.py
+    └── report/               # Behavior-report generator (see "Behavior reports" above)
+        ├── loader.py         # CSV → typed rows; schema sniffing; heartbeat decode
+        ├── session.py        # Groups rows into per-(session, run_id) RunData
+        ├── naming.py         # Session name → subject/cohort/day
+        ├── metrics.py        # Generic metrics: dispense cycles, bouts, faults, funnel
+        ├── stats.py          # Wilson CI, chi-square GOF — stdlib math only
+        ├── align.py          # Cross-run time alignment for combined reports
+        ├── charts.py         # Inline-SVG chart primitives
+        ├── style.py          # CSS + palette + hatch textures
+        ├── render.py         # HTML document assembly
+        ├── schema.py         # Report "designs" (JSON) ↔ "sections" (Python)
+        ├── analyses/         # Per-experiment metrics (bandit, free_feeding, …)
+        └── sections/         # Per-experiment + generic + comparative HTML sections
 ```
 
 ## Persistent MAC ↔ Node ID map

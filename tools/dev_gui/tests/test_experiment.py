@@ -27,19 +27,38 @@ def _msg(arb_id: int, data: bytes):
     return SimpleNamespace(arbitration_id=arb_id, data=data)
 
 
+def _resolve_since(runner, mark: int, ts: float) -> None:
+    """
+    Satisfy the sequential sync gate + take wait for commands sent since
+    ``mark``: LOADED on each Dispense, NO_FEED_PRESENTED on each
+    DispenseNoFeed, then PELLET_TAKEN on each fed node (separate inject so
+    the take is not missed while the script is still waiting on presentation).
+    """
+    fed = []
+    presented = []
+    for (node, cmd, _) in runner.ctx.commands_sent[mark:]:
+        if cmd == CanCmd.Dispense:
+            fed.append(node)
+            presented.append(NodeEvent(EventKind.LOADED, node_id=node, timestamp=ts))
+        elif cmd == CanCmd.DispenseNoFeed:
+            presented.append(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=node, timestamp=ts))
+    if presented:
+        runner.inject(presented)
+    if fed:
+        runner.inject([
+            NodeEvent(EventKind.PELLET_TAKEN, node_id=n, timestamp=ts) for n in fed
+        ])
+
+
 def _fire_bnc_and_resolve(runner, channel: int, ts: float) -> None:
     """
-    Inject a BNC IN rising edge, then immediately resolve (LOADED) whichever
-    node it dispensed on — simulating each cycle completing before the next
-    trigger, so a statistics-over-many-triggers test isn't gated by the
-    "cycle already in flight" veto (see ExperimentControl.is_dispensing()).
+    Inject a BNC IN rising edge, then resolve whichever nodes it commanded
+    (fed + mimic) so the sequential loop can arm the next BNC wait.
     """
     before = len(runner.ctx.commands_sent)
     runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=ts,
                             data={"channel": channel, "edge": "rising", "high": True}))
-    for (node, cmd, _) in runner.ctx.commands_sent[before:]:
-        if cmd == CanCmd.Dispense:
-            runner.inject(NodeEvent(EventKind.LOADED, node_id=node, timestamp=ts + 0.001))
+    _resolve_since(runner, before, ts + 0.001)
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +635,34 @@ def test_free_feeding_reloads_after_pellet_taken() -> None:
     assert dispenses == [(1, CanCmd.Dispense)]
 
 
+def test_free_feeding_presence_clear_gates_reload() -> None:
+    exp = build_free_feeding(
+        nodes=[1], next_trial_wait="presence_clear", iti_quiet_s=0.0, seconds=60,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))
+    runner.inject(NodeEvent(
+        EventKind.PRESENCE_CHANGED, node_id=1, timestamp=0.6,
+        data={"active": True, "source": "event"},
+    ))
+    runner.ctx.commands_sent.clear()
+
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0,
+                            data={"dome_open": True}))
+    assert runner.ctx.commands_sent == []  # still on the pad
+
+    runner.inject(NodeEvent(
+        EventKind.PRESENCE_CHANGED, node_id=1, timestamp=3.0,
+        data={"active": False, "source": "event"},
+    ))
+    runner.step(now=3.1)  # after_advance polls on a 0.1s timer
+    dispenses = [
+        (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
+    ]
+    assert dispenses == [(1, CanCmd.Dispense)]
+
+
 def test_free_feeding_immediate_reload_when_delay_zero() -> None:
     exp = build_free_feeding(nodes=[2], reload_delay_s=0.0, seconds=60)
     runner = exp.make_runner()
@@ -631,8 +678,8 @@ def test_free_feeding_immediate_reload_when_delay_zero() -> None:
     assert dispenses == [(2, CanCmd.Dispense)]
 
 
-def test_fault_halts_only_that_node_session_continues() -> None:
-    """A fault halts only the faulted node; other nodes keep running."""
+def test_fault_pauses_whole_free_feeding_session_until_recovered() -> None:
+    """A fault on any node pauses reloads on every node until Recover."""
     exp = build_free_feeding(nodes=[1, 2], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
@@ -654,20 +701,25 @@ def test_fault_halts_only_that_node_session_continues() -> None:
         )
     )
 
-    # Session keeps running; only node 1 is latched.
     assert not runner.is_finished
     assert not runner.ctx.stop_requested
     assert runner.ctx.is_halted(1)
     assert not runner.ctx.is_halted(2)
 
-    # Advance past node 2's reload delay — node 2 reloads, node 1 does not.
+    # Past node 2's reload delay — session is paused, so node 2 must not reload.
     runner.ctx.commands_sent.clear()
     runner.step(now=3.5)
     dispenses = [
         n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
+    assert dispenses == []
+
+    runner.recover_node(1, now=4.0)
+    runner.step(now=4.2)
+    dispenses = [
+        n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
+    ]
     assert 2 in dispenses
-    assert 1 not in dispenses
 
 
 def test_fault_cancels_faulted_nodes_pending_reload() -> None:
@@ -760,16 +812,19 @@ def test_fixed_and_random_roles_fixed_random_off() -> None:
         trigger="timer", interval_s=5.0, random_prob=0.0, seconds=60, seed=1,
     )
     runner = exp.make_runner()
+    mark = 0
     runner.start(now=0.0)   # immediate first cycle
-    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))  # resolve before next cycle
+    _resolve_since(runner, mark, 0.0)
+    mark = len(runner.ctx.commands_sent)
     runner.step(now=5.0)    # second cycle
-    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=5.5))
+    _resolve_since(runner, mark, 5.0)
+    mark = len(runner.ctx.commands_sent)
     runner.step(now=10.0)   # third cycle
 
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert dispenses.count(1) == 3          # fixed → every cycle
     assert 2 not in dispenses               # off → never
-    assert 3 not in dispenses               # random with prob 0 → never
+    assert 3 not in dispenses               # random with prob 0 → never (mimics instead)
 
 
 def test_fixed_and_random_multiple_fixed_roles() -> None:
@@ -780,12 +835,13 @@ def test_fixed_and_random_multiple_fixed_roles() -> None:
         trigger="timer", interval_s=5.0, random_prob=0.0, seconds=60, seed=1,
     )
     runner = exp.make_runner()
+    mark = 0
     runner.start(now=0.0)
-    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))  # resolve before next cycle
-    runner.inject(NodeEvent(EventKind.LOADED, node_id=3, timestamp=0.5))
+    _resolve_since(runner, mark, 0.0)
+    mark = len(runner.ctx.commands_sent)
     runner.step(now=5.0)
-    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=5.5))
-    runner.inject(NodeEvent(EventKind.LOADED, node_id=3, timestamp=5.5))
+    _resolve_since(runner, mark, 5.0)
+    mark = len(runner.ctx.commands_sent)
     runner.step(now=10.0)
 
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
@@ -803,20 +859,42 @@ def test_fixed_and_random_fixed_nodes_string_backcompat() -> None:
     runner = exp.make_runner()
     runner.start(now=0.0)
     dispenses = {n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense}
-    assert dispenses == {1}  # node 1 fixed; 2 & 3 random at prob 0 → never
+    assert dispenses == {1}  # node 1 fixed; 2 & 3 random at prob 0 → mimic, not feed
 
 
-def test_fixed_and_random_random_nodes_dispense_when_prob_one() -> None:
-    """prob=1: every 'random' node dispenses too (alongside 'fixed')."""
+def test_fixed_and_random_at_most_one_random_feeds() -> None:
+    """prob=1: exactly one Random node feeds (alongside every Fixed); the other mimics."""
     exp = build_fixed_and_random(
         nodes=[1, 2, 3],
         node_roles={1: "fixed", 2: "random", 3: "random"},
         trigger="timer", interval_s=5.0, random_prob=1.0, seconds=60, seed=1,
+        mimic=True,
     )
     runner = exp.make_runner()
     runner.start(now=0.0)
-    nodes = {n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense}
-    assert nodes == {1, 2, 3}
+    fed = {n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense}
+    mimics = {n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.DispenseNoFeed}
+    assert 1 in fed
+    random_fed = fed - {1}
+    assert len(random_fed) == 1
+    assert random_fed <= {2, 3}
+    assert mimics == {2, 3} - random_fed
+
+
+def test_fixed_and_random_random_prob_zero_all_random_mimic() -> None:
+    """random_prob=0: every Random node mimics; none of them feed."""
+    exp = build_fixed_and_random(
+        nodes=[1, 2, 3],
+        node_roles={1: "fixed", 2: "random", 3: "random"},
+        trigger="timer", interval_s=5.0, random_prob=0.0, seconds=60, seed=1,
+        mimic=True,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    fed = {n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense}
+    mimics = {n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.DispenseNoFeed}
+    assert fed == {1}
+    assert mimics == {2, 3}
 
 
 def test_probability_delivery_weighted_pick() -> None:
@@ -831,6 +909,24 @@ def test_probability_delivery_weighted_pick() -> None:
 
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert dispenses and set(dispenses) == {2}
+
+
+def test_probability_delivery_presence_clear_gates_next_cycle() -> None:
+    exp = build_probability_delivery(
+        nodes=[1, 2], probabilities="100,0",
+        next_trial_wait="presence_clear", iti_quiet_s=0.0, seconds=60, seed=1,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    assert [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense] == [1]
+
+    runner.inject(NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.5))
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
+    runner.step(now=10.0)
+    assert len([n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]) == 1
+
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=11.0))
+    assert len([n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]) == 2
 
 
 def test_probability_delivery_accepts_weight_dict() -> None:
@@ -915,10 +1011,7 @@ def test_probability_delivery_exactly_one_node_per_cycle() -> None:
         dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
         assert len(dispenses) == 1, f"cycle {i}: expected exactly 1 dispense, got {dispenses}"
         used.add(dispenses[0])
-        # Resolve this pick before the next trigger — this test is about
-        # mutual exclusivity WITHIN a cycle, not the separate "cycle already
-        # in flight" veto (see is_dispensing()), which is tested elsewhere.
-        runner.inject(NodeEvent(EventKind.LOADED, node_id=dispenses[0], timestamp=ts + 0.001))
+        _resolve_since(runner, 0, ts + 0.001)
 
     # Over 500 equal-weight cycles every node should have been picked at least
     # once (rules out an accidental single-node lock), but never two per cycle.
@@ -957,37 +1050,29 @@ def test_dispense_veto_pellet_on_plate_is_template_independent() -> None:
     assert dispenses == [2]
 
 
-def test_probability_delivery_resolves_timing_overlap_via_in_flight_veto() -> None:
+def test_probability_delivery_sequential_cycle_ignores_bnc_until_take() -> None:
     """
-    The 'cycle already in flight' guard lives in ExperimentControl.dispense()
-    too — so a fast BNC trigger that repeatedly forces the SAME node (weight
-    100) never sends a second Dispense while the first cycle hasn't reached
-    the plate yet, with ZERO code in probability_delivery.py itself.
+    Probability delivery is a sequential loop: a second BNC while the cycle is
+    still waiting for presentation / take is ignored (the script is not
+    listening for BNC). After the take, the next rising edge starts a new cycle.
     """
     exp = build_probability_delivery(
         nodes=[1, 2], probabilities="0,100", trigger="bnc", bnc_channel=0, seed=1,
+        mimic=False,
     )
     runner = exp.make_runner()
     runner.start(now=0.0)
 
-    # First trigger: node 2 dispenses.
     runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=1.0,
                             data={"channel": 0, "edge": "rising", "high": True}))
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert dispenses == [2]
-    assert runner.ctx.is_dispensing(2)
-    assert not runner.ctx.pellet_on_plate(2)  # in flight, but not on the plate yet
 
-    # A second trigger arrives before node 2's motor cycle finishes — the
-    # weighted pick still lands on node 2 (weight 100), but dispense() vetoes
-    # it: still in flight.
     runner.ctx.commands_sent.clear()
     runner.inject(NodeEvent(EventKind.BNC_IN, node_id=0, timestamp=1.5,
                             data={"channel": 0, "edge": "rising", "high": True}))
     assert [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense] == []
 
-    # Once the cycle resolves (pellet reaches the plate), the next trigger
-    # is free to dispense on node 2 again.
     runner.inject(NodeEvent(EventKind.LOADED, node_id=2, timestamp=2.0))
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=2.5))
     runner.ctx.commands_sent.clear()
@@ -997,32 +1082,26 @@ def test_probability_delivery_resolves_timing_overlap_via_in_flight_veto() -> No
     assert dispenses == [2]
 
 
-def test_fixed_and_random_resolves_timing_overlap_via_in_flight_veto() -> None:
-    """
-    Same standardized guard applied to fixed_and_random: a 'fixed' node fired
-    every timer cycle only actually dispenses once its previous cycle has
-    resolved — again, ZERO code in fixed_and_random.py itself.
-    """
+def test_fixed_and_random_sequential_cycle_waits_for_take_then_iti() -> None:
+    """Fixed+random does not fire a second cycle until the take and ITI complete."""
     exp = build_fixed_and_random(
         nodes=[1], node_roles={1: "fixed"}, trigger="timer", interval_s=1.0, seconds=60,
+        mimic=False,
     )
     runner = exp.make_runner()
     runner.start(now=0.0)  # first cycle dispenses immediately
 
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert dispenses == [1]
-    assert runner.ctx.is_dispensing(1)
 
-    # Timer fires again before node 1's cycle resolves — vetoed.
     runner.ctx.commands_sent.clear()
     runner.step(now=1.0)
     assert [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense] == []
 
-    # Resolve, then the next timer cycle dispenses again.
     runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.5))
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=1.6))
     runner.ctx.commands_sent.clear()
-    runner.step(now=2.0)
+    runner.step(now=2.7)
     dispenses = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
     assert dispenses == [1]
 
@@ -1060,6 +1139,93 @@ def test_probability_delivery_bnc_channel_zero_based() -> None:
                   data={"channel": 0, "edge": "falling", "high": False})
     )
     assert not [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense]
+
+
+def test_probability_delivery_mimic_on_no_feed_other_active_nodes() -> None:
+    """mimic on: one Dispense, DispenseNoFeed on every other weight>0 node; weight 0 silent."""
+    exp = build_probability_delivery(
+        nodes=[1, 2, 3], probabilities="50,50,0", trigger="timer",
+        interval_s=5.0, seconds=60, seed=1, mimic=True,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    fed = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    mimics = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.DispenseNoFeed]
+    assert len(fed) == 1
+    assert len(mimics) == 1
+    assert 3 not in fed and 3 not in mimics
+    assert set(fed + mimics) == {1, 2}
+
+
+def test_probability_delivery_mimic_off_only_fed_command() -> None:
+    """mimic off: only the picked node is commanded."""
+    exp = build_probability_delivery(
+        nodes=[1, 2, 3], probabilities="50,50,0", trigger="timer",
+        interval_s=5.0, seconds=60, seed=1, mimic=False,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    fed = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    mimics = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.DispenseNoFeed]
+    assert len(fed) == 1
+    assert fed[0] in (1, 2)
+    assert mimics == []
+    assert 3 not in fed
+
+
+def test_probability_delivery_fault_on_mimic_pauses_session() -> None:
+    """A fault on a mimic node pauses the whole session until Recover."""
+    exp = build_probability_delivery(
+        nodes=[1, 2, 3], probabilities="50,50,0", trigger="timer",
+        interval_s=0.1, seconds=60, seed=1, mimic=True,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    mimics = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.DispenseNoFeed]
+    assert mimics
+    mimic_node = mimics[0]
+    before = len(runner.ctx.commands_sent)
+
+    runner.inject(NodeEvent(
+        EventKind.FAULT, node_id=mimic_node, timestamp=1.0,
+        data={"fault_code": ServiceStatus.Jam},
+    ))
+    paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
+    assert paused
+    runner.step(now=30.0)
+    assert len(runner.ctx.commands_sent) == before
+
+    runner.recover_node(mimic_node, now=31.0)
+    assert [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"]
+    assert len([c for c in runner.ctx.commands_sent if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)]) > before
+
+
+def test_fixed_and_random_fault_on_mimic_pauses_session() -> None:
+    """A fault on a mimicking Random node pauses Fixed nodes too."""
+    exp = build_fixed_and_random(
+        nodes=[1, 2, 3],
+        node_roles={1: "fixed", 2: "random", 3: "random"},
+        trigger="timer", interval_s=0.1, random_prob=0.0, seconds=60, seed=1,
+        mimic=True,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    mimics = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.DispenseNoFeed]
+    assert set(mimics) == {2, 3}
+    before = len(runner.ctx.commands_sent)
+
+    runner.inject(NodeEvent(
+        EventKind.FAULT, node_id=2, timestamp=1.0,
+        data={"fault_code": ServiceStatus.Jam},
+    ))
+    assert [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
+    runner.step(now=30.0)
+    assert len(runner.ctx.commands_sent) == before
+
+    runner.recover_node(2, now=31.0)
+    assert [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"]
+    fed = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense]
+    assert fed.count(1) >= 2
 
 
 def test_free_feeding_ends_on_pellet_cap() -> None:
@@ -1145,7 +1311,7 @@ def test_controller_step_and_on_log() -> None:
     ctrl = ExperimentController()
     assert ctrl.start(
         ff,
-        params={"reload_delay_s": 0, "minutes": 0, "max_pellets": 1},
+        params={"fixed_delay_s": 0, "minutes": 0, "max_pellets": 1},
         nodes=[1],
         log=log,
     )
@@ -1178,7 +1344,7 @@ def test_experiment_commands_appear_under_command_filter() -> None:
     ctrl = ExperimentController()
     assert ctrl.start(
         ff,
-        params={"reload_delay_s": 0, "minutes": 0, "max_pellets": 0},
+        params={"fixed_delay_s": 0, "minutes": 0, "max_pellets": 0},
         nodes=[3],
         log=log,
     )
