@@ -32,6 +32,7 @@ from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .dev_settings import DevSettings
+from . import storage
 from .node_registry import (
     NodeRegistry,
     offline_timeout_for_heartbeat,
@@ -117,6 +118,14 @@ BNC_IN_ACTIONS = [
     "start_experiment",
     "stop_experiment",
 ]
+
+
+# _get_default_log_dir / _validate_log_dir moved to storage.py so headless
+# tools (e.g. run_report.py) can resolve the log directory without importing
+# dearpygui. Re-exported here under their historical names — no behavior change.
+_get_default_log_dir = storage.default_log_dir
+_validate_log_dir = storage.validate_log_dir
+
 
 def _bnc_out_trigger_items() -> list:
     display_names_set = set(CAN_EVENT_DISPLAY_NAME.values())
@@ -438,7 +447,7 @@ class SFMApp:
                 dpg.add_input_text(
                     tag="setup_log_dir",
                     label="Log directory",
-                    default_value=str(Path(self._args.log_dir).expanduser()),
+                    default_value=_get_default_log_dir(),
                     width=260,
                 )
                 dpg.add_checkbox(tag="setup_auto_save", label="Auto-save to CSV", default_value=True)
@@ -493,7 +502,15 @@ class SFMApp:
             dpg.set_value("setup_error", "Interface name cannot be empty.")
             return
 
-        self._exp_log_dir = log_dir or str(Path("~/sfm_logs").expanduser())
+        # Validate log directory
+        if not log_dir:
+            log_dir = _get_default_log_dir()
+        is_valid, error_msg = _validate_log_dir(log_dir)
+        if not is_valid:
+            dpg.set_value("setup_error", f"Log directory issue: {error_msg}")
+            return
+
+        self._exp_log_dir = log_dir
 
         # Open CAN
         try:
@@ -1281,6 +1298,13 @@ class SFMApp:
             )
             dpg.add_button(label="Clear",  callback=self._on_log_clear)
             dpg.add_button(label="Export", callback=self._on_log_export)
+            # TODO(report-gui-hook): a "Report" button belongs here, calling
+            # base_station.report.build_session_report(self._log.csv_path, ...)
+            # on a background threading.Thread (this render loop is single-
+            # threaded — see _make_render_callback/_on_render — so report
+            # generation on a multi-hour session must not run inline) and
+            # surfacing the result path through the existing render-tick pump,
+            # the same way _on_log_export writes to log_count_text below.
             dpg.add_text("", tag="log_count_text", color=(160,165,175,255))
 
         with dpg.table(

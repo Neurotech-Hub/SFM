@@ -14,8 +14,9 @@ before clicking "Start Session".
 
 import argparse
 import sys
+from pathlib import Path
 
-from base_station.app import main
+from base_station.app import main, _get_default_log_dir
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -45,9 +46,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--log-dir",
-        default="~/sfm_logs",
+        default=_get_default_log_dir(),
         metavar="DIR",
-        help="Directory for CSV session logs",
+        help="Directory for CSV session logs (defaults to external storage if available, else ~/sfm_logs)",
     )
     args = parser.parse_args()
 

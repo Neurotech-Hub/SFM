@@ -84,6 +84,62 @@ def test_script_wait_until_polled_on_ticks_with_no_events() -> None:
     assert results == [True]
 
 
+def test_script_stalled_uses_wait_until_label_not_lambda() -> None:
+    exp = Experiment(nodes=[1, 2])
+
+    @exp.script
+    def run(ctx):
+        yield ctx.wait_until(lambda c: False, node=(1, 2), label="plates_clear")
+
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.step(now=120.0)
+    stalls = [e for e in runner.ctx.log_entries if e.name == "script_stalled"]
+    assert len(stalls) == 1
+    assert stalls[0].fields["waiting_on"] == "plates_clear(node=1,2)"
+    assert stalls[0].fields["elapsed_s"] == 120.0
+    assert "<lambda>" not in stalls[0].fields["waiting_on"]
+
+    runner.step(now=240.0)
+    stalls = [e for e in runner.ctx.log_entries if e.name == "script_stalled"]
+    assert len(stalls) == 2
+    assert stalls[1].fields["waiting_on"] == "plates_clear(node=1,2)"
+    assert stalls[1].fields["elapsed_s"] == 240.0
+
+
+def test_script_stalled_unlabeled_lambda_is_condition_not_lambda() -> None:
+    exp = Experiment(nodes=[1])
+
+    @exp.script
+    def run(ctx):
+        yield ctx.wait_until(lambda c: False)
+
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.step(now=120.0)
+    stalls = [e for e in runner.ctx.log_entries if e.name == "script_stalled"]
+    assert len(stalls) == 1
+    assert stalls[0].fields["waiting_on"] == "condition"
+
+
+def test_script_timeout_uses_wait_until_label() -> None:
+    exp = Experiment(nodes=[1])
+    results = []
+
+    @exp.script
+    def run(ctx):
+        r = yield ctx.wait_until(lambda c: False, timeout=5.0, label="nodes_online")
+        results.append(r.timed_out)
+
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.step(now=6.0)
+    assert results == [True]
+    timeouts = [e for e in runner.ctx.log_entries if e.name == "script_timeout"]
+    assert len(timeouts) == 1
+    assert timeouts[0].fields["waiting_on"] == "nodes_online"
+
+
 def test_script_fault_aborts_pending_wait_for() -> None:
     exp = Experiment(nodes=[1, 2])
     results = []
@@ -504,3 +560,22 @@ def test_kit_next_trial_wait_unknown_mode_falls_back_to_fixed_delay() -> None:
     runner.start(now=0.0)
     runner.step(now=1.5)
     assert fired == [True]
+
+
+def test_resolve_advance_aliases_timer_and_reload_delay() -> None:
+    from base_station.experiment import kit
+
+    mode, delay = kit.resolve_advance(trigger="timer", interval_s=7.5, default_delay_s=10.0)
+    assert (mode, delay) == ("fixed_delay", 7.5)
+
+    mode, delay = kit.resolve_advance(trigger="bnc", allow_bnc=True)
+    assert mode == "bnc"
+
+    mode, delay = kit.resolve_advance(reload_delay_s=30.0)
+    assert (mode, delay) == ("fixed_delay", 30.0)
+
+    mode, delay = kit.resolve_advance(next_trial_wait="presence_clear")
+    assert mode == "presence_clear"
+
+    mode, delay = kit.resolve_advance(next_trial_wait="bnc")  # bnc not allowed
+    assert mode == "fixed_delay"

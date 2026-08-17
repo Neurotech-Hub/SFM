@@ -28,14 +28,18 @@ def test_load_free_feeding_json() -> None:
     keys = {p.key for p in ff.parameters}
     assert keys == {
         "nodes",
-        "reload_delay_s",
+        "next_trial_wait",
+        "fixed_delay_s",
+        "iti_quiet_s",
         "minutes",
         "max_pellets",
     }
     by_key = {p.key: p for p in ff.parameters}
     assert by_key["nodes"].type == "nodes"
-    assert by_key["reload_delay_s"].type == "int"
-    assert by_key["reload_delay_s"].default == 30
+    assert by_key["next_trial_wait"].options == ["fixed_delay", "presence_clear"]
+    assert by_key["fixed_delay_s"].type == "float"
+    assert by_key["fixed_delay_s"].default == 30.0
+    assert by_key["fixed_delay_s"].visible_when == {"next_trial_wait": "fixed_delay"}
     assert by_key["max_pellets"].type == "int"
 
 
@@ -44,7 +48,7 @@ def test_build_experiment_maps_zero_cap_and_duration() -> None:
     exp = build_experiment(
         ff,
         params={
-            "reload_delay_s": 1,
+            "fixed_delay_s": 1,
             "minutes": 2.0,
             "max_pellets": 0,
         },
@@ -76,13 +80,27 @@ def test_new_param_types_parse() -> None:
     prob = {p.key: p for p in defs["probability_delivery"].parameters}
     assert prob["probabilities"].type == "node_number"
     assert prob["probabilities"].is_node_param
-    assert prob["interval_s"].visible_when == {"trigger": "timer"}
-    assert prob["bnc_channel"].visible_when == {"trigger": "bnc"}
+    assert prob["next_trial_wait"].options == ["fixed_delay", "presence_clear", "bnc"]
+    assert prob["fixed_delay_s"].visible_when == {"next_trial_wait": "fixed_delay"}
+    assert prob["iti_quiet_s"].visible_when == {"next_trial_wait": "presence_clear"}
+    assert prob["bnc_channel"].visible_when == {"next_trial_wait": "bnc"}
     assert prob["bnc_channel"].default == 0
+    assert prob["mimic"].type == "bool"
+    assert prob["mimic"].default is True
 
     far = {p.key: p for p in defs["fixed_and_random"].parameters}
     assert far["node_roles"].type == "node_choice"
     assert far["node_roles"].options == ["off", "fixed", "random"]
+    assert far["next_trial_wait"].options == ["fixed_delay", "presence_clear", "bnc"]
+    assert far["mimic"].type == "bool"
+    assert far["mimic"].default is True
+    assert "one Random node feeds this cycle" in far["random_prob"].help
+
+    bandit = {p.key: p for p in defs["two_armed_bandit"].parameters}
+    assert bandit["next_trial_wait"].options == ["fixed_delay", "presence_clear"]
+    assert "bnc" not in bandit["next_trial_wait"].options
+    assert bandit["mimic"].type == "bool"
+    assert bandit["mimic"].default is True
 
 
 def test_param_visible_evaluates_condition() -> None:
@@ -130,7 +148,7 @@ def test_node_choice_dict_flows_to_builder() -> None:
         fr,
         params={
             "node_roles": {1: "fixed", 2: "off", 3: "random"},
-            "trigger": "timer", "interval_s": 5.0, "random_prob": 0.0,
+            "next_trial_wait": "fixed_delay", "fixed_delay_s": 5.0, "random_prob": 0.0,
             "minutes": 0, "max_pellets": 0,
         },
         nodes=[1, 2, 3],

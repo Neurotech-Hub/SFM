@@ -2,7 +2,7 @@
   "name": "fixed_and_random",
   "label": "Fixed + Random",
   "template": "fixed_and_random",
-  "description": "Per-node roles: Fixed nodes dispense every cycle, Random nodes dispense at the set probability, Off nodes are inactive. Trigger by timer or BNC IN rising edge.",
+  "description": "Per-node roles: Fixed nodes feed every cycle; among Random nodes, at most one feeds (at the set probability); Off nodes stay idle. Non-feeding Random nodes can mimic with a no-feed motion. Advance by fixed delay, presence-clear, or BNC IN.",
   "parameters": [
     {
       "key": "node_roles",
@@ -10,24 +10,42 @@
       "type": "node_choice",
       "default": "random",
       "options": ["off", "fixed", "random"],
-      "help": "off = inactive, fixed = every cycle, random = at the probability below"
+      "help": "off = inactive, fixed = every cycle, random = at most one of these feeds (see probability below)"
     },
     {
-      "key": "trigger",
-      "label": "Trigger",
+      "key": "mimic",
+      "label": "Mimic non-delivering nodes",
+      "type": "bool",
+      "default": true,
+      "help": "When on, Random nodes that are not feeding this cycle still run a no-feed dispense. Off nodes stay idle."
+    },
+    {
+      "key": "next_trial_wait",
+      "label": "Advance to next trial",
       "type": "choice",
-      "default": "timer",
-      "options": ["timer", "bnc"]
+      "default": "fixed_delay",
+      "options": ["fixed_delay", "presence_clear", "bnc"],
+      "help": "fixed_delay = wait a fixed time; presence_clear = wait until the animal is off the pads; bnc = BNC IN rising edge"
     },
     {
-      "key": "interval_s",
-      "label": "Timer interval (s)",
+      "key": "fixed_delay_s",
+      "label": "Fixed delay (s)",
       "type": "float",
       "default": 10.0,
       "min": 0,
       "max": 3600,
-      "help": "Used when Trigger = timer",
-      "visible_when": {"trigger": "timer"}
+      "help": "Used when Advance = fixed_delay",
+      "visible_when": {"next_trial_wait": "fixed_delay"}
+    },
+    {
+      "key": "iti_quiet_s",
+      "label": "Presence-clear settle (s)",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 60,
+      "help": "Used when Advance = presence_clear — presence must stay clear this long before the next trial",
+      "visible_when": {"next_trial_wait": "presence_clear"}
     },
     {
       "key": "bnc_channel",
@@ -37,7 +55,7 @@
       "min": 0,
       "max": 1,
       "help": "0 = first BNC input, 1 = second",
-      "visible_when": {"trigger": "bnc"}
+      "visible_when": {"next_trial_wait": "bnc"}
     },
     {
       "key": "random_prob",
@@ -46,7 +64,7 @@
       "default": 0.5,
       "min": 0,
       "max": 1,
-      "help": "Chance each Random node dispenses per cycle"
+      "help": "Chance that one Random node feeds this cycle"
     },
     {
       "key": "minutes",

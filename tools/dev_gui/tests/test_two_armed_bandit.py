@@ -163,7 +163,7 @@ def test_fault_on_fed_arm_pauses_whole_session_until_recovered() -> None:
     assert len(aborted) == 1
     assert not runner.is_finished
 
-    paused = [e for e in runner.ctx.log_entries if e.name == "bandit_paused_for_fault"]
+    paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
     assert len(paused) == 1
     assert paused[0].fields.get("nodes") == [1]
 
@@ -173,11 +173,11 @@ def test_fault_on_fed_arm_pauses_whole_session_until_recovered() -> None:
     runner.step(now=30.0)
     assert runner.ctx.trial == 1
     assert len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner)) == dispensed_before
-    assert [e for e in runner.ctx.log_entries if e.name == "bandit_resumed_after_fault"] == []
+    assert [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"] == []
 
     # Operator recovers node 1 — the session resumes and trial 2 starts.
     runner.recover_node(1, now=31.0)
-    resumed = [e for e in runner.ctx.log_entries if e.name == "bandit_resumed_after_fault"]
+    resumed = [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"]
     assert len(resumed) == 1
     assert runner.ctx.trial == 2
     assert _dispense_cmds(runner)[-1][0] == 1
@@ -194,7 +194,7 @@ def test_fault_on_empty_arm_also_pauses_the_whole_session() -> None:
 
     # Node 2 (the empty arm) faults during the sync gate.
     runner.inject(NodeEvent(EventKind.FAULT, node_id=2, timestamp=1.0))
-    paused = [e for e in runner.ctx.log_entries if e.name == "bandit_paused_for_fault"]
+    paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
     assert len(paused) == 1
     assert paused[0].fields.get("nodes") == [2]
 
@@ -204,7 +204,7 @@ def test_fault_on_empty_arm_also_pauses_the_whole_session() -> None:
     assert len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner)) == dispensed_before
 
     runner.recover_node(2, now=31.0)
-    assert [e for e in runner.ctx.log_entries if e.name == "bandit_resumed_after_fault"]
+    assert [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"]
     assert runner.ctx.trial == 2
 
 
@@ -221,7 +221,7 @@ def test_fault_before_first_trial_pauses_startup() -> None:
     ])
 
     assert runner.ctx.trial == 0
-    paused = [e for e in runner.ctx.log_entries if e.name == "bandit_paused_for_fault"]
+    paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
     assert len(paused) == 1
     assert len(_dispense_cmds(runner)) == 0
     assert len(_no_feed_cmds(runner)) == 0
@@ -293,14 +293,33 @@ def test_startup_sweep_waits_for_occupied_plate() -> None:
         NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
         NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0),
     ])
-    occupied = [e for e in runner.ctx.log_entries if e.name == "bandit_plate_occupied_wait"]
+    occupied = [e for e in runner.ctx.log_entries if e.name == "plate_occupied_wait"]
     assert len(occupied) == 1
     assert runner.ctx.trial == 0  # trial 1 hasn't started yet
 
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=1.0))
-    cleared = [e for e in runner.ctx.log_entries if e.name == "bandit_plates_clear"]
+    cleared = [e for e in runner.ctx.log_entries if e.name == "plates_clear"]
     assert len(cleared) == 1
     assert runner.ctx.trial == 1
+
+
+def test_plate_occupied_stall_names_the_wait() -> None:
+    """script_stalled must say plates_clear, not <lambda>."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.inject([
+        NodeEvent(EventKind.NODE_ONLINE, node_id=1, timestamp=0.0),
+        NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
+        NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0),
+    ])
+    assert [e for e in runner.ctx.log_entries if e.name == "plate_occupied_wait"]
+
+    runner.step(now=120.0)
+    stalls = [e for e in runner.ctx.log_entries if e.name == "script_stalled"]
+    assert len(stalls) == 1
+    assert stalls[0].fields["waiting_on"] == "plates_clear(node=1,2)"
+    assert runner.ctx.trial == 0
 
 
 def test_plate_occupied_after_trial_blocks_next_trial_until_clear() -> None:
@@ -321,14 +340,14 @@ def test_plate_occupied_after_trial_blocks_next_trial_until_clear() -> None:
     # like the startup sweep blocks trial 1.
     runner.inject(NodeEvent(EventKind.ON_PLATE, node_id=2, timestamp=2.05))
     runner.step(now=2.2)  # past fixed_delay_s
-    occupied = [e for e in runner.ctx.log_entries if e.name == "bandit_plate_occupied_wait"]
+    occupied = [e for e in runner.ctx.log_entries if e.name == "plate_occupied_wait"]
     assert len(occupied) == 1
     assert occupied[0].fields.get("occupied") == [2]
     assert runner.ctx.trial == 1  # trial 2 has NOT started
     assert _dispense_cmds(runner) == [(1, CanCmd.Dispense, b"")]  # only trial 1's command
 
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=2, timestamp=3.0))
-    cleared = [e for e in runner.ctx.log_entries if e.name == "bandit_plates_clear"]
+    cleared = [e for e in runner.ctx.log_entries if e.name == "plates_clear"]
     assert len(cleared) == 1
     assert runner.ctx.trial == 2
 
@@ -357,3 +376,15 @@ def test_presence_clear_mode_gates_next_trial() -> None:
         data={"active": False, "source": "event"},
     ))
     assert runner.ctx.trial == 2
+
+
+def test_mimic_off_sends_only_the_fed_dispense() -> None:
+    """mimic=False skips the empty arm's no-feed command entirely."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1, mimic=False)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    assert len(_dispense_cmds(runner)) == 1
+    assert _dispense_cmds(runner)[0][0] == 1
+    assert _no_feed_cmds(runner) == []
