@@ -36,8 +36,13 @@ pip install -r requirements.txt --break-system-packages
 ## Run
 
 ```bash
-# Real hardware (can0):
+cd tools/dev_gui
+
+# Real hardware (can0) — GUI:
 python run.py
+
+# Behavior report from session CSVs (interactive session picker):
+python run_report.py
 
 # Virtual CAN for testing (no hardware needed):
 sudo modprobe vcan
@@ -50,6 +55,9 @@ python node_simulator.py --interface vcan0 --nodes 3
 # Terminal 2 — start GUI:
 python run.py --interface vcan0 --nodes 3
 ```
+
+For `run_report.py` options (list sessions, combine cohorts, date filters, designs,
+and more), see [Behavior reports](#behavior-reports-session-csv--printable-html).
 
 ## CLI options
 

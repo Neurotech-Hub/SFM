@@ -132,8 +132,10 @@ def _panel_marks_spans(run, m, nodes: List[int], w0: float, w1: float) -> Tuple[
                 glyph, key, _ = _EVENT_GLYPH["FeedSkipped"]
                 marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key, title="FeedSkipped"))
             if row.frame_type == "EVENT" and row.event_name.startswith("Fault:") and w0 <= row.t <= w1:
+                # Filled (not hatched) — a solid red band reads unambiguously
+                # against the hatched orange dome-open band on the lane above.
                 spans.append(Span(lane=base + 2, t0=row.t, t1=min(w1, row.t + max(2.0, (w1 - w0) * 0.01)),
-                                   key=7, hatch=True, title=row.event_name))
+                                   key=7, hatch=False, title=row.event_name))
 
     return spans, marks
 
@@ -187,7 +189,7 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
             prefix="Markers:",
         )
         figs.append(f'{heading}<figure>{overview}<figcaption>Full-session overview '
-                    f'({_fmt_duration(duration)}). Grey hatched bands mark faults.</figcaption></figure>')
+                    f'({_fmt_duration(duration)}).</figcaption></figure>')
 
         if duration > window_s * 1.25:
             n_windows = int(duration // window_s) + (1 if duration % window_s else 0)
