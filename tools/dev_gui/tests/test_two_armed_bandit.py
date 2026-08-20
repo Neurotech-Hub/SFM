@@ -93,7 +93,7 @@ def test_no_feed_dwell_explicit_build_kwarg_overrides_developer_menu_default() -
 
 
 def test_advances_to_next_trial_after_sync_gate_and_take() -> None:
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])
@@ -134,7 +134,7 @@ def test_sync_gate_waits_for_both_arms_before_watching_for_take() -> None:
 
 
 def test_block_flip_switches_the_rich_arm() -> None:
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=1, fixed_delay_s=0.1, seed=1)
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=1, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])
@@ -152,7 +152,7 @@ def test_fault_on_fed_arm_pauses_whole_session_until_recovered() -> None:
     """A fault on EITHER arm must pause the whole session — the healthy arm
     must not keep dispensing solo, since that would give away which node is
     armed just as surely as skipping the no-feed cycle would."""
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])
@@ -187,7 +187,7 @@ def test_fault_on_fed_arm_pauses_whole_session_until_recovered() -> None:
 def test_fault_on_empty_arm_also_pauses_the_whole_session() -> None:
     """Symmetric with the fed-arm case: a fault on the MIMIC arm must pause
     the fed arm too, not just the faulted one."""
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])
@@ -255,7 +255,7 @@ def test_both_arms_baited_is_logged_invalid_and_session_continues() -> None:
     """If the empty arm's plate was already occupied, DispenseNoFeed routes
     to FeedSkipped and presents a REAL pellet — both arms end up baited.
     Must be detected, logged, and NOT silently treated as a normal trial."""
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])
@@ -326,7 +326,7 @@ def test_plate_occupied_after_trial_blocks_next_trial_until_clear() -> None:
     """The plate-clear gate must run before every trial, not just the
     first — a stray pellet on either arm blocks trial 2 exactly as it
     would have blocked trial 1."""
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, fixed_delay_s=0.1, seed=1)
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])

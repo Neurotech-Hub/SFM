@@ -96,7 +96,7 @@ def resolve_advance(
     ``interval_s`` / ``reload_delay_s`` → ``fixed_delay_s``.
     """
     raw = next_trial_wait if next_trial_wait not in (None, "") else trigger
-    mode = str(raw or "fixed_delay")
+    mode = str(raw or "presence_clear")
     mode = _MODE_ALIASES.get(mode, mode)
     allowed = ADVANCE_MODES_WITH_BNC if allow_bnc else ADVANCE_MODES
     if mode not in allowed:

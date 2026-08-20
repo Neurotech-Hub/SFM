@@ -664,7 +664,7 @@ def test_free_feeding_presence_clear_gates_reload() -> None:
 
 
 def test_free_feeding_immediate_reload_when_delay_zero() -> None:
-    exp = build_free_feeding(nodes=[2], reload_delay_s=0.0, seconds=60)
+    exp = build_free_feeding(nodes=[2], next_trial_wait="fixed_delay", reload_delay_s=0.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
     # Complete the on_start dispense before the reload cycle.

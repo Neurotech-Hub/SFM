@@ -82,7 +82,7 @@ def build(
     p_high: float = 0.9,
     dwell_s: Optional[float] = None,
     mimic: bool = True,
-    next_trial_wait: str = "fixed_delay",
+    next_trial_wait: str = "presence_clear",
     fixed_delay_s: float = 5.0,
     iti_quiet_s: float = 1.0,
     hours: float = 0.0,

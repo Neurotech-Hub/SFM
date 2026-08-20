@@ -571,7 +571,7 @@ def test_resolve_advance_aliases_timer_and_reload_delay() -> None:
     mode, delay = kit.resolve_advance(trigger="bnc", allow_bnc=True)
     assert mode == "bnc"
 
-    mode, delay = kit.resolve_advance(reload_delay_s=30.0)
+    mode, delay = kit.resolve_advance(next_trial_wait="fixed_delay", reload_delay_s=30.0)
     assert (mode, delay) == ("fixed_delay", 30.0)
 
     mode, delay = kit.resolve_advance(next_trial_wait="presence_clear")
@@ -579,3 +579,7 @@ def test_resolve_advance_aliases_timer_and_reload_delay() -> None:
 
     mode, delay = kit.resolve_advance(next_trial_wait="bnc")  # bnc not allowed
     assert mode == "fixed_delay"
+
+    # No mode specified at all → the new default, presence_clear.
+    mode, delay = kit.resolve_advance(reload_delay_s=30.0)
+    assert (mode, delay) == ("presence_clear", 30.0)

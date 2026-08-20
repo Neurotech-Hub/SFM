@@ -23,7 +23,7 @@
       "key": "next_trial_wait",
       "label": "Advance to next trial",
       "type": "choice",
-      "default": "fixed_delay",
+      "default": "presence_clear",
       "options": ["fixed_delay", "presence_clear", "bnc"],
       "help": "fixed_delay = wait a fixed time; presence_clear = wait until the animal is off the pads; bnc = BNC IN rising edge"
     },
