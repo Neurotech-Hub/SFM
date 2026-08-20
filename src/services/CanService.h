@@ -45,6 +45,14 @@ using CommandCallback = std::function<void(CanCmd cmd, const uint8_t *payload, u
 // Receives the full TWAI frame identifier, payload pointer, and DLC.
 using DiscoveryCallback = std::function<void(uint32_t frameId, const uint8_t *payload, uint8_t len)>;
 
+// Callback for event frames emitted by OTHER nodes (0x300 + srcId, srcId != this node).
+// Every node's TWAI filter is ACCEPT_ALL, so peer events already land in the RX queue —
+// this exposes them so one node can react to another within a single CAN frame time
+// (~0.5 ms at 250 kbps) instead of round-tripping through the base station.
+// payload/len EXCLUDE the event byte, matching CommandCallback.
+using PeerEventCallback =
+    std::function<void(uint8_t srcId, CanEvent ev, const uint8_t *payload, uint8_t len)>;
+
 // ---------------------------------------------------------------------------
 class CanService {
 public:
@@ -73,6 +81,7 @@ public:
     // --- Callbacks ---
     void onCommand(CommandCallback cb)     { commandCb_   = cb; }
     void onDiscovery(DiscoveryCallback cb) { discoveryCb_ = cb; }
+    void onPeerEvent(PeerEventCallback cb) { peerEventCb_ = cb; }
 
     // --- Heartbeat throttle ---
     // Returns true if heartbeat interval has elapsed; resets the timer.
@@ -94,6 +103,7 @@ private:
     uint32_t         lastHeartbeatMs_;
     CommandCallback  commandCb_;
     DiscoveryCallback discoveryCb_;
+    PeerEventCallback peerEventCb_;
 
     // Transmit a pre-built TWAI message; returns true on success.
     bool txMessage(const twai_message_t &msg);

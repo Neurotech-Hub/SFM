@@ -23,8 +23,8 @@ from .session import RunData
 
 
 def _kpi_band(runs: List[RunData], metrics: List[RunMetrics]) -> str:
-    total_presented = sum(sum(a.presented for a in m.pellets.values()) for m in metrics)
-    total_taken = sum(sum(a.taken for a in m.pellets.values()) for m in metrics)
+    total_presented = sum(sum(a.presented_total for a in m.pellets.values()) for m in metrics)
+    total_taken = sum(sum(a.taken_total for a in m.pellets.values()) for m in metrics)
     total_duration = sum(r.duration_s for r in runs)
     total_stalled = sum(len(m.health.get("script_stalled", [])) for m in metrics)
     total_faults = sum(len(m.faults) for m in metrics)

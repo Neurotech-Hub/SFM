@@ -80,23 +80,15 @@ bool VFM::begin() {
 
                 break;
 
-            case CanCmd::DispenseNoFeed: {
+            case CanCmd::DispenseNoFeed:
 
-                // payload/len EXCLUDE the command byte (see dispatchRx()).
-                uint16_t dwellMs = kDefaultNoFeedDwellMs;
-
-                if (len >= 2) {
-
-                    dwellMs = static_cast<uint16_t>(payload[0]) |
-                              (static_cast<uint16_t>(payload[1]) << 8);
-
-                }
-
-                dispenser_.dispenseNoFeed(dwellMs);
+                // No payload: the raise is triggered by a peer node's Raising
+                // event, not a commanded dwell. A trailing payload from an
+                // older base station is ignored rather than rejected, so a
+                // partially updated rig still completes cycles.
+                dispenser_.dispenseNoFeed();
 
                 break;
-
-            }
 
             case CanCmd::AssignId:
 
@@ -226,6 +218,22 @@ bool VFM::begin() {
                 break;
 
         }
+
+    });
+
+
+    // 4b. React to other nodes' events. A no-feed cycle raises its empty plate
+    // the moment a peer starts raising a loaded one, so both plates arrive at
+    // the top together and the animal gets no timing cue about which arm is
+    // baited. First peer to raise wins — srcId is deliberately not matched, so
+    // any mix of dispense / no-dispense nodes in an experiment stays in sync
+    // without the base station naming a partner.
+
+    can_.onPeerEvent([this](uint8_t srcId, CanEvent ev, const uint8_t *, uint8_t) {
+
+        (void)srcId;
+
+        if (ev == CanEvent::Raising) dispenser_.notifyPeerRaise();
 
     });
 

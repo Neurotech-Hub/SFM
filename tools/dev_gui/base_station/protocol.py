@@ -46,11 +46,6 @@ CAN_CMD_PURPOSE = {
     CanCmd.SyncFlash: "sync flash — status LED solid ON for camera alignment",
 }
 
-# Dwell time (ms) the node holds at the drop position on a no-feed dispense.
-DEFAULT_NO_FEED_DWELL_MS = 6000
-NO_FEED_DWELL_MIN_MS = 500
-NO_FEED_DWELL_MAX_MS = 60000
-
 # Duration (ms) the status LED holds solid ON on a sync flash, for camera
 # alignment at session start. Clamp mirrors kMinSyncFlashMs/kMaxSyncFlashMs
 # in VFM.h.
@@ -478,16 +473,6 @@ def build_setconfig_presence_factor(factor: float) -> bytes:
     """
     factor = max(PRESENCE_FACTOR_MIN, min(float(factor), PRESENCE_FACTOR_MAX))
     return bytes([CONFIG_PRESENCE_FACTOR]) + struct.pack("<f", factor)
-
-
-def build_dispense_no_feed(dwell_ms: int = DEFAULT_NO_FEED_DWELL_MS) -> bytes:
-    """
-    Build the payload (after the DispenseNoFeed command byte): dwell time,
-    uint16 LE ms. Clamped to [NO_FEED_DWELL_MIN_MS, NO_FEED_DWELL_MAX_MS] —
-    clamp rather than reject, so a bad parameter can't brick a trial.
-    """
-    ms = max(NO_FEED_DWELL_MIN_MS, min(int(dwell_ms), NO_FEED_DWELL_MAX_MS))
-    return struct.pack("<H", ms)
 
 
 def build_sync_flash(duration_ms: int = DEFAULT_SYNC_FLASH_MS) -> bytes:

@@ -367,35 +367,24 @@ class TestServiceStatusMatchesFirmware:
         assert python_values == firmware_values
 
 
-class TestBuildDispenseNoFeed:
-    def test_default_dwell(self):
-        from base_station.protocol import build_dispense_no_feed, DEFAULT_NO_FEED_DWELL_MS
-        payload = build_dispense_no_feed()
-        assert len(payload) == 2
-        assert payload[0] | (payload[1] << 8) == DEFAULT_NO_FEED_DWELL_MS
-
-    def test_explicit_dwell(self):
-        from base_station.protocol import build_dispense_no_feed
-        payload = build_dispense_no_feed(1000)
-        assert payload[0] | (payload[1] << 8) == 1000
-
-    def test_clamps_below_min(self):
-        from base_station.protocol import build_dispense_no_feed, NO_FEED_DWELL_MIN_MS
-        payload = build_dispense_no_feed(1)
-        assert payload[0] | (payload[1] << 8) == NO_FEED_DWELL_MIN_MS
-
-    def test_clamps_above_max(self):
-        from base_station.protocol import build_dispense_no_feed, NO_FEED_DWELL_MAX_MS
-        payload = build_dispense_no_feed(999999)
-        assert payload[0] | (payload[1] << 8) == NO_FEED_DWELL_MAX_MS
-
-    def test_dispense_no_feed_opcode_and_frame(self):
-        from base_station.protocol import CanCmd, build_cmd_frame, build_dispense_no_feed
+class TestDispenseNoFeed:
+    def test_opcode_and_frame_carry_no_payload(self):
+        """DispenseNoFeed is a bare command byte. The node decides when to
+        raise by listening for a peer's Raising event, so there is no dwell
+        (or anything else) for the base station to encode here."""
+        from base_station.protocol import CanCmd, build_cmd_frame
         assert CanCmd.DispenseNoFeed == 0x08
-        arb_id, data = build_cmd_frame(2, CanCmd.DispenseNoFeed, build_dispense_no_feed(6000))
+        arb_id, data = build_cmd_frame(2, CanCmd.DispenseNoFeed)
         assert arb_id == CAN_CMD_BASE + 2
-        assert data[0] == CanCmd.DispenseNoFeed
-        assert data[1] | (data[2] << 8) == 6000
+        assert data == bytes([CanCmd.DispenseNoFeed])
+
+    def test_no_dwell_builder_remains(self):
+        """The dwell payload builder and its clamps are gone, not deprecated —
+        a stale import should fail loudly rather than silently send bytes the
+        firmware now ignores."""
+        import base_station.protocol as protocol
+        assert not hasattr(protocol, "build_dispense_no_feed")
+        assert not hasattr(protocol, "DEFAULT_NO_FEED_DWELL_MS")
 
 
 class TestBuildSyncFlash:

@@ -62,16 +62,12 @@ Not overrideable via SetConfig CAN yet — only compile-time / setter before beg
 
 ## Dispenser — no-feed dispense
 
-Same header. Unlike the motion defaults above, the dwell is **runtime-configurable per command**
-(`DispenseNoFeed` payload, uint16 LE ms) — these are just the default and clamp bounds when the base
-station omits or over/under-shoots it.
+**No tunables.** A no-feed cycle holds at the drop position until it sees a `Raising` event from another
+node on the bus, then raises. There is no dwell constant, no clamp, and no payload on `DispenseNoFeed` —
+the fed node's own raise is the timing reference, so nothing here needs tuning per rig. See
+`docs/DISPENSE_CYCLE.md` § No-feed dispense.
 
-
-| Value  | Constant             | Meaning                                                              |
-| ------ | -------------------- | --------------------------------------------------------------------- |
-| 6 s    | `kDefaultNoFeedDwellMs` | Dwell at the drop position (M1 idle) before raising, when the command carries no dwell payload |
-| 500 ms | `kNoFeedDwellMinMs`  | Commanded dwell is clamped to this floor                              |
-| 60 s   | `kNoFeedDwellMaxMs`  | Commanded dwell is clamped to this ceiling                            |
+There is also no timeout: a node whose peer never raises holds until `Recover`.
 
 
 ---

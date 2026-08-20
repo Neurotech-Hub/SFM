@@ -73,7 +73,9 @@ def test_normalizer_loaded() -> None:
     ev = events[0]
     assert ev.kind == EventKind.LOADED
     assert ev.node_id == 2
-    assert ev.data.get("pellet_count") == 5
+    # Node counter reads 5; this is the run's first pellet, so the session
+    # number is 1. That decoupling is the whole point of the ledger.
+    assert ev.data.get("session_pellets") == 1
 
 
 def test_normalizer_dome_opened() -> None:
@@ -82,7 +84,7 @@ def test_normalizer_dome_opened() -> None:
     events = norm.frame_to_events(_msg(arb, data), now=1.0)
     assert events[0].kind == EventKind.DOME_OPENED
     assert events[0].node_id == 1
-    assert events[0].data.get("pellet_count") == 3
+    assert events[0].data.get("session_pellets") == 0
     assert events[0].data.get("pellet_present") is True
 
 
@@ -91,7 +93,7 @@ def test_normalizer_pellet_taken() -> None:
     arb, data = build_event_frame(2, CanEvent.PelletTaken, b"\x04\x00\x01")
     events = norm.frame_to_events(_msg(arb, data), now=1.0)
     assert events[0].kind == EventKind.PELLET_TAKEN
-    assert events[0].data.get("pellet_count") == 4
+    assert events[0].data.get("session_taken") == 1
     assert events[0].data.get("dome_open") is True
 
 
@@ -187,44 +189,15 @@ def test_context_dispense_records_command() -> None:
     assert ctx.counter("pellets") == 1
 
 
-def test_context_no_feed_dispense_uses_class_default_dwell_when_unset() -> None:
-    """dwell_s=None (the default) should pick up
-    ExperimentControl.default_no_feed_dwell_s — the Developer Menu's
-    process-wide setting — not a hardcoded per-call default."""
-    original = ExperimentContext.default_no_feed_dwell_s
-    try:
-        ExperimentContext.default_no_feed_dwell_s = 8.0
-        ctx = ExperimentContext(nodes=[1])
-        ctx.begin(now=0.0)
-        assert ctx.dispense(1, feed=False) is True
-        _, cmd, payload = ctx.commands_sent[-1]
-        assert cmd == CanCmd.DispenseNoFeed
-        assert payload[0] | (payload[1] << 8) == 8000
-
-        # First cycle must resolve before a second dispense on the same node
-        # is accepted (the "cycle in flight" veto — see is_dispensing()).
-        ctx.observe_event(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=1, timestamp=1.0))
-
-        # Changing the class attribute mid-session changes the NEXT dispense.
-        ExperimentContext.default_no_feed_dwell_s = 2.0
-        assert ctx.dispense(1, feed=False) is True
-        _, cmd, payload = ctx.commands_sent[-1]
-        assert payload[0] | (payload[1] << 8) == 2000
-    finally:
-        ExperimentContext.default_no_feed_dwell_s = original
-
-
-def test_context_no_feed_dispense_explicit_dwell_overrides_class_default() -> None:
-    original = ExperimentContext.default_no_feed_dwell_s
-    try:
-        ExperimentContext.default_no_feed_dwell_s = 8.0
-        ctx = ExperimentContext(nodes=[1])
-        ctx.begin(now=0.0)
-        assert ctx.dispense(1, feed=False, dwell_s=1.5) is True
-        _, cmd, payload = ctx.commands_sent[-1]
-        assert payload[0] | (payload[1] << 8) == 1500
-    finally:
-        ExperimentContext.default_no_feed_dwell_s = original
+def test_context_no_feed_dispense_sends_bare_command() -> None:
+    """DispenseNoFeed carries no payload: the node's raise is triggered by a
+    peer's Raising event on the bus, not by a dwell time the base station
+    picks. Nothing about the command can encode when the plate comes up."""
+    ctx = ExperimentContext(nodes=[1])
+    ctx.begin(now=0.0)
+    assert ctx.dispense(1, feed=False) is True
+    node, cmd, payload = ctx.commands_sent[-1]
+    assert (node, cmd, payload) == (1, CanCmd.DispenseNoFeed, b"")
 
 
 def test_dispense_vetoed_when_pellet_already_on_plate() -> None:
@@ -1193,7 +1166,17 @@ def test_probability_delivery_fault_on_mimic_pauses_session() -> None:
     paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
     assert paused
     runner.step(now=30.0)
-    assert len(runner.ctx.commands_sent) == before
+    # Paused means no new DISPENSING. Recover frames may still go out: a mimic
+    # holds at the drop position until a peer raises, so an arm left waiting on
+    # the faulted node has to be cleared or it rejects the next trial.
+    dispenses_after = [
+        c for c in runner.ctx.commands_sent[before:]
+        if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)
+    ]
+    assert dispenses_after == []
+    # The faulted node itself is never auto-recovered — that is the operator's
+    # call, and clearing it here would silently un-pause the session.
+    assert (mimic_node, CanCmd.Recover, b"") not in runner.ctx.commands_sent
 
     runner.recover_node(mimic_node, now=31.0)
     assert [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"]
@@ -1220,7 +1203,15 @@ def test_fixed_and_random_fault_on_mimic_pauses_session() -> None:
     ))
     assert [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
     runner.step(now=30.0)
-    assert len(runner.ctx.commands_sent) == before
+    # See the probability_delivery twin above: no new dispensing, but node 3 —
+    # a healthy mimic still waiting for a peer that faulted — does get a Recover.
+    dispenses_after = [
+        c for c in runner.ctx.commands_sent[before:]
+        if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)
+    ]
+    assert dispenses_after == []
+    assert (2, CanCmd.Recover, b"") not in runner.ctx.commands_sent
+    assert (3, CanCmd.Recover, b"") in runner.ctx.commands_sent
 
     runner.recover_node(2, now=31.0)
     assert [e for e in runner.ctx.log_entries if e.name == "resumed_after_fault"]

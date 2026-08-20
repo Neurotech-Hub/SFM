@@ -365,16 +365,31 @@ def fault_intervals(run: RunData) -> List[FaultInterval]:
 @dataclass
 class PelletAccounting:
     node: int
-    presented: int = 0
+    presented: int = 0           # rows actually seen in the log
     no_feed_presented: int = 0
-    taken: int = 0
+    taken: int = 0               # rows actually seen in the log
     feed_skipped: int = 0
     hb_presented_delta: Optional[int] = None
     hb_taken_delta: Optional[int] = None
+    # Base-station ledger totals (pellet_ledger.py), gap-corrected against the
+    # node counter. None for logs written before the ledger existed.
+    ledger_presented: Optional[int] = None
+    ledger_taken: Optional[int] = None
+    missed_frames: int = 0       # event frames the ledger proved were dropped
+    counter_restarts: int = 0    # node power-cycles seen mid-run
+
+    @property
+    def presented_total(self) -> int:
+        """Best available count: the ledger when present, else counted rows."""
+        return self.presented if self.ledger_presented is None else self.ledger_presented
+
+    @property
+    def taken_total(self) -> int:
+        return self.taken if self.ledger_taken is None else self.ledger_taken
 
     @property
     def take_rate(self) -> Optional[float]:
-        return safe_ratio(self.taken, self.presented)
+        return safe_ratio(self.taken_total, self.presented_total)
 
     @property
     def bus_loss_presented(self) -> Optional[int]:
@@ -408,6 +423,27 @@ def pellet_accounting(run: RunData) -> Dict[int, PelletAccounting]:
         node = row.fields.get("node")
         if isinstance(node, (int, float)):
             acct(int(node)).feed_skipped += 1
+
+    # Base-station ledger. Every row that carried a node counter also carries
+    # the gap-corrected session total, which is monotonic within a run — so the
+    # high-water mark is the run total, including pellets whose own event frame
+    # never arrived and that row counting above therefore cannot see.
+    for row in run.rows:
+        if not row.node_id:
+            continue
+        a = acct(row.node_id)
+        sp = row.fields.get("session_pellets")
+        if isinstance(sp, (int, float)):
+            a.ledger_presented = max(a.ledger_presented or 0, int(sp))
+        st = row.fields.get("session_taken")
+        if isinstance(st, (int, float)):
+            a.ledger_taken = max(a.ledger_taken or 0, int(st))
+        if row.frame_type == "PELLET_AUDIT":
+            missed = row.fields.get("missed_frames")
+            if isinstance(missed, (int, float)):
+                a.missed_frames += int(missed)
+            if row.fields.get("node_counter_restarted"):
+                a.counter_restarts += 1
 
     hb_by_node: Dict[int, List] = {}
     for hb in run.heartbeats:

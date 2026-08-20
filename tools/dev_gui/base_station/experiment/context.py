@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar, Union
 
-from ..protocol import CanCmd, build_dispense_no_feed, build_setconfig_heartbeat
+from ..protocol import CanCmd, build_setconfig_heartbeat
 from .events import EventKind, NodeEvent
 from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind, _until_label
 
@@ -116,13 +116,6 @@ class ExperimentControl:
         "node_id",
         "fields",
     ]
-
-    # Process-wide default dwell (s) for a no-feed dispense when a template
-    # doesn't pass its own dwell_s — the GUI's Developer Menu writes this
-    # directly (ExperimentControl.default_no_feed_dwell_s = value) so every
-    # running or future experiment picks it up immediately. Matches firmware's
-    # kDefaultNoFeedDwellMs.
-    default_no_feed_dwell_s: float = 6.0
 
     def __init__(
         self,
@@ -235,21 +228,29 @@ class ExperimentControl:
     # Actions
     # ------------------------------------------------------------------
 
-    def dispense(self, node: int, *, feed: bool = True, dwell_s: Optional[float] = None) -> bool:
+    def dispense(self, node: int, *, feed: bool = True) -> bool:
         """
         Send Dispense (or, with ``feed=False``, DispenseNoFeed) to one node.
 
         DispenseNoFeed runs the identical dispense motion — lower, seek the
         load position, raise — but M1 never turns: the node holds at the drop
-        position for ``dwell_s`` seconds before raising an empty plate. Use it
-        to run a module through the motions with no pellet — e.g. so a
-        two-armed task can activate both arms every trial and the animal
-        can't use sound or vibration alone to find the baited one.
+        position and raises an empty plate. Use it to run a module through the
+        motions with no pellet — e.g. so a two-armed task can activate both
+        arms every trial and the animal can't use sound or vibration alone to
+        find the baited one.
 
-        ``dwell_s=None`` (the default) picks up
-        ``ExperimentControl.default_no_feed_dwell_s`` — a process-wide value
-        the GUI's Developer Menu writes directly, so every template shares one
-        rig-tuned dwell unless it explicitly overrides it.
+        **The raise is triggered by a peer node, not by a timer.** A no-feed
+        node holds at the drop position until it hears another node's Raising
+        event on the bus, then raises within one CAN frame time (~0.5 ms). It
+        has to work that way: a fed arm's hold lasts however long M1 takes to
+        drop a pellet plus a 2 s confirm window, which varies trial to trial,
+        so any fixed dwell would land the two plates at the top at visibly
+        different moments — the exact cue a no-feed cycle exists to remove.
+
+        A node whose peer never raises (hopper empty, jam) holds at the drop
+        position indefinitely rather than presenting out of sync; it stays
+        there until ``recover()``. ``kit.synchronized_cycle`` does that
+        automatically when an arm fails to present.
 
         Three standardized, top-priority vetoes apply here — automatically,
         for every template, with no per-template wiring — since this is the
@@ -290,13 +291,7 @@ class ExperimentControl:
                 feed=feed,
             )
             return False
-        if feed:
-            ok = self._send(node, CanCmd.Dispense)
-        else:
-            dwell = dwell_s if dwell_s is not None else self.default_no_feed_dwell_s
-            ok = self._send(
-                node, CanCmd.DispenseNoFeed, build_dispense_no_feed(int(dwell * 1000))
-            )
+        ok = self._send(node, CanCmd.Dispense if feed else CanCmd.DispenseNoFeed)
         if ok:
             self._view(node).dispensing = True
         return ok
