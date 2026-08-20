@@ -188,8 +188,12 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
             + [(label, glyph, key) for glyph, key, label in _EVENT_GLYPH.values()],
             prefix="Markers:",
         )
-        figs.append(f'{heading}<figure>{overview}<figcaption>Full-session overview '
-                    f'({_fmt_duration(duration)}).</figcaption></figure>')
+        # Legend sits once, above every panel for this run — it's shared
+        # (same bands/markers throughout), so it belongs with the run as a
+        # whole rather than repeated per panel or trailing after them.
+        figs.append(f'{heading}{span_legend}{mark_legend}')
+        figs.append(f'<figure><figcaption>Full-session overview '
+                    f'({_fmt_duration(duration)}).</figcaption>{overview}</figure>')
 
         if duration > window_s * 1.25:
             n_windows = int(duration // window_s) + (1 if duration % window_s else 0)
@@ -197,11 +201,8 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
                 w0 = i * window_s
                 w1 = min(duration, (i + 1) * window_s)
                 panel = _panel(run, m, nodes, w0, w1, tall=True)
-                figs.append(f'<figure>{panel}<figcaption>Detail: '
-                            f'{_fmt_duration(w0)}–{_fmt_duration(w1)}</figcaption></figure>')
-
-        figs.append(span_legend)
-        figs.append(mark_legend)
+                figs.append(f'<figure><figcaption>Detail: '
+                            f'{_fmt_duration(w0)}–{_fmt_duration(w1)}</figcaption>{panel}</figure>')
 
     if not figs:
         return SectionResult(section_id="timeline.session_raster", title="Session Timeline", html="", empty=True)

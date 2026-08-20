@@ -191,9 +191,9 @@ def retrieval_latency_section(ctx: SectionContext) -> Optional[SectionResult]:
         n_total = sum(len(v) for v in by_node.values())
         figs.append(f"""
         {heading}
-        <figure>{chart}{legend}<figcaption>Time from pellet ready to Pellet Taken, per node (n={n_total}).
+        <figure><figcaption>Time from pellet ready to Pellet Taken, per node (n={n_total}).
         {"Shown as individual points — too few samples for a reliable distribution shape." if n_total < 8 else ""}
-        </figcaption></figure>
+        </figcaption>{legend}{chart}</figure>
         """)
 
     if not figs:
@@ -275,7 +275,7 @@ def interaction_funnel_section(ctx: SectionContext) -> Optional[SectionResult]:
         )
         parts.append(f"""
         {heading}
-        <figure>{chart}{legend}</figure>
+        <figure>{legend}{chart}</figure>
         <table>
           <tr><th>Node</th><th>Presented</th><th>Approached</th><th>Dome opened</th><th>Taken</th>
               <th>Approach w/o dome</th><th>Dome w/o take</th></tr>
@@ -307,7 +307,7 @@ def throughput_section(ctx: SectionContext) -> Optional[SectionResult]:
         taken_line = charts.line(frame, x, y, [(p.t, p.taken) for p in m.throughput], key=1, step=True)
         chart = charts.svg(frame, axes + presented_line + taken_line, title="Cumulative throughput")
         legend = charts.legend([("presented", 0), ("taken", 1)])
-        parts.append(f"{heading}<figure>{chart}{legend}</figure>")
+        parts.append(f"{heading}<figure>{legend}{chart}</figure>")
 
     if not parts:
         return SectionResult(section_id="generic.throughput", title="Throughput", html="", empty=True)

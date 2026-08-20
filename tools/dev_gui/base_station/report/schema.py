@@ -65,6 +65,7 @@ class SectionSpec:
     options: Dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     page_break_before: bool = False
+    beta: bool = False   # appends " (beta)" to the rendered title — see run_section
 
 
 @dataclass
@@ -85,6 +86,7 @@ def _parse_section(raw: dict) -> SectionSpec:
         options=dict(raw.get("options", {})),
         enabled=bool(raw.get("enabled", True)),
         page_break_before=bool(raw.get("page_break_before", False)),
+        beta=bool(raw.get("beta", False)),
     )
 
 
@@ -173,12 +175,17 @@ def run_section(spec: SectionSpec, ctx: SectionContext) -> Optional[SectionResul
             result.title = spec.title
         if result is not None:
             result.page_break_before = result.page_break_before or spec.page_break_before
+        if result is not None and spec.beta and not result.title.endswith("(beta)"):
+            result.title = f"{result.title} (beta)"
         return result
     except Exception:
         tb = traceback.format_exc()
+        title = spec.title or spec.ref
+        if spec.beta and not title.endswith("(beta)"):
+            title = f"{title} (beta)"
         return SectionResult(
             section_id=spec.ref,
-            title=spec.title or spec.ref,
+            title=title,
             html=(
                 f'<details class="error"><summary>Section "{spec.ref}" failed to render'
                 f'</summary><pre>{_escape_for_pre(tb)}</pre></details>'

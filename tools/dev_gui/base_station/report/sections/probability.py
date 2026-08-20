@@ -36,8 +36,8 @@ def delivery_fit_section(ctx: SectionContext) -> Optional[SectionResult]:
         sig = "significantly different from configured" if fit.p_value < 0.05 else "consistent with configured"
         parts.append(f"""
         {heading}
-        <figure>{chart}{legend}<figcaption>&chi;&sup2;={fit.chi2:.2f}, df={fit.df}, p={fit.p_value:.3f}
-        &mdash; observed distribution is {sig} (n={fit.total} deliveries).</figcaption></figure>
+        <figure><figcaption>&chi;&sup2;={fit.chi2:.2f}, df={fit.df}, p={fit.p_value:.3f}
+        &mdash; observed distribution is {sig} (n={fit.total} deliveries).</figcaption>{legend}{chart}</figure>
         """)
 
     if not any_data:

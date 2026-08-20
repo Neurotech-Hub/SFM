@@ -95,8 +95,8 @@ def block_curve_section(ctx: SectionContext) -> Optional[SectionResult]:
         line = charts.line(frame, x, y, pts, key=0, markers=True)
         errs = charts.error_bars(frame, x, y, pts, [p.lo for p in points], [p.hi for p in points], key=0)
         chart = charts.svg(frame, axes + errs + line, title="P(choose rich) by block")
-        parts.append(f'{heading}<figure>{chart}<figcaption>Wilson 95% CI per block '
-                     f'(n={n_total} analyzed trials).</figcaption></figure>')
+        parts.append(f'{heading}<figure><figcaption>Wilson 95% CI per block '
+                     f'(n={n_total} analyzed trials).</figcaption>{chart}</figure>')
 
     if not any_data:
         return SectionResult(section_id="bandit.block_curve", title="Block-wise Choice", html="", empty=True)
@@ -136,7 +136,7 @@ def reversal_curve_section(ctx: SectionContext) -> Optional[SectionResult]:
         criteria = [c for c in trials_to_criterion(trials, choice_source, max_post=post) if c is not None]
         crit_note = (f"Median trials-to-criterion (3 consecutive new-rich choices): {sorted(criteria)[len(criteria)//2]}"
                     if criteria else "No flip reached criterion within the window shown.")
-        parts.append(f'{heading}<figure>{chart}<figcaption>{escape_text(crit_note)}</figcaption></figure>')
+        parts.append(f'{heading}<figure><figcaption>{escape_text(crit_note)}</figcaption>{chart}</figure>')
 
     if not any_data:
         return SectionResult(section_id="bandit.reversal_curve", title="Reversal Learning", html="", empty=True)
@@ -172,8 +172,8 @@ def wsls_section(ctx: SectionContext) -> Optional[SectionResult]:
         chart = charts.svg(frame, axes + bars + errs, title="Win-stay / lose-shift")
         parts.append(f"""
         {heading}
-        <figure>{chart}<figcaption>win-stay {result.win_stay_k}/{result.win_stay_n},
-        lose-shift {result.lose_shift_k}/{result.lose_shift_n} (95% Wilson CI shown).</figcaption></figure>
+        <figure><figcaption>win-stay {result.win_stay_k}/{result.win_stay_n},
+        lose-shift {result.lose_shift_k}/{result.lose_shift_n} (95% Wilson CI shown).</figcaption>{chart}</figure>
         """)
 
     if not any_data:
@@ -204,9 +204,9 @@ def latency_by_role_section(ctx: SectionContext) -> Optional[SectionResult]:
         legend = charts.legend([("fed arm", 0), ("empty arm", 1)])
         parts.append(f"""
         {heading}
-        <figure>{chart}{legend}<figcaption>Time from pellet ready to dome open, split by whether the
+        <figure><figcaption>Time from pellet ready to dome open, split by whether the
         cycle was baited (fed) or not (empty) — the empty-arm number is the cost of exploration
-        (n={len(fed_dome)} fed, {len(empty_dome)} empty).</figcaption></figure>
+        (n={len(fed_dome)} fed, {len(empty_dome)} empty).</figcaption>{legend}{chart}</figure>
         """)
 
     if not any_data:
