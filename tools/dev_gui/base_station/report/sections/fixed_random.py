@@ -69,9 +69,9 @@ def random_rate_section(ctx: SectionContext) -> Optional[SectionResult]:
 
         parts.append(f"""
         {heading}
-        <figure>{chart}<figcaption>Observed {fit.k}/{fit.n} ({fit.p:.0%}, 95% CI {fit.lo:.0%}–{fit.hi:.0%})
+        <figure><figcaption>Observed {fit.k}/{fit.n} ({fit.p:.0%}, 95% CI {fit.lo:.0%}–{fit.hi:.0%})
         vs configured {fit.configured:.0%}. Denominator is total trial/trigger events — an approximation
-        when more than one random-role node is sampled per trigger.</figcaption></figure>
+        when more than one random-role node is sampled per trigger.</figcaption>{chart}</figure>
         """)
 
     if not any_data:

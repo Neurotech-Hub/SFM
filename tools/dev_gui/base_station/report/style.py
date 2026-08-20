@@ -133,6 +133,11 @@ body {{
   font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
   margin: 0;
   padding: 24px;
+  /* Keeps figure borders/backgrounds visible under Ctrl+P even when the
+     browser's print settings default to suppressing background graphics —
+     they're what makes each graph's own caption/legend unambiguous on paper. */
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }}
 
 .report {{
@@ -166,8 +171,29 @@ tbody tr:hover {{ background: var(--page); }}
 .note {{ color: var(--ink-secondary); font-size: 11px; margin: 4px 0; }}
 
 .section {{ page-break-inside: avoid; margin-bottom: 8px; }}
-figure {{ margin: 8px 0 18px; page-break-inside: avoid; }}
-figcaption {{ font-size: 11px; color: var(--ink-secondary); margin-top: 4px; }}
+
+/* Each figure is a visibly bounded card: caption/legend/chart for ONE graph
+   live inside one box, so a multi-figure section (e.g. the session timeline's
+   overview + detail panels) never reads as a caption floating between two
+   unrelated graphs — the border makes "which graph this describes" unambiguous. */
+figure {{
+  margin: 14px 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--gridline);
+  border-radius: 6px;
+  background: var(--surface);
+  page-break-inside: avoid;
+}}
+/* Caption/legend always come first in the markup (above the chart) — see
+   sections/*.py — so this is a compact header, not a footnote. */
+figcaption {{
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--gridline);
+}}
 
 .chart {{ width: 100%; height: auto; display: block; }}
 .chart text {{ fill: var(--ink-secondary); font-size: 10px; }}
@@ -176,11 +202,14 @@ figcaption {{ font-size: 11px; color: var(--ink-secondary); margin-top: 4px; }}
 .chart .value-label {{ fill: var(--ink-primary); font-size: 10px; }}
 .chart .node-divider {{ stroke: var(--axis); stroke-width: 1; stroke-dasharray: 2,2; }}
 
-.legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11px; color: var(--ink-secondary); margin: 4px 0 10px; }}
+.legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11px; color: var(--ink-secondary); margin: 0 0 8px; }}
 .legend-item {{ display: inline-flex; align-items: center; gap: 5px; }}
 .legend-swatch {{ width: 12px; height: 12px; border-radius: 2px; display: inline-block; }}
 .legend-label {{ font-weight: 600; color: var(--ink-muted); }}
 .legend-glyph {{ display: inline-block; vertical-align: middle; flex-shrink: 0; }}
+/* A legend sitting directly above a figure (timeline.py: shared once across
+   several panels) needs the same bottom spacing as one inside a figure. */
+.legend + figure {{ margin-top: 4px; }}
 
 details.error {{ border: 1px solid var(--status-critical); border-radius: 6px; padding: 8px 12px; margin: 8px 0; }}
 details.error summary {{ color: var(--status-critical); font-weight: 600; cursor: pointer; }}

@@ -55,3 +55,68 @@ class TestRunSection:
         result = run_section(spec, ctx)
         assert result is not None
         assert result.section_id == "generic.provenance"
+
+    def test_beta_flag_appends_suffix_to_title(self):
+        spec = SectionSpec(ref="generic.provenance", beta=True)
+        ctx = SectionContext(runs=[], metrics=[], combined=False, align="relative")
+        result = run_section(spec, ctx)
+        assert result.title == "Session Provenance (beta)"
+
+    def test_beta_flag_does_not_double_suffix_an_explicit_title(self):
+        spec = SectionSpec(ref="generic.provenance", title="Custom (beta)", beta=True)
+        ctx = SectionContext(runs=[], metrics=[], combined=False, align="relative")
+        result = run_section(spec, ctx)
+        assert result.title == "Custom (beta)"
+
+    def test_non_beta_section_title_is_unmodified(self):
+        spec = SectionSpec(ref="generic.provenance")
+        ctx = SectionContext(runs=[], metrics=[], combined=False, align="relative")
+        result = run_section(spec, ctx)
+        assert not result.title.endswith("(beta)")
+
+    def test_beta_flag_applies_to_error_block_title_too(self):
+        spec = SectionSpec(ref="generic.nonexistent_section_xyz", beta=True)
+        ctx = SectionContext(runs=[], metrics=[], combined=False, align="relative")
+        result = run_section(spec, ctx)
+        assert result.title.endswith("(beta)")
+
+
+class TestExperimentSpecificSectionsAreBeta:
+    """Every non-generic, non-timeline, non-compare section ref in every
+    shipped design must be marked beta:true — these are the least-documented
+    graphs (experiment-specific metrics), and the report must say so."""
+
+    def test_all_experiment_specific_refs_are_marked_beta(self):
+        defs = load_report_defs(DEFAULT_REPORTS_DIR)
+        general_prefixes = ("generic.", "timeline.", "compare.")
+        offenders = []
+        for d in defs:
+            for spec in d.sections + d.combined_sections:
+                if spec.ref.startswith(general_prefixes):
+                    continue
+                if not spec.beta:
+                    offenders.append((d.name, spec.ref))
+        assert offenders == []
+
+    def test_timeline_is_the_first_section_in_every_per_session_design(self):
+        defs = load_report_defs(DEFAULT_REPORTS_DIR)
+        for d in defs:
+            if not d.sections:
+                continue
+            assert d.sections[0].ref == "timeline.session_raster", d.name
+
+    def test_experiment_specific_sections_come_after_all_generic_sections(self):
+        defs = load_report_defs(DEFAULT_REPORTS_DIR)
+        general_prefixes = ("generic.", "timeline.", "compare.")
+        for d in defs:
+            for spec_list in (d.sections, d.combined_sections):
+                seen_specific = False
+                for spec in spec_list:
+                    is_general = spec.ref.startswith(general_prefixes)
+                    if not is_general:
+                        seen_specific = True
+                    elif seen_specific:
+                        raise AssertionError(
+                            f"{d.name}: general section {spec.ref!r} appears after "
+                            f"an experiment-specific section"
+                        )

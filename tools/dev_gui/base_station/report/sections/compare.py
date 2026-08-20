@@ -123,8 +123,8 @@ def learning_curve_section(ctx: SectionContext) -> Optional[SectionResult]:
     chart = charts.svg(frame, "".join(body), title="Learning curve across sessions")
     legend = charts.legend([(subject, key) for subject, key, _ in lines_html])
 
-    html = f'<figure>{chart}{legend}<figcaption>Metric: {escape_text(metric_name)}. ' \
-          f'X-axis is parsed session day where available, else session order.</figcaption></figure>'
+    html = f'<figure><figcaption>Metric: {escape_text(metric_name)}. ' \
+          f'X-axis is parsed session day where available, else session order.</figcaption>{legend}{chart}</figure>'
     return SectionResult(section_id="compare.learning_curve", title="Learning Across Sessions", html=html)
 
 
@@ -165,8 +165,8 @@ def subject_spread_section(ctx: SectionContext) -> Optional[SectionResult]:
     frame = Frame()
     series = [Series(subj, vals, key=i) for i, (subj, vals) in enumerate(sorted(by_subject.items()))]
     chart = charts.svg(frame, charts.dot_strip(frame, series), title="Per-subject spread")
-    html = f'<figure>{chart}<figcaption>Metric: {escape_text(metric_name)}, one row per subject, ' \
-          f'median marked.</figcaption></figure>'
+    html = f'<figure><figcaption>Metric: {escape_text(metric_name)}, one row per subject, ' \
+          f'median marked.</figcaption>{chart}</figure>'
     return SectionResult(section_id="compare.subject_spread", title="Subject Spread", html=html)
 
 
@@ -194,9 +194,9 @@ def node_preference_section(ctx: SectionContext) -> Optional[SectionResult]:
     frame = Frame(h=max(140, 30 + len(runs_list) * 22))
     chart = charts.svg(frame, charts.heatmap(frame, matrix, runs_list, [f"node {n}" for n in nodes]),
                         title="Occupancy share by node")
-    html = f'<figure>{chart}<figcaption>Fraction of presence time spent at each node, per run. ' \
+    html = f'<figure><figcaption>Fraction of presence time spent at each node, per run. ' \
           f'A persistent bias toward one node across many runs suggests a spatial preference rather ' \
-          f'than a trial-by-trial choice effect.</figcaption></figure>'
+          f'than a trial-by-trial choice effect.</figcaption>{chart}</figure>'
     return SectionResult(section_id="compare.node_preference", title="Node Preference", html=html)
 
 
@@ -224,8 +224,8 @@ def quality_matrix_section(ctx: SectionContext) -> Optional[SectionResult]:
     chart = charts.svg(frame, charts.heatmap(frame, matrix, runs_list, metrics_cols,
                                               vmin=0, vmax=max_val, fmt="{:.0f}"),
                         title="Data quality issue counts by run")
-    html = f'<figure>{chart}<figcaption>Raw counts (not normalized) — use this to spot which run to ' \
-          f'exclude or re-check before pooling results.</figcaption></figure>'
+    html = f'<figure><figcaption>Raw counts (not normalized) — use this to spot which run to ' \
+          f'exclude or re-check before pooling results.</figcaption>{chart}</figure>'
     return SectionResult(section_id="compare.quality_matrix", title="Data Quality Matrix", html=html)
 
 
@@ -261,10 +261,10 @@ def cumulative_overlay_section(ctx: SectionContext) -> Optional[SectionResult]:
     chart = charts.svg(frame, "".join(body), title="Cumulative pellets, aligned overlay")
     legend = charts.legend([(label, key) for label, key, _ in series_pts])
 
-    html = f'<figure>{chart}{legend}<figcaption>Alignment: <b>{escape_text(ctx.align)}</b>. ' \
+    html = f'<figure><figcaption>Alignment: <b>{escape_text(ctx.align)}</b>. ' \
           f'"relative" starts every run at its own session start; "event:&lt;name&gt;" starts every ' \
           f'run at the first row named &lt;name&gt;, which is what makes a run with a long pre-trial ' \
-          f'stall comparable to a clean one.</figcaption></figure>'
+          f'stall comparable to a clean one.</figcaption>{legend}{chart}</figure>'
     return SectionResult(section_id="compare.cumulative_overlay", title="Cumulative Overlay", html=html)
 
 

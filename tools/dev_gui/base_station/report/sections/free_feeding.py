@@ -31,9 +31,9 @@ def reload_latency_section(ctx: SectionContext) -> Optional[SectionResult]:
         configured_note = f" (configured: {configured}s)" if configured is not None else ""
         parts.append(f"""
         {heading}
-        <figure>{chart}{legend}<figcaption>Time from Pellet Taken to the next reload_dispense on that
+        <figure><figcaption>Time from Pellet Taken to the next reload_dispense on that
         node{configured_note}. Systematic drift from the configured value means the scheduler is
-        slipping, not the animal.</figcaption></figure>
+        slipping, not the animal.</figcaption>{legend}{chart}</figure>
         """)
 
     if not any_data:
@@ -70,8 +70,8 @@ def meal_bouts_section(ctx: SectionContext) -> Optional[SectionResult]:
             chart = charts.svg(frame, charts.ecdf(frame, [Series("inter-take interval", all_gaps, key=0)],
                                                    x_label="seconds", log_x=True),
                                title="Inter-take interval ECDF")
-            gap_note = f'<figure>{chart}<figcaption>Log-scale ECDF of gaps between consecutive takes ' \
-                       f'(any node), for judging the {gap_s:.0f}s meal-gap threshold used above.</figcaption></figure>'
+            gap_note = f'<figure><figcaption>Log-scale ECDF of gaps between consecutive takes ' \
+                       f'(any node), for judging the {gap_s:.0f}s meal-gap threshold used above.</figcaption>{chart}</figure>'
 
         parts.append(f"""
         {heading}
