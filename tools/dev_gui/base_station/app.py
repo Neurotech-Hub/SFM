@@ -37,13 +37,14 @@ from .node_registry import (
     NodeRegistry,
     offline_timeout_for_heartbeat,
 )
-from .experiment import ExperimentController, ExperimentControl, load_experiment_defs
+from .experiment import ExperimentController, load_experiment_defs
 from .experiment.schema import (
     DEFAULT_EXPERIMENTS_DIR,
     ExperimentDef,
     ExperimentParam,
     param_visible,
 )
+from .pellet_ledger import PelletLedger
 from .protocol import (
     CanCmd,
     CanEvent,
@@ -236,10 +237,14 @@ class SFMApp:
         self._mac_registry = MacIdRegistry(DEFAULT_REGISTRY_PATH)
         self._last_stale_check = 0.0
 
-        # Developer Menu values (presence factor, no-feed dwell default)
-        # persisted across restarts — see dev_settings.py.
+        # Base station owns the pellet numbers that reach the log and the
+        # report; node counters run from power-on and are read only as a
+        # dropped-frame witness. Reset on every open_session().
+        self._pellets = PelletLedger()
+
+        # Developer Menu values (presence factor) persisted across restarts —
+        # see dev_settings.py.
         self._dev_settings = DevSettings()
-        ExperimentControl.default_no_feed_dwell_s = self._dev_settings.no_feed_dwell_s
 
         # IOManager owns all base-station GPIO except CAN (BNC I/O).
         # Created up front (not tied to CAN session) since it degrades to a
@@ -1192,6 +1197,10 @@ class SFMApp:
             run_id = self._log.open_session(sanitized, self._exp_log_dir)
             self._log.set_context(session=sanitized, run_id=run_id, trial=0, session_start_ts=time.time())
 
+        # Fresh run, fresh pellet numbers. Nodes keep counting from power-on;
+        # this is what makes the first pellet of the run pellet 1 in the log.
+        self._pellets.reset()
+
         # Re-push GUI heartbeat interval so experiment runs never inherit the
         # firmware 5s default, and align experiment offline detection to 3× HB.
         self._sync_heartbeat_policy(broadcast=True)
@@ -1206,6 +1215,12 @@ class SFMApp:
             online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
         )
         if ok:
+            # One ledger for the run: the experiment callbacks see the same
+            # session numbers the log rows carry, not a second tally that could
+            # drift from it.
+            runner = self._exp.runner if self._exp is not None else None
+            if runner is not None:
+                runner.normalizer.set_pellet_ledger(self._pellets)
             self._set_experiment_inputs_enabled(False)  # lock config while running
             dpg.configure_item("exp_start_btn", enabled=False)
             self._refresh_experiment_status()
@@ -1392,6 +1407,7 @@ class SFMApp:
         entry_name = ""
         details    = ""
         skip_log   = False
+        log_fields: Dict[str, Any] = {}
 
         if ftype == "HEARTBEAT":
             node_id = node_id_from_hb_id(arb_id)
@@ -1412,6 +1428,27 @@ class SFMApp:
                     )
                     if hb.fault_code.value != 0:
                         details += f" ({fault_user_message(hb.fault_code)})"
+
+                    # Heartbeats increment nothing, so any advance they reveal
+                    # is a frame that never arrived. This is the recovery path
+                    # for a node that was offline or on a noisy bus.
+                    recs = self._pellets.witness_heartbeat(
+                        node_id, hb.pellets_presented, hb.pellets_taken
+                    )
+                    tally = self._pellets.tally(node_id)
+                    details += (
+                        f" session_pellets={tally.presented}"
+                        f" session_taken={tally.taken}"
+                    )
+                    log_fields.update({
+                        "session_pellets": tally.presented,
+                        "session_taken": tally.taken,
+                        "node_pellets": hb.pellets_presented,
+                        "node_taken": hb.pellets_taken,
+                    })
+                    for name, rec in recs.items():
+                        if rec.had_gap or rec.restarted:
+                            self._log_pellet_gap(node_id, f"Heartbeat/{name}", rec)
 
         elif ftype == "EVENT":
             node_id = node_id_from_event_id(arb_id)
@@ -1503,24 +1540,25 @@ class SFMApp:
                         else:
                             ctx = parse_event_context(ev)
                             if ctx is not None:
-                                details = f"count={ctx['pellet_count']}"
+                                # The node's number is folded into the session
+                                # ledger and never shown as "the" pellet count —
+                                # it runs from node power-on, which is what made
+                                # the old logs unreadable mid-session.
+                                rec = self._pellets.witness_event(
+                                    node_id, ev.event, ctx["pellet_count"]
+                                )
+                                details = self._pellet_details(node_id, ev.event, ctx, rec)
+                                log_fields.update(
+                                    self._pellet_fields(node_id, ev.event, ctx, rec)
+                                )
                                 if "pellet_present" in ctx:
                                     details += f" pellet_present={int(ctx['pellet_present'])}"
+                                    log_fields["pellet_present"] = bool(ctx["pellet_present"])
                                 if "dome_open" in ctx:
                                     details += f" dome_open={int(ctx['dome_open'])}"
-                            elif ev.event in (
-                                CanEvent.Seeking,
-                                CanEvent.Lowering,
-                                CanEvent.Loading,
-                                CanEvent.OnPlate,
-                                CanEvent.Dwelling,
-                                CanEvent.Raising,
-                                CanEvent.Loaded,
-                                CanEvent.FeedSkipped,
-                                CanEvent.NoFeedPresented,
-                            ) and len(ev.raw_extra) >= 2:
-                                pellet_count = ev.raw_extra[0] | (ev.raw_extra[1] << 8)
-                                details = f"pellet_count={pellet_count}"
+                                    log_fields["dome_open"] = bool(ctx["dome_open"])
+                                if rec is not None and (rec.had_gap or rec.restarted):
+                                    self._log_pellet_gap(node_id, entry_name, rec)
                         # Distinguish a real delivery from a no-feed (mimic)
                         # cycle for later analysis. Keep entry_name from
                         # CAN_EVENT_DISPLAY_NAME — BNC OUT matching normalizes
@@ -1585,7 +1623,89 @@ class SFMApp:
                 raw_id=arb_id,
                 raw_data=data,
                 details=details,
+                fields=log_fields,
             ))
+
+    # ------------------------------------------------------------------
+    # Pellet accounting (base-station owned; see pellet_ledger.py)
+    # ------------------------------------------------------------------
+
+    def _pellet_details(self, node_id: int, event, ctx: dict, rec) -> str:
+        """
+        Human-readable pellet context for an event row.
+
+        The leading number is always the base station's session count. The
+        node's own counter is written to fields_json for diagnostics but kept
+        out of the details string — reading it as the pellet number is exactly
+        the confusion this replaced.
+        """
+        tally = self._pellets.tally(node_id)
+        if event == CanEvent.PelletTaken:
+            return f"session_taken={tally.taken}"
+        if rec is None:
+            return f"node_count={ctx['pellet_count']}"
+        return f"session_pellets={tally.presented}"
+
+    def _pellet_fields(self, node_id: int, event, ctx: dict, rec) -> Dict[str, Any]:
+        """Structured pellet accounting for the row's fields_json."""
+        tally = self._pellets.tally(node_id)
+        fields: Dict[str, Any] = {
+            "session_pellets": tally.presented,
+            "session_taken": tally.taken,
+        }
+        # Node counter, labelled for what it is: a power-on lifetime count kept
+        # only so a dropped frame can be detected later.
+        if event == CanEvent.PelletTaken:
+            fields["node_taken"] = ctx["pellet_count"]
+        else:
+            fields["node_pellets"] = ctx["pellet_count"]
+        if rec is not None and rec.missed:
+            fields["missed_frames"] = rec.missed
+        if rec is not None and rec.restarted:
+            fields["node_counter_restarted"] = True
+        return fields
+
+    def _log_pellet_gap(self, node_id: int, context: str, rec) -> None:
+        """
+        Record a dropped-frame gap or a node counter restart as its own row.
+
+        A gap has already been corrected in the session total by the time this
+        runs — the point of the row is that the correction is visible during
+        analysis instead of silently smoothing over lost data.
+        """
+        if not self._log:
+            return
+        if rec.restarted:
+            name = "Pellet Counter Restart"
+            details = (
+                f"node counter went backwards during {context} — node rebooted; "
+                f"re-baselined, session total unchanged at {rec.total}"
+            )
+        else:
+            name = "Pellet Count Gap"
+            details = (
+                f"node counter jumped by {rec.delta} across {context} — "
+                f"{rec.missed} event frame(s) never arrived; session total "
+                f"corrected to {rec.total}"
+            )
+        self._log.add(LogEntry(
+            timestamp=time.time(),
+            direction="SYS",
+            node_id=node_id,
+            frame_type="PELLET_AUDIT",
+            event_name=name,
+            raw_id=0,
+            raw_data=b"",
+            details=details,
+            source="SYS",
+            fields={
+                "node": node_id,
+                "missed_frames": rec.missed,
+                "delta": rec.delta,
+                "session_total": rec.total,
+                "node_counter_restarted": rec.restarted,
+            },
+        ))
 
     # ------------------------------------------------------------------
     # MAC resolution (Ping / Pong round-trip)
@@ -2099,25 +2219,6 @@ class SFMApp:
                     label="Apply to All Nodes", width=180,
                     callback=self._on_apply_presence_factor,
                 )
-            dpg.add_separator()
-            dpg.add_text("No-Feed Dispense", color=(100, 180, 255, 255))
-            dpg.add_text(
-                "Default dwell at the drop position for any no-feed cycle\n"
-                "that doesn't set its own (e.g. the two-armed bandit unless\n"
-                "overridden). Applies to running and future experiments.",
-                color=(160, 165, 175, 255), wrap=390,
-            )
-            with dpg.group(horizontal=True):
-                dpg.add_input_float(
-                    tag="dev_no_feed_dwell_input",
-                    default_value=ExperimentControl.default_no_feed_dwell_s,
-                    width=120,
-                    step=0.5,
-                )
-                dpg.add_button(
-                    label="Apply", width=180,
-                    callback=self._on_apply_no_feed_dwell_default,
-                )
 
     def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
         factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else self._dev_settings.presence_factor
@@ -2125,24 +2226,6 @@ class SFMApp:
         payload = build_setconfig_presence_factor(factor)
         self._broadcast(CanCmd.SetConfig, payload)
         self._dev_settings.set_presence_factor(factor)
-
-    def _on_apply_no_feed_dwell_default(self, sender=None, app_data=None, user_data=None) -> None:
-        dwell_s = dpg.get_value("dev_no_feed_dwell_input") if dpg.does_item_exist("dev_no_feed_dwell_input") else ExperimentControl.default_no_feed_dwell_s
-        dwell_s = max(0.5, float(dwell_s))
-        ExperimentControl.default_no_feed_dwell_s = dwell_s
-        self._dev_settings.set_no_feed_dwell_s(dwell_s)
-        if self._log:
-            self._log.add(LogEntry(
-                timestamp=time.time(),
-                direction="LOCAL",
-                node_id=0,
-                frame_type="CONFIG",
-                event_name="No-Feed Default Dwell",
-                raw_id=0,
-                raw_data=b"",
-                details=f"default_no_feed_dwell_s={dwell_s:g}s",
-            ))
-        self._refresh_log_table()
 
     def _on_assign_id(self, node_id: int) -> None:
         """

@@ -427,12 +427,32 @@ def wait_bnc_rising(control, channel: int = 0):
         return r
 
 
+def _recover_unpresented(control, commanded: Sequence[int]) -> None:
+    """
+    Send Recover to every commanded node that is stuck mid-cycle.
+
+    Two nodes are deliberately left alone:
+
+    * **Nodes that presented.** A raised plate is a valid state to start the
+      next cycle from, and recovering it would drop a real pellet.
+    * **Halted (faulted) nodes.** Recover clears firmware's sticky Fault, so
+      auto-recovering here would silently un-pause a session that
+      ``pause_while_faulted`` is holding for an operator. The faulted node is
+      the one a human needs to look at.
+
+    What is left is the case this exists for: a healthy no-feed node waiting at
+    the drop position for a peer that faulted and will never raise.
+    """
+    for n in commanded:
+        if not control.presentation_done(n) and not control.is_halted(n):
+            control.recover(n)
+
+
 def synchronized_cycle(
     control,
     fed: Union[int, Sequence[int], None] = (),
     mimic_nodes: Union[int, Sequence[int], None] = (),
     *,
-    dwell_s: Optional[float] = None,
     timeout: float = PRESENTATION_TIMEOUT_S,
     on_commanded: Optional[CycleCallback] = None,
     on_presented: Optional[CycleCallback] = None,
@@ -446,6 +466,11 @@ def synchronized_cycle(
 
     Idle nodes (not in either list) get no command. An empty ``fed`` with
     only mimics skips the take wait. Returns a ``CycleResult``.
+
+    Mimic nodes raise when they hear a fed node's Raising event on the bus, so
+    every plate reaches the top together regardless of how long that node's M1
+    took to load. With no ``fed`` node at all, a mimic has nothing to follow and
+    will hold at the drop position until the presentation timeout recovers it.
 
     ``on_commanded`` fires after Dispense/DispenseNoFeed go out (or are
     vetoed); ``on_presented`` fires after the sync gate, before the take
@@ -463,10 +488,16 @@ def synchronized_cycle(
     for n in commanded:
         control.clear_presentation(n)
     accepted: Dict[int, bool] = {}
+    # Mimics go out FIRST. A no-feed node raises when it hears a peer's Raising
+    # event, and it can only latch that event once its own cycle is running. A
+    # fed node whose plate is already occupied skips straight to the raise
+    # (firmware's beginOccupiedDispense), so commanding it first can put its
+    # Raising frame on the bus before the mimic has been told to do anything —
+    # the mimic would then hold at the drop position until Recover.
+    for n in mimic_t:
+        accepted[n] = bool(control.dispense(n, feed=False))
     for n in fed_t:
         accepted[n] = bool(control.dispense(n))
-    for n in mimic_t:
-        accepted[n] = bool(control.dispense(n, feed=False, dwell_s=dwell_s))
     result.accepted = accepted
 
     if not all(accepted.values()):
@@ -474,6 +505,13 @@ def synchronized_cycle(
         cause = "halted" if control.is_halted(failed) else "plate_occupied"
         result.invalid = True
         result.invalid_reason = cause
+        # Some nodes were accepted before the veto hit. Any mimic among them is
+        # now lowering toward a hold that waits on a peer raise which is no
+        # longer coming — a vetoed fed node never starts a cycle, and an
+        # occupied-but-already-elevated one presents via FeedSkipped without
+        # ever raising. Clear them now; otherwise they sit at the drop position
+        # until an operator notices.
+        _recover_unpresented(control, [n for n, ok in accepted.items() if ok])
         if on_commanded is not None:
             on_commanded(result)
         return result
@@ -487,6 +525,17 @@ def synchronized_cycle(
         timeout=timeout,
         label="arms_presented",
     )
+    if ready.faulted or ready.timed_out:
+        # A no-feed node holds at the drop position until a peer raises, with no
+        # timeout of its own — so an arm that never presented is still parked in
+        # Dwelling, where firmware rejects the next trial's dispense (it accepts
+        # only Idle/Loaded). Recover it here or the whole session wedges on the
+        # first hopper jam.
+        #
+        # Both exits need this, and the faulted one is the common case: the fed
+        # node's 30 s feed timeout fires well inside PRESENTATION_TIMEOUT_S, so
+        # a jam surfaces as `faulted`, not `timed_out`.
+        _recover_unpresented(control, commanded)
     if ready.faulted:
         result.faulted = True
         result.faulted_node = ready.faulted_node
@@ -533,7 +582,6 @@ def wire_synchronized_loop(
     quiet_s: float = 1.0,
     bnc_channel: int = 0,
     mimic: bool = True,
-    dwell_s: Optional[float] = None,
 ) -> None:
     """
     Drive ``pick_fn`` through the shared sequential trial loop:
@@ -564,9 +612,7 @@ def wire_synchronized_loop(
             fed, mimics = pick_fn(control)
             if not mimic:
                 mimics = ()
-            result = yield from synchronized_cycle(
-                control, fed, mimics, dwell_s=dwell_s,
-            )
+            result = yield from synchronized_cycle(control, fed, mimics)
             if result is not None and getattr(result, "faulted", False):
                 continue
             if advance != "bnc":

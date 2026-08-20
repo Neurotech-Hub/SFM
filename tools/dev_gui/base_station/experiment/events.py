@@ -13,6 +13,7 @@ from enum import Enum, auto
 from typing import Any, Dict, List, Optional
 
 from ..node_registry import DEFAULT_OFFLINE_TIMEOUT_S
+from ..pellet_ledger import PelletLedger
 from ..protocol import (
     CanEvent,
     InputId,
@@ -116,10 +117,29 @@ class EventNormalizer:
     def __init__(self, online_timeout_s: float = DEFAULT_OFFLINE_TIMEOUT_S) -> None:
         self._tracks: Dict[int, _NodeTrack] = {}
         self._online_timeout_s = online_timeout_s
+        # Own one by default so a headless runner still reports session-scoped
+        # numbers; the GUI replaces it with the ledger backing the log rows.
+        self._pellets = PelletLedger()
 
     def set_online_timeout(self, seconds: float) -> None:
         """Update the silence window used by check_staleness / NODE_OFFLINE."""
         self._online_timeout_s = float(seconds)
+
+    def set_pellet_ledger(self, ledger: PelletLedger) -> None:
+        """
+        Share the base station's ledger so callbacks and log rows agree.
+
+        Both this normalizer and the GUI log path witness every frame into the
+        shared ledger, in whichever order the dispatch happens to run. That is
+        safe because the ledger advances by the *delta* in the node's counter:
+        a second witness of the same frame sees a delta of zero and changes
+        nothing. Reading the tally is therefore correct either way round.
+        """
+        self._pellets = ledger
+
+    @property
+    def pellets(self) -> PelletLedger:
+        return self._pellets
 
     def _track(self, node_id: int) -> _NodeTrack:
         if node_id not in self._tracks:
@@ -189,6 +209,13 @@ class EventNormalizer:
         track = self._track(node_id)
         out: List[NodeEvent] = []
 
+        # Recovery path: a heartbeat increments nothing, so any advance it
+        # reveals is a frame this run never saw. Folding it in keeps the
+        # session count right across a reconnect.
+        self._pellets.witness_heartbeat(
+            node_id, hb.pellets_presented, hb.pellets_taken
+        )
+
         if not track.online:
             track.online = True
             out.append(
@@ -234,6 +261,8 @@ class EventNormalizer:
                     "load_position": hb.load_position,
                     "dome_open": hb.dome_open,
                     "fault_code": hb.fault_code,
+                    "session_pellets": self._pellets.presented(node_id),
+                    "session_taken": self._pellets.taken(node_id),
                 },
             )
         )
@@ -276,16 +305,18 @@ class EventNormalizer:
         else:
             ctx = parse_event_context(payload)
             if ctx is not None:
-                event_data["pellet_count"] = ctx["pellet_count"]
+                # Session-scoped counts, not the node's power-on counter.
+                # Callbacks that ask "which pellet is this?" get an answer that
+                # starts at 1 for every run.
+                self._pellets.witness_event(node_id, payload.event, ctx["pellet_count"])
+                tally = self._pellets.tally(node_id)
+                event_data["session_pellets"] = tally.presented
+                event_data["session_taken"] = tally.taken
                 if "pellet_present" in ctx:
                     event_data["pellet_present"] = ctx["pellet_present"]
                 if "dome_open" in ctx:
                     event_data["dome_open"] = ctx["dome_open"]
             elif payload.raw_extra:
-                if len(payload.raw_extra) >= 2:
-                    event_data["pellet_count"] = (
-                        payload.raw_extra[0] | (payload.raw_extra[1] << 8)
-                    )
                 event_data["raw_extra"] = bytes(payload.raw_extra)
 
         return [

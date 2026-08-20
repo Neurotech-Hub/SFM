@@ -52,44 +52,39 @@ def test_first_trial_feeds_rich_arm_and_no_feeds_the_other() -> None:
     assert no_fed[0][0] == 2
 
 
-def test_no_feed_dwell_defaults_to_developer_menu_class_setting() -> None:
-    """With no dwell_s passed to build(), the empty arm's DispenseNoFeed
-    payload should carry ExperimentControl.default_no_feed_dwell_s — the
-    process-wide value the GUI's Developer Menu writes — not a hardcoded
-    per-template default."""
-    original = ExperimentControl.default_no_feed_dwell_s
-    try:
-        ExperimentControl.default_no_feed_dwell_s = 4.0
-        exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
-        runner = exp.make_runner()
-        runner.start(now=0.0)
-        _bring_online(runner, [1, 2])
+def test_mimic_is_commanded_before_the_fed_arm() -> None:
+    """The empty arm must be told to start BEFORE the fed one.
 
-        no_fed = _no_feed_cmds(runner)
-        assert len(no_fed) == 1
-        payload = no_fed[0][2]
-        assert payload[0] | (payload[1] << 8) == 4000
+    A no-feed node raises when it hears a peer's Raising event, and it can only
+    latch that event once its own cycle is running. A fed arm whose plate is
+    already occupied skips straight to the raise, so commanding it first can put
+    its Raising frame on the bus before the empty arm has been told anything —
+    leaving the empty arm holding at the drop position until Recover.
+    """
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
 
-        started = [e for e in runner.ctx.log_entries if e.name == "two_armed_bandit_start"]
-        assert started and "dwell_s" not in started[0].fields
-    finally:
-        ExperimentControl.default_no_feed_dwell_s = original
+    kinds = [c[1] for c in runner.ctx.commands_sent
+             if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)]
+    assert kinds == [CanCmd.DispenseNoFeed, CanCmd.Dispense]
 
 
-def test_no_feed_dwell_explicit_build_kwarg_overrides_developer_menu_default() -> None:
-    original = ExperimentControl.default_no_feed_dwell_s
-    try:
-        ExperimentControl.default_no_feed_dwell_s = 4.0
-        exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1, dwell_s=1.5)
-        runner = exp.make_runner()
-        runner.start(now=0.0)
-        _bring_online(runner, [1, 2])
+def test_no_feed_command_carries_no_timing_payload() -> None:
+    """Nothing in the command tells the empty arm when to raise — that comes
+    from the fed arm's Raising event on the bus."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
 
-        no_fed = _no_feed_cmds(runner)
-        payload = no_fed[0][2]
-        assert payload[0] | (payload[1] << 8) == 1500
-    finally:
-        ExperimentControl.default_no_feed_dwell_s = original
+    no_fed = _no_feed_cmds(runner)
+    assert len(no_fed) == 1
+    assert no_fed[0][2] == b""
+
+    started = [e for e in runner.ctx.log_entries if e.name == "two_armed_bandit_start"]
+    assert started and "dwell_s" not in started[0].fields
 
 
 def test_advances_to_next_trial_after_sync_gate_and_take() -> None:
@@ -249,6 +244,14 @@ def test_arm_ready_timeout_marks_trial_invalid() -> None:
     assert len(invalid) == 1
     assert invalid[0].fields.get("invalid_reason") == "arm_never_presented"
     assert not runner.is_finished
+
+    # The empty arm is holding at the drop position waiting for a peer raise it
+    # will never see, and firmware accepts a new dispense only from Idle/Loaded
+    # — so it must be recovered here or every later trial is rejected. Arm 1
+    # presented, so it is left alone: recovering it would drop its pellet.
+    recovers = [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Recover]
+    assert (2, CanCmd.Recover, b"") in recovers
+    assert (1, CanCmd.Recover, b"") not in recovers
 
 
 def test_both_arms_baited_is_logged_invalid_and_session_continues() -> None:

@@ -39,10 +39,6 @@ constexpr uint32_t kPelletTakenConfirmMs   = 200;    // pellet sensor clear → 
 constexpr uint32_t kPelletLostMs           = 500;    // pellet sensor clear during raise → PelletLost
 constexpr uint32_t kLoadClearOnRaiseMs     = 5000;   // load sensor must clear after raise start
 constexpr uint32_t kDomeOpenWarnMs         = 30000;  // dome open → DomeOpenWarning
-// No-feed dispense: dwell at the drop position (M1 idle) before raising.
-constexpr uint32_t kDefaultNoFeedDwellMs   = 6000;
-constexpr uint32_t kNoFeedDwellMinMs       = 500;
-constexpr uint32_t kNoFeedDwellMaxMs       = 60000;
 
 // ---------------------------------------------------------------------------
 class DispenserService {
@@ -57,10 +53,16 @@ public:
     bool dispense();
 
     // Same motion as dispense(), but M1 never runs: holds at the drop position
-    // for dwellMs, then raises to an empty Presented. Occupancy is checked
-    // first, same as dispense() — an occupied plate is presented normally
-    // (FeedSkipped), never silently re-presented as empty.
-    bool dispenseNoFeed(uint16_t dwellMs = kDefaultNoFeedDwellMs);
+    // until a peer node raises (see notifyPeerRaise), then raises to an empty
+    // Presented. Occupancy is checked first, same as dispense() — an occupied
+    // plate is presented normally (FeedSkipped), never silently re-presented
+    // as empty.
+    bool dispenseNoFeed();
+
+    // Tell this node that a peer just started raising its plate. Only a no-feed
+    // cycle acts on it: the empty plate then rises within one CAN frame time of
+    // the fed one, instead of guessing the fed arm's variable load duration.
+    void notifyPeerRaise();
 
     // Recover from any phase: de-energise, return to Idle. Clears sticky Fault.
     void recover();
@@ -116,6 +118,10 @@ private:
     bool     pg3WasOpen_;
     bool     grabPhase_; // Lowering sub-phase: descending past load sensor to drop position
     bool     noFeed_;    // this cycle runs the motion but never turns M1
+    // Latched when a peer node starts raising. Set regardless of the current
+    // phase — an occupied fed node raises almost immediately, before this node
+    // has finished lowering — and consumed only by Dwelling.
+    bool     peerRaiseSeen_;
 
     // M2 travel is measured against the position latched at each phase start,
     // never by re-zeroing the stepper mid-motion: AccelStepper derives the coil
@@ -137,8 +143,6 @@ private:
     uint32_t pg3OpenSinceMs_;
     uint32_t pelletClearSinceMs_; // pellet sensor clear timer (Raising or Loaded)
     uint32_t pelletSeenSinceMs_;  // pellet sensor held timer during Loading (0 = not seen)
-    uint32_t dwellStartMs_;       // millis() at Dwelling entry
-    uint32_t dwellMs_;            // commanded dwell for this no-feed cycle
     bool     domeWarnLatched_;
     bool     lastDomeOpenedWithPellet_;
     bool     lastTakenWithDomeOpen_;

@@ -8,7 +8,8 @@ CanService::CanService()
       heartbeatIntervalMs_(kDefaultHeartbeatIntervalMs),
       lastHeartbeatMs_(0),
       commandCb_(nullptr),
-      discoveryCb_(nullptr)
+      discoveryCb_(nullptr),
+      peerEventCb_(nullptr)
 {}
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,21 @@ void CanService::dispatchRx(const twai_message_t &msg) {
         CanCmd cmd = static_cast<CanCmd>(msg.data[0]);
         if (commandCb_) {
             commandCb_(cmd, msg.data + 1, msg.data_length_code - 1);
+        }
+        return;
+    }
+
+    // Event frames from other nodes (0x300 + srcId). The hardware filter accepts
+    // every frame, so these already arrive here — surfacing them lets a node act on
+    // a peer's phase change (see DispenserService::notifyPeerRaise) without a
+    // base-station round trip. TWAI_MODE_NORMAL does not loop back our own frames,
+    // but the srcId check makes that explicit rather than implied.
+    if (id > CAN_EVENT_BASE && id < (CAN_EVENT_BASE + 0x100) &&
+        msg.data_length_code >= 1) {
+        uint8_t srcId = static_cast<uint8_t>(id - CAN_EVENT_BASE);
+        if (srcId != nodeId_ && peerEventCb_) {
+            peerEventCb_(srcId, static_cast<CanEvent>(msg.data[0]),
+                         msg.data + 1, msg.data_length_code - 1);
         }
         return;
     }

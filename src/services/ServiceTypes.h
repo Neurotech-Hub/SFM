@@ -45,7 +45,8 @@ enum class DispenseState : uint8_t {
     Loaded   = 4, // plate at top, ready for the mouse; ends on PelletTaken → Idle
     Seeking  = 5, // M2 up until load sensor clears or seekAwaySteps_ (before approach)
     Fault    = 6, // sticky until recover()
-    Dwelling = 7, // no-feed: holding at the drop position, M1 idle
+    Dwelling = 7, // no-feed: holding at the drop position, M1 idle, waiting for a
+                  // peer node's Raising event (no timer — held until Recover)
 };
 
 // ---------------------------------------------------------------------------
@@ -76,7 +77,9 @@ enum class CanCmd : uint8_t {
     SetConfig         = 0x05, // payload TBD
     ReqStatus         = 0x06,
     ClearId           = 0x07, // clear NVS id; re-enter discovery (broadcast-friendly)
-    DispenseNoFeed    = 0x08, // full dispense motion, M1 never runs; payload = dwell ms LE16 (optional)
+    DispenseNoFeed    = 0x08, // full dispense motion, M1 never runs; no payload (the
+                              // raise is triggered by a peer node's Raising event).
+                              // A trailing payload from an older base station is ignored.
     CalibratePresence = 0x09, // recalibrate the presence pad; cage MUST be empty for ~5s
     SyncFlash         = 0x0A, // status LED solid ON for N ms (camera sync); payload = duration ms LE16 (optional, default 500)
 };

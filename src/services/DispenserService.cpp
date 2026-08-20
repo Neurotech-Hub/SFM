@@ -22,6 +22,7 @@ DispenserService::DispenserService()
       pg3WasOpen_(false),
       grabPhase_(false),
       noFeed_(false),
+      peerRaiseSeen_(false),
       phaseStartPos_(0),
       belowLoad_(false),
       approachRetried_(false),
@@ -30,8 +31,6 @@ DispenserService::DispenserService()
       pg3OpenSinceMs_(0),
       pelletClearSinceMs_(0),
       pelletSeenSinceMs_(0),
-      dwellStartMs_(0),
-      dwellMs_(kDefaultNoFeedDwellMs),
       domeWarnLatched_(false),
       lastDomeOpenedWithPellet_(false),
       lastTakenWithDomeOpen_(false),
@@ -152,9 +151,10 @@ void DispenserService::update() {
                 if (labs(motor2_.currentPosition() - phaseStartPos_) >= grabSteps_) {
                     haltMotors();
                     if (noFeed_) {
-                        // No-feed cycle: M1 never runs. Hold here for the
-                        // commanded dwell so the acoustic/vibration signature
-                        // matches a fed dispense, then raise identically.
+                        // No-feed cycle: M1 never runs. Hold here until a peer
+                        // node starts raising, then raise identically — so the
+                        // motion signature matches a fed dispense and both
+                        // plates reach the top at the same moment.
                         startDwell();
                         setState(DispenseState::Dwelling);
                     } else {
@@ -170,10 +170,19 @@ void DispenserService::update() {
             break;
 
         case DispenseState::Dwelling:
-            // Motors already halted by the grab-descent hand-off. Nothing is
-            // being loaded, so no PG1 guard and no feed budget apply here —
-            // dwellMs_ is itself the bound (clamped at command time).
-            if ((millis() - dwellStartMs_) >= dwellMs_) {
+            // Motors already halted by the grab-descent hand-off. The raise is
+            // triggered by a peer node's Raising event (notifyPeerRaise), never
+            // by a local timer: a fed arm's hold is however long M1 takes plus
+            // kPelletLoadConfirmMs, which no fixed dwell can match, and a plate
+            // that rises at a different moment is exactly the cue a no-feed
+            // cycle exists to remove.
+            //
+            // No timeout here. Nothing is loaded, so there is nothing to time
+            // out, and a fed node that never raises means the trial is already
+            // lost — hold until Recover rather than present an empty plate out
+            // of sync. The base station clears a node stuck here (see
+            // kit.synchronized_cycle).
+            if (peerRaiseSeen_) {
                 startRaise(raiseSteps_); // identical travel to a fed cycle
                 setState(DispenseState::Raising);
             }
@@ -319,6 +328,7 @@ bool DispenserService::dispense() {
     haltMotors();
     pelletClearSinceMs_ = 0;
     noFeed_ = false; // clear any stale flag from a preceding no-feed cycle
+    peerRaiseSeen_ = false;
 
     // Occupancy first — pellet sensor is on the plate at all times.
     if (pg1State_) {
@@ -330,13 +340,16 @@ bool DispenserService::dispense() {
     return true;
 }
 
-bool DispenserService::dispenseNoFeed(uint16_t dwellMs) {
+bool DispenserService::dispenseNoFeed() {
     if (state_ != DispenseState::Idle && state_ != DispenseState::Loaded) {
         return false;
     }
 
     haltMotors();
     pelletClearSinceMs_ = 0;
+    // Cleared before noFeed_ is set, so a peer raise latched during a previous
+    // cycle can never short-circuit this one's hold.
+    peerRaiseSeen_ = false;
 
     // Occupancy first, same as dispense(). A real pellet is already on the
     // plate: present it honestly as a normal FeedSkipped cycle rather than
@@ -349,10 +362,18 @@ bool DispenserService::dispenseNoFeed(uint16_t dwellMs) {
         return true;
     }
 
-    noFeed_  = true;
-    dwellMs_ = constrain(dwellMs, kNoFeedDwellMinMs, kNoFeedDwellMaxMs);
+    noFeed_ = true;
     beginLoweringPhase();
     return true;
+}
+
+void DispenserService::notifyPeerRaise() {
+    // Latch regardless of the current phase. A fed node whose plate is already
+    // occupied takes beginOccupiedDispense and raises almost immediately —
+    // possibly before this node has finished lowering — so the flag must
+    // survive until Dwelling reads it. Only a no-feed cycle cares; a fed node
+    // ignores its neighbours entirely.
+    if (noFeed_) peerRaiseSeen_ = true;
 }
 
 void DispenserService::beginOccupiedDispense() {
@@ -381,6 +402,7 @@ void DispenserService::recover() {
     pelletSeenSinceMs_ = 0;
     grabPhase_ = false;
     noFeed_ = false;
+    peerRaiseSeen_ = false;
     // Asserted load sensor ⇒ at load. Clear does not prove elevated: the drop
     // position also reads clear, so preserve belowLoad_ when the beam is open.
     // (PelletLost mid-raise already cleared belowLoad_ when the sensor opened.)
@@ -493,8 +515,7 @@ void DispenserService::updateFeedMotor() {
 }
 
 void DispenserService::startDwell() {
-    dwellStartMs_      = millis();
-    motionStartMs_     = dwellStartMs_;
+    motionStartMs_     = millis();
     pelletSeenSinceMs_ = 0;
 }
 

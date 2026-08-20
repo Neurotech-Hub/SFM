@@ -167,7 +167,10 @@ class SimNode:
     dome_open_since: Optional[float] = None
     dome_warn_sent: bool = False
     no_feed: bool = False    # current/last cycle is a no-feed dispense
-    dwell_s: float = 6.0     # no-feed dwell at the drop position
+    # Latched when another node starts raising. Mirrors firmware's
+    # DispenserService::peerRaiseSeen_: set regardless of phase (an occupied fed
+    # node raises before this one finishes lowering), consumed only at step 10.
+    peer_raise_seen: bool = False
     cal_until: Optional[float] = None  # presence calibration in progress until this time
     presence_threshold: int = 35000    # mirrors firmware kDefaultPresenceThreshold
     presence_factor: float = 3.0       # mirrors firmware kDefaultPresenceFactor
@@ -350,6 +353,7 @@ class NodeSimulator:
                 # Idle or Loaded (re-dispense / occupied skip)
                 if node.dispense_state in (DispenseState.Idle, DispenseState.Loaded):
                     node.no_feed = False
+                    node.peer_raise_seen = False
                     node.phase = SimNodePhase.Dispensing
                     node.dispense_step_time = time.time()
                     node.dome_open = False
@@ -375,8 +379,10 @@ class NodeSimulator:
                     node.dome_open = False
                     node.dome_open_since = None
                     node.dome_warn_sent = False
-                    dwell_ms = (data[1] | (data[2] << 8)) if len(data) >= 3 else 6000
-                    node.dwell_s = max(0.5, min(dwell_ms, 60000)) / 1000.0
+                    # No payload: the raise is triggered by a peer's Raising
+                    # event. Any trailing bytes from an older base station are
+                    # ignored, matching firmware.
+                    node.peer_raise_seen = False
                     if node.pellet:
                         # Occupied → identical to Dispense: FeedSkipped, real pellet.
                         node.no_feed = False
@@ -397,6 +403,7 @@ class NodeSimulator:
                 node.phase          = SimNodePhase.Enabled
                 node.fault_code     = ServiceStatus.Ok
                 node.no_feed        = False
+                node.peer_raise_seen = False
                 node.pellet = node.load_position = node.dome_open = False
                 node.dome_open_since = None
                 node.dome_warn_sent = False
@@ -588,8 +595,10 @@ class NodeSimulator:
             self._send_input_changed(node, InputId.MousePresence, False)
             node.dispense_step = 7
 
-        # Step 10 → dwell elapsed → Raising (M1 never ran; pellet stays clear)
-        elif node.dispense_step == 10 and elapsed >= node.dwell_s:
+        # Step 10 → a peer started raising → Raising (M1 never ran; pellet stays
+        # clear). No timeout: with no peer to follow the node holds here until
+        # Recover, same as firmware.
+        elif node.dispense_step == 10 and node.peer_raise_seen:
             node.dispense_state = DispenseState.Raising
             self._send_event(node, CanEvent.Raising, _count_extra())
             node.dispense_step      = 11
@@ -717,6 +726,15 @@ class NodeSimulator:
         msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=False)
         self._bus.send(msg)
         print(f"  [SIM] Node {node.node_id}: → {event.name}", flush=True)
+
+        # Peer sync: on real hardware every node's TWAI filter accepts all
+        # frames, so a Raising event reaches its neighbours over the bus. One
+        # process owns every simulated node here, so deliver it directly —
+        # the observable behaviour (and the frames on the wire) match.
+        if event == CanEvent.Raising:
+            for peer in self._nodes.values():
+                if peer is not node and peer.no_feed:
+                    peer.peer_raise_seen = True
 
     def _send_input_changed(self, node: SimNode, input_id: InputId, active: bool) -> None:
         self._send_event(node, CanEvent.InputChanged, bytes([int(input_id), int(active)]))

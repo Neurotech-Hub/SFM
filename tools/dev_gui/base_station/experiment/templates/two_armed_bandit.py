@@ -30,16 +30,19 @@ reaching the bus; ``presented_pellet(empty)`` below still detects that rare
 case and logs ``baited_arms=2``.
 
 Sync note: both dispense commands are sent back-to-back synchronously, so the
-two nodes start within microseconds of each other. But a fed cycle's M1 run
+two nodes start within microseconds of each other. A fed cycle's M1 run then
 takes a variable amount of time (pellet-dependent, plus a fixed 2s confirm
-hold) while a no-feed cycle dwells a FIXED ``dwell_s`` — so the two arms do
-NOT reach the top at the same moment. This template gates the response window
-on BOTH arms finishing their raise (``presentation_done``) before doing
-anything with either one, so the trial's effective start is well-defined and
-the animal can't use "which arm finished raising first" as a cue. It cannot
-erase every difference between the arms: M1 physically turns on the fed arm
-and never on the empty one, so the dwell matches the *duration* of a fed
-cycle, not its exact sound.
+hold), so the empty arm cannot know in advance how long to wait — instead it
+holds at the drop position and raises when it hears the fed arm's Raising event
+on the CAN bus, one frame time later (~0.5 ms). Both plates therefore reach the
+top together on every trial, whatever the fed arm's load took.
+
+This template additionally gates the response window on BOTH arms finishing
+their raise (``presentation_done``) before doing anything with either one, so
+the trial's effective start stays well-defined even if a command is dropped.
+None of this erases every difference between the arms: M1 physically turns on
+the fed arm and never on the empty one, so the mimic matches the *timing* of a
+fed cycle, not its exact sound.
 
 Fault handling: if EITHER arm faults, the whole session pauses — neither arm
 dispenses — until an operator recovers the faulted node. A healthy arm never
@@ -80,7 +83,6 @@ def build(
     name: str = "two_armed_bandit",
     block_size: int = 50,
     p_high: float = 0.9,
-    dwell_s: Optional[float] = None,
     mimic: bool = True,
     next_trial_wait: str = "fixed_delay",
     fixed_delay_s: float = 5.0,
@@ -103,18 +105,6 @@ def build(
     p_high:
         Probability (0..1) that the rich arm delivers on a given trial (the
         lean arm delivers at ``1 - p_high``).
-    dwell_s:
-        Seconds the empty arm holds at the drop position on its no-feed
-        cycle. ``None`` (the default) picks up
-        ``ExperimentControl.default_no_feed_dwell_s`` — set from the GUI's
-        Developer Menu, since this is fundamentally a rig timing constant
-        (approximating a fed cycle's M1 run: a ~2.0s confirm hold plus ~1s of
-        wheel time — tune it per rig by comparing ``Loading``/``OnPlate``
-        timestamps from a free-feeding session), not a per-task parameter.
-        Pass an explicit value here to override the Developer Menu default
-        for this experiment specifically. The response window is gated on
-        both arms finishing regardless, so this mainly affects how closely
-        the two arms *sound* alike rather than trial timing.
     mimic:
         When True (default), the empty arm runs a no-feed dispense so both
         arms move. When False, only the fed arm is commanded.
@@ -148,9 +138,6 @@ def build(
 
     kit.log_faults(exp)
     kit.log_feed_skipped(exp)
-
-    def _resolved_dwell_s(control):
-        return dwell_s if dwell_s is not None else control.default_no_feed_dwell_s
 
     @exp.on_start
     def _log_start(control):
@@ -192,7 +179,6 @@ def build(
             fed = rich if control.chance(p_high) else lean
             empty = arm_b if fed == arm_a else arm_a
             mimics = (empty,) if mimic else ()
-            resolved_dwell_s = _resolved_dwell_s(control)
 
             def _on_commanded(result):
                 fed_ok = result.accepted.get(fed, False)
@@ -230,7 +216,7 @@ def build(
                     )
 
             result = yield from kit.synchronized_cycle(
-                control, fed, mimics, dwell_s=resolved_dwell_s,
+                control, fed, mimics,
                 on_commanded=_on_commanded, on_presented=_on_presented,
             )
 

@@ -109,6 +109,14 @@ def data_quality_section(ctx: SectionContext) -> Optional[SectionResult]:
             if loss_t:
                 notes.append(f"{prefix}node {node}: heartbeat counter shows {loss_t} more pellet(s) "
                              f"taken than CAN events recorded (possible bus loss).")
+            if acct.missed_frames:
+                notes.append(f"{prefix}node {node}: {acct.missed_frames} event frame(s) never arrived; "
+                             f"the node counter caught the gap and the session totals above are "
+                             f"corrected, but those pellets have no timestamped row.")
+            if acct.counter_restarts:
+                notes.append(f"{prefix}node {node}: rebooted {acct.counter_restarts} time(s) mid-run "
+                             f"(pellet counter restarted). Counts continue across the reboot; "
+                             f"anything dispensed while it was down is not in this run.")
 
         post_session_rows = sum(1 for r in run.rows if r.post_session)
         if post_session_rows:
@@ -139,15 +147,17 @@ def pellet_accounting_section(ctx: SectionContext) -> Optional[SectionResult]:
     parts = []
     for run, m in zip(ctx.runs, ctx.metrics):
         rows = "".join(
-            f"<tr><td>{node}</td><td>{a.presented}</td><td>{a.no_feed_presented}</td>"
-            f"<td>{a.taken}</td><td>{a.feed_skipped}</td><td>{_fmt_pct(a.take_rate)}</td></tr>"
+            f"<tr><td>{node}</td><td>{a.presented_total}</td><td>{a.no_feed_presented}</td>"
+            f"<td>{a.taken_total}</td><td>{a.feed_skipped}</td><td>{_fmt_pct(a.take_rate)}</td>"
+            f"<td>{a.missed_frames or ''}</td></tr>"
             for node, a in sorted(m.pellets.items())
         )
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
         parts.append(f"""
         {heading}
         <table>
-          <tr><th>Node</th><th>Presented</th><th>No-feed</th><th>Taken</th><th>Skipped</th><th>Take rate</th></tr>
+          <tr><th>Node</th><th>Presented</th><th>No-feed</th><th>Taken</th><th>Skipped</th>
+              <th>Take rate</th><th>Recovered frames</th></tr>
           {rows}
         </table>
         """)

@@ -60,7 +60,7 @@ def matching_law_section(ctx: SectionContext) -> Optional[SectionResult]:
         visits: dict = {}
         for b in bouts:
             visits[b.node] = visits.get(b.node, 0) + 1
-        taken = {n: a.taken for n, a in m.pellets.items()}
+        taken = {n: a.taken_total for n, a in m.pellets.items()}
         nodes = sorted(set(visits) | set(taken))
         if len(nodes) < 2:
             continue

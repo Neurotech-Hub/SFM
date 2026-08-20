@@ -1,17 +1,18 @@
 """
 dev_settings.py — Persistent Developer Menu settings for the base station GUI.
 
-Values a developer tunes at runtime (presence factor, no-feed dwell default)
-that should survive a GUI restart instead of resetting to hardcoded defaults
-every launch.
+Values a developer tunes at runtime (presence factor) that should survive a GUI
+restart instead of resetting to hardcoded defaults every launch.
 
 File format (JSON)::
 
     {
       "version": 1,
-      "presence_factor": 3.0,
-      "no_feed_dwell_s": 6.0
+      "presence_factor": 3.0
     }
+
+Unknown keys are ignored on load, so a settings file written by an older build
+(which also carried "no_feed_dwell_s") still loads cleanly.
 
 Default path: ``~/.sfm/dev_settings.json``.
 """
@@ -24,10 +25,8 @@ from typing import Any, Dict, Optional
 
 DEFAULT_SETTINGS_PATH = Path("~/.sfm/dev_settings.json")
 
-# Mirrors firmware's kDefaultPresenceFactor (PresenceService.h) and
-# kDefaultNoFeedDwellMs (ServiceTypes.h / ExperimentControl.default_no_feed_dwell_s).
+# Mirrors firmware's kDefaultPresenceFactor (PresenceService.h).
 DEFAULT_PRESENCE_FACTOR = 3.0
-DEFAULT_NO_FEED_DWELL_S = 6.0
 
 
 class DevSettings:
@@ -36,7 +35,6 @@ class DevSettings:
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self._path = Path(path or DEFAULT_SETTINGS_PATH).expanduser().resolve()
         self.presence_factor: float = DEFAULT_PRESENCE_FACTOR
-        self.no_feed_dwell_s: float = DEFAULT_NO_FEED_DWELL_S
         self.load()
 
     @property
@@ -46,7 +44,6 @@ class DevSettings:
     def load(self) -> None:
         """Load settings from disk. Missing / corrupt file -> defaults."""
         self.presence_factor = DEFAULT_PRESENCE_FACTOR
-        self.no_feed_dwell_s = DEFAULT_NO_FEED_DWELL_S
         if not self._path.is_file():
             return
         try:
@@ -57,12 +54,8 @@ class DevSettings:
             factor = data.get("presence_factor")
             if isinstance(factor, (int, float)):
                 self.presence_factor = float(factor)
-            dwell = data.get("no_feed_dwell_s")
-            if isinstance(dwell, (int, float)):
-                self.no_feed_dwell_s = float(dwell)
         except (OSError, json.JSONDecodeError, TypeError):
             self.presence_factor = DEFAULT_PRESENCE_FACTOR
-            self.no_feed_dwell_s = DEFAULT_NO_FEED_DWELL_S
 
     def save(self) -> None:
         """Write the current settings to disk (atomic replace)."""
@@ -70,7 +63,6 @@ class DevSettings:
         payload: Dict[str, Any] = {
             "version": 1,
             "presence_factor": self.presence_factor,
-            "no_feed_dwell_s": self.no_feed_dwell_s,
         }
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
@@ -81,9 +73,4 @@ class DevSettings:
     def set_presence_factor(self, factor: float) -> None:
         """Update + persist the presence factor immediately."""
         self.presence_factor = float(factor)
-        self.save()
-
-    def set_no_feed_dwell_s(self, dwell_s: float) -> None:
-        """Update + persist the no-feed dwell default immediately."""
-        self.no_feed_dwell_s = float(dwell_s)
         self.save()

@@ -245,7 +245,7 @@ overrides).
 | Call | Effect |
 |------|--------|
 | `control.dispense(node)` | Dispense on one node. **No-op while that node is halted, mid-cycle from a previous dispense, or already has a pellet on the plate** (all three logged — see below). |
-| `control.dispense(node, feed=False, dwell_s=6.0)` | Run the identical dispense motion with **no pellet**: lower, hold at the drop position for `dwell_s`, then raise an empty plate. Use it so an inactive arm still moves/sounds the same as a fed one (e.g. a bandit task where the animal shouldn't be able to tell arms apart by sound). Same vetoes apply. |
+| `control.dispense(node, feed=False)` | Run the identical dispense motion with **no pellet**: lower, hold at the drop position, then raise an empty plate. The raise fires when this node hears another node's `Raising` event on the bus, so both plates reach the top together no matter how long the fed node's load took — there is no dwell to set. Use it so an inactive arm still moves/sounds the same as a fed one (e.g. a bandit task where the animal shouldn't be able to tell arms apart by sound). Same vetoes apply. With no fed node in the trial, the mimic has nothing to follow and holds until `recover()`. |
 | `control.recover(node)` | Send Recover to one node (stop motion + clear its fault). |
 | `control.broadcast_dispense()` / `control.broadcast_recover()` | Same, to all nodes. If any node isn't clear (occupied plate or a cycle in flight), `broadcast_dispense()` can't withhold the command from just that one node in a single CAN frame, so it falls back to individual `dispense(n)` calls (each carrying its own vetoes) and returns `False`. |
 | `control.bnc_pulse(duration_us=100)` | Pulse the BNC OUT line. |
@@ -325,9 +325,9 @@ Register with `@exp.on(EventKind.X)` or the sugar decorators. Handlers receive
 | Sugar decorator | EventKind | `event.data` notes |
 |-----------------|-----------|-----------------|
 | `@exp.on_start` / `@exp.on_end` | `SESSION_START` / `SESSION_END` | `(control)` only — no `event`. |
-| `@exp.on_on_plate` | `ON_PLATE` | `pellet_count` |
-| `@exp.on_loaded` | `LOADED` | `pellet_count` |
-| `@exp.on_pellet_taken` | `PELLET_TAKEN` | `pellet_count`, `dome_open` |
+| `@exp.on_on_plate` | `ON_PLATE` | `session_pellets`, `session_taken` |
+| `@exp.on_loaded` | `LOADED` | `session_pellets`, `session_taken` |
+| `@exp.on_pellet_taken` | `PELLET_TAKEN` | `session_taken`, `session_pellets`, `dome_open` |
 | `@exp.on_feed_skipped` | `FEED_SKIPPED` | plate already occupied when dispensed |
 | `@exp.on_no_feed_presented` | `NO_FEED_PRESENTED` | a no-feed dispense finished raising an empty plate |
 | `@exp.on_dome_opened` / `@exp.on_dome_closed` | `DOME_OPENED` / `DOME_CLOSED` | derived from the dome sensor |
@@ -339,6 +339,25 @@ Register with `@exp.on(EventKind.X)` or the sugar decorators. Handlers receive
 Other kinds available via `@exp.on(...)`: `LOWERING`, `LOADING`, `DWELLING`,
 `RAISING`, `DOME_OPEN_WARNING`, `PG_CHANGED`, `HEARTBEAT`, `NODE_ONLINE`,
 `NODE_OFFLINE`. See [`events.py`](events.py) for the full list.
+
+### Pellet counts are session-scoped
+
+`session_pellets` and `session_taken` are the base station's own per-node
+counters. They start at zero when a run opens, so the first pellet of a run is
+always number 1 no matter how long the node has been powered.
+
+They are not simply "events I received". Node firmware counts pellets from
+power-on (`pelletCount_` / `takenCount_`) and puts that number on every
+milestone frame and heartbeat. The base station folds in the **delta** of that
+counter, so a `Loaded` frame lost to the bus is recovered by the next frame
+that carries the count — the following `DomeOpened`, `PelletTaken`, or just the
+next heartbeat — and the run total stays right. Gaps are written to the log as
+`Pellet Count Gap` rows so a correction is visible during analysis instead of
+silently smoothing over lost data. See
+[`pellet_ledger.py`](../pellet_ledger.py).
+
+The node's raw counter is still in the log, as `node_pellets` / `node_taken` in
+`fields_json`. Treat it as a diagnostic, never as the pellet number.
 
 ### Start / end conditions
 

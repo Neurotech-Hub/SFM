@@ -137,12 +137,26 @@ running experiment.
 ## No-feed dispense
 
 `DispenseNoFeed` runs the identical motion as `Dispense` — same lowering, same seek-away/approach, same grab
-descent to the drop position, same raise — but M1 never turns. Instead the node holds at the drop position for a
-commanded dwell (default `kDefaultNoFeedDwellMs` = 6 s, matching the time a fed cycle typically spends loading),
-then raises exactly as a fed cycle does. The animal finds an empty plate at the top. This exists so a module can
-be run through the motions — including the acoustic and vibration signature — without delivering a pellet, e.g.
-so a two-armed choice task can activate every arm each trial and the animal can't use sound alone to find the
-baited one.
+descent to the drop position, same raise — but M1 never turns. The node holds at the drop position and raises to
+present an empty plate. This exists so a module can be run through the motions — including the acoustic and
+vibration signature — without delivering a pellet, e.g. so a two-armed choice task can activate every arm each
+trial and the animal can't use sound alone to find the baited one.
+
+**The raise is triggered by another node, not by a timer.** A node in `Dwelling` watches the bus and raises the
+instant it sees a `Raising` event (`0x09`) from any other node. Every node's TWAI filter is
+`TWAI_FILTER_CONFIG_ACCEPT_ALL`, so peer event frames already arrive in each node's RX queue; `CanService`
+surfaces them via `onPeerEvent`, and `VFM` forwards a peer `Raising` to `DispenserService::notifyPeerRaise()`.
+End to end the empty plate starts rising about one CAN frame time (~0.5 ms at 250 kbps) after the fed one.
+
+This replaced a commanded dwell, which could not do the job: a fed cycle's hold lasts however long M1 takes to
+drop a pellet plus the 2 s `kPelletLoadConfirmMs` confirm window, and that varies trial to trial. Any fixed dwell
+therefore landed the two plates at the top at visibly different moments — precisely the timing cue the no-feed
+cycle exists to remove. `DispenseNoFeed` now carries no payload at all; a trailing payload from an older base
+station is ignored rather than rejected.
+
+The peer-raise flag is latched whenever a no-feed cycle is active, not only while in `Dwelling` — a fed node whose
+plate is already occupied raises almost immediately, before a node commanded at the same moment has finished
+lowering, and the flag has to survive that gap.
 
 ```
  DispenseNoFeed
@@ -152,15 +166,24 @@ baited one.
     │
     ├─ plate occupied ─► FeedSkipped (real pellet — same as Dispense, never silently discarded)
     │
-    └─ plate empty ─► Lowering ─► Dwelling (M1 idle, dwell_ms) ─► Raising ─► NoFeedPresented
-                                                                                  │
-                                                    ┌─ dome lifts ──────► DomeOpened (pellet_present=false)
-                                                    │
-                                                    └─ dome held open ──► DomeOpenWarning
+    └─ plate empty ─► Lowering ─► Dwelling ─► Raising ─► NoFeedPresented
+                                     │                        │
+                     peer Raising ───┘        ┌─ dome lifts ──► DomeOpened (pellet_present=false)
+                     (0x09, any node)         │
+                                              └─ dome held open ──► DomeOpenWarning
 
                         No PelletTaken is ever emitted — the cycle stays Loaded until the next
                         Dispense / DispenseNoFeed command, or Recover.
 ```
+
+**`Dwelling` has no timeout.** If no peer ever raises — hopper empty, jam, or simply no fed node in the trial —
+the node holds at the drop position until `Recover`. That is deliberate: presenting an empty plate at an
+unrelated moment would leak exactly the cue this cycle removes, and a fed node that never raises means the trial
+is already lost. Because firmware accepts a new dispense only from `Idle` or `Loaded`, a node left in `Dwelling`
+rejects the next trial's command, so the base station clears it: `kit.synchronized_cycle` sends `Recover` to any
+commanded node that has not presented when the sync gate fails. It deliberately skips nodes that are *halted* —
+recovering those would clear firmware's sticky `Fault` and silently un-pause a session an operator is meant to
+inspect.
 
 An occupied plate is never silently swapped for empty: exactly as with `Dispense`, occupancy is checked first,
 and a plate that already holds a pellet is presented honestly (`FeedSkipped`) rather than run through the
@@ -193,8 +216,17 @@ Node → base on CAN ID `0x300 + nodeId`. Byte 0 is the event code.
 | `0x10` | `PresenceCalResult` | ok(1), threshold LE32, samples LE16 | Response to a `CalibratePresence` command — see below      |
 
 
-`count` is the running total of `Loaded` milestones from that node — `NoFeedPresented` deliberately does not
-advance it, so the base station can tell an unrewarded cycle from a real delivery just by watching the count.
+`count` is the node's running total of `Loaded` milestones — `NoFeedPresented` deliberately does not advance
+it, so the base station can tell an unrewarded cycle from a real delivery just by watching the count.
+`PelletTaken` is the one exception: it carries `takenCount_` rather than the presented total.
+
+**This is a power-on counter, not a session counter.** Firmware zeroes it in the `DispenserService`
+constructor and nowhere else — not on `Recover`, not when a new experiment starts. It is deliberately *not*
+the number that appears in logs or reports. The base station keeps its own per-run, per-node count that starts
+at zero when a session opens, and folds the node's counter in as a **delta** so a milestone frame lost to the
+bus is recovered by the next frame carrying the count (or by the next heartbeat) and reported as a gap rather
+than silently dropped. The node counter is the independent witness that makes that detection possible, which
+is why the firmware still sends it. See `tools/dev_gui/base_station/pellet_ledger.py`.
 
 **Presence recalibration.** `CanCmd::CalibratePresence` (`0x09`, no payload, broadcast-friendly) starts a fresh
 5 s idle-pad capture on the presence sensor — the same action as a short `PIN_BTN` click. The node replies with
@@ -245,7 +277,9 @@ Node → base on CAN ID `0x200 + nodeId`, sent every `kDefaultHeartbeatIntervalM
 
 
 Carrying both counts means a node that reconnects mid-session reports delivery and consumption together, with
-no need to replay the event log.
+no need to replay the event log. Both are power-on counters (see above), and the heartbeat is where the base
+station's per-run ledger picks up anything the event stream lost: heartbeats increment nothing themselves, so
+any advance one reveals is a milestone frame that never arrived.
 
 ## What the base station can conclude
 

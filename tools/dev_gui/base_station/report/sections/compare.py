@@ -48,8 +48,8 @@ def cohort_table_section(ctx: SectionContext) -> Optional[SectionResult]:
     rows = []
     for run, m in zip(ctx.runs, ctx.metrics):
         ident = parse_session_name(run.session)
-        presented = sum(a.presented for a in m.pellets.values())
-        taken = sum(a.taken for a in m.pellets.values())
+        presented = sum(a.presented_total for a in m.pellets.values())
+        taken = sum(a.taken_total for a in m.pellets.values())
         cumulative = [tp.taken for tp in m.throughput]
         latencies = [c.retrieval_latency for c in m.cycles if c.retrieval_latency is not None]
         bouts, _ = m.presence
@@ -130,8 +130,8 @@ def learning_curve_section(ctx: SectionContext) -> Optional[SectionResult]:
 
 def _metric_value(name: str, run, m) -> Optional[float]:
     if name == "take_rate":
-        presented = sum(a.presented for a in m.pellets.values())
-        taken = sum(a.taken for a in m.pellets.values())
+        presented = sum(a.presented_total for a in m.pellets.values())
+        taken = sum(a.taken_total for a in m.pellets.values())
         return safe_ratio(taken, presented)
     if name == "median_retrieval_latency":
         vals = [c.retrieval_latency for c in m.cycles if c.retrieval_latency is not None]

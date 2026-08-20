@@ -65,6 +65,7 @@ static const char *stateStr(vfm::DispenseState s) {
         case vfm::DispenseState::Loading:  return "Loading";
         case vfm::DispenseState::Raising:     return "Raising";
         case vfm::DispenseState::Loaded:   return "Loaded";
+        case vfm::DispenseState::Dwelling:    return "Dwelling";
         case vfm::DispenseState::Fault:       return "Fault";
     }
     return "?";
