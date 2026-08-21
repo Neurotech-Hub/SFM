@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from base_station.experiment import EventKind, NodeEvent
+from base_station.experiment import EventKind, ExperimentControl, NodeEvent
 from base_station.experiment.templates.two_armed_bandit import build as build_bandit
 from base_station.protocol import CanCmd
 
@@ -15,6 +15,11 @@ def _dispense_cmds(runner):
 
 def _no_feed_cmds(runner):
     return [c for c in runner.ctx.commands_sent if c[1] == CanCmd.DispenseNoFeed]
+
+
+def _bring_online(runner, nodes, ts=0.0):
+    """Startup-sweep prerequisite: both arms must be online before trial 1."""
+    runner.inject([NodeEvent(EventKind.NODE_ONLINE, node_id=n, timestamp=ts) for n in nodes])
 
 
 def _present_both_arms(runner, fed, empty, ts):
@@ -36,6 +41,8 @@ def test_first_trial_feeds_rich_arm_and_no_feeds_the_other() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     assert runner.ctx.trial == 1
     dispensed = _dispense_cmds(runner)
     no_fed = _no_feed_cmds(runner)
@@ -57,6 +64,8 @@ def test_mimic_is_commanded_before_the_fed_arm() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     kinds = [c[1] for c in runner.ctx.commands_sent
              if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)]
     assert kinds == [CanCmd.DispenseNoFeed, CanCmd.Dispense]
@@ -68,6 +77,8 @@ def test_no_feed_command_carries_no_timing_payload() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     no_fed = _no_feed_cmds(runner)
     assert len(no_fed) == 1
     assert no_fed[0][2] == b""
@@ -80,6 +91,8 @@ def test_advances_to_next_trial_after_sync_gate_and_take() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     _present_both_arms(runner, fed=1, empty=2, ts=1.0)
     presented = [e for e in runner.ctx.log_entries if e.name == "arm_presented"]
     assert len(presented) == 2  # sync gate resolved: both arms logged as presented
@@ -100,6 +113,8 @@ def test_sync_gate_waits_for_both_arms_before_watching_for_take() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
     assert [e for e in runner.ctx.log_entries if e.name == "arm_presented"] == []
 
@@ -117,6 +132,7 @@ def test_block_flip_switches_the_rich_arm() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=1, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
     assert _dispense_cmds(runner)[-1][0] == 1  # trial 1, block 0 → arm 1
 
     _present_both_arms(runner, fed=1, empty=2, ts=1.0)
@@ -134,6 +150,8 @@ def test_fault_on_fed_arm_pauses_whole_session_until_recovered() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     # Fault during the sync gate — before either arm has finished presenting.
     runner.inject(NodeEvent(EventKind.FAULT, node_id=1, timestamp=1.0))
     aborted = [e for e in runner.ctx.log_entries if e.name == "bandit_trial_aborted"]
@@ -167,6 +185,8 @@ def test_fault_on_empty_arm_also_pauses_the_whole_session() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     # Node 2 (the empty arm) faults during the sync gate.
     runner.inject(NodeEvent(EventKind.FAULT, node_id=2, timestamp=1.0))
     paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
@@ -184,11 +204,16 @@ def test_fault_on_empty_arm_also_pauses_the_whole_session() -> None:
 
 
 def test_fault_before_first_trial_pauses_startup() -> None:
-    """A node already halted at session start must pause before trial 1."""
+    """A node that comes online already faulted must pause the session
+    before trial 1 even starts — not just faults that occur mid-trial."""
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
-    runner.ctx.halt_node(1)
     runner.start(now=0.0)
+    runner.inject([
+        NodeEvent(EventKind.NODE_ONLINE, node_id=1, timestamp=0.0),
+        NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
+        NodeEvent(EventKind.FAULT, node_id=1, timestamp=0.0),
+    ])
 
     assert runner.ctx.trial == 0
     paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
@@ -208,6 +233,8 @@ def test_arm_ready_timeout_marks_trial_invalid() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     # Only the fed arm ever presents; the empty arm's NoFeedPresented never
     # arrives (simulates a dropped command).
     runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0))
@@ -234,6 +261,8 @@ def test_both_arms_baited_is_logged_invalid_and_session_continues() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     # fed=1 presents normally; empty=2 also ends up LOADED (real pellet).
     runner.inject([
         NodeEvent(EventKind.LOADED, node_id=1, timestamp=1.0),
@@ -260,9 +289,13 @@ def test_both_arms_baited_is_logged_invalid_and_session_continues() -> None:
 def test_startup_sweep_waits_for_occupied_plate() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
-    # Node 1 already has a pellet on the plate (leftover from earlier).
-    runner.ctx.observe_event(NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0))
     runner.start(now=0.0)
+    # Node 1 already has a pellet on the plate (leftover from earlier).
+    runner.inject([
+        NodeEvent(EventKind.NODE_ONLINE, node_id=1, timestamp=0.0),
+        NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
+        NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0),
+    ])
     occupied = [e for e in runner.ctx.log_entries if e.name == "plate_occupied_wait"]
     assert len(occupied) == 1
     assert runner.ctx.trial == 0  # trial 1 hasn't started yet
@@ -277,8 +310,12 @@ def test_plate_occupied_stall_names_the_wait() -> None:
     """script_stalled must say plates_clear, not <lambda>."""
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
-    runner.ctx.observe_event(NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0))
     runner.start(now=0.0)
+    runner.inject([
+        NodeEvent(EventKind.NODE_ONLINE, node_id=1, timestamp=0.0),
+        NodeEvent(EventKind.NODE_ONLINE, node_id=2, timestamp=0.0),
+        NodeEvent(EventKind.ON_PLATE, node_id=1, timestamp=0.0),
+    ])
     assert [e for e in runner.ctx.log_entries if e.name == "plate_occupied_wait"]
 
     runner.step(now=120.0)
@@ -295,6 +332,8 @@ def test_plate_occupied_after_trial_blocks_next_trial_until_clear() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     _present_both_arms(runner, fed=1, empty=2, ts=1.0)
     runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0))
     assert runner.ctx.trial == 1
@@ -323,6 +362,7 @@ def test_presence_clear_mode_gates_next_trial() -> None:
     )
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
     # Prime presence True on node 1 BEFORE the ITI wait is armed, so it does
     # not resolve trivially (presence defaults False until a reading arrives).
     runner.ctx.observe_event(NodeEvent(
@@ -346,6 +386,8 @@ def test_mimic_off_sends_only_the_fed_dispense() -> None:
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1, mimic=False)
     runner = exp.make_runner()
     runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
     assert len(_dispense_cmds(runner)) == 1
     assert _dispense_cmds(runner)[0][0] == 1
     assert _no_feed_cmds(runner) == []

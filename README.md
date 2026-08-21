@@ -30,7 +30,6 @@ VFM is a firmware library for the Spatial Foraging Platform node. It provides no
 | [docs/WIRING.md](docs/WIRING.md) | Firmware pin names → physical jobs (motors, sensors, CAN, LEDs, discovery) |
 | [docs/DISPENSE_CYCLE.md](docs/DISPENSE_CYCLE.md) | How a node loads, raises, and reports pellet take / faults during a dispense |
 | [docs/HARDCODED_VALUES.md](docs/HARDCODED_VALUES.md) | Tunable firmware constants checklist (timings, speeds, thresholds) |
-| [docs/BASE_STATION_HARDCODED_VALUES.md](docs/BASE_STATION_HARDCODED_VALUES.md) | Base-station timings and defaults (GUI, experiments, reports) |
 
 ## Project structure
 

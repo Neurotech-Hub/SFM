@@ -157,6 +157,16 @@ def build(
     @exp.script
     def run(control):
         # --- startup sweep: both plates clear before trial 1 ---
+        online = yield control.wait_until(
+            lambda c: all(c.is_online(n) for n in (arm_a, arm_b)),
+            timeout=20.0,
+            label="nodes_online",
+        )
+        if not online.ok:
+            control.log(
+                "bandit_startup_nodes_offline",
+                nodes=[n for n in (arm_a, arm_b) if not control.is_online(n)],
+            )
         yield from kit.wait_plates_clear(control, (arm_a, arm_b))
 
         while True:
