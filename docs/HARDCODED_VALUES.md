@@ -3,6 +3,8 @@
 Living note of firmware constants that may need changing after bench or field tweaks.
 **Update this file when you change a default.** Source of truth remains the code; this is the checklist.
 
+GUI / experiment / report defaults: [BASE_STATION_HARDCODED_VALUES.md](BASE_STATION_HARDCODED_VALUES.md).
+
 Pins (`VFMPins.h`) and CAN ID opcodes (`ServiceTypes.h`) are omitted unless they carry timing or motion meaning.
 For what these timers guard and where they sit in the cycle, see [DISPENSE_CYCLE.md](DISPENSE_CYCLE.md).
 
