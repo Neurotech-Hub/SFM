@@ -59,6 +59,9 @@ python run.py --interface vcan0 --nodes 3
 For `run_report.py` options (list sessions, combine cohorts, date filters, designs,
 and more), see [Behavior reports](#behavior-reports-session-csv--printable-html).
 
+Timings and parameter defaults used by the GUI, experiments, and reports:
+[docs/BASE_STATION_HARDCODED_VALUES.md](../../docs/BASE_STATION_HARDCODED_VALUES.md).
+
 ## CLI options
 
 ```
