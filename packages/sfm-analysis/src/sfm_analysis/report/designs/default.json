@@ -5,6 +5,7 @@
   "matches": [],
   "sections": [
     { "ref": "timeline.session_raster", "options": { "window_s": 600 } },
+    { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
     { "ref": "generic.data_quality" },
     { "ref": "generic.pellet_accounting" },

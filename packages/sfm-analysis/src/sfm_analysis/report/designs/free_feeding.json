@@ -5,6 +5,7 @@
   "matches": ["free_feeding"],
   "sections": [
     { "ref": "timeline.session_raster", "options": { "window_s": 900 } },
+    { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
     { "ref": "generic.data_quality" },
     { "ref": "generic.retrieval_latency" },

@@ -9,8 +9,8 @@ from sfm_analysis.protocol import CanEvent, ServiceStatus
 from sfm_analysis.logs import heartbeat_path_for
 from sfm_analysis.report.loader import load_heartbeats, load_rows
 from sfm_analysis.report.metrics import (
-    build_cycles, bouts, dome_bouts, fault_intervals, interaction_funnel,
-    pellet_accounting, presence_bouts,
+    activity_by_day, build_cycles, bouts, dome_bouts, fault_intervals,
+    interaction_funnel, pellet_accounting, presence_bouts,
 )
 from sfm_analysis.report.session import split_runs
 from sfm_analysis.report.stats import chi2_sf, wilson_ci
@@ -224,6 +224,69 @@ class TestInteractionFunnel:
         assert f.taken == 1
         assert f.approach_without_dome == 0
         assert f.dome_without_take == 0
+
+
+class TestActivityByDay:
+    def test_groups_events_by_calendar_day(self, tmp_path):
+        day_ms = 24 * 3600 * 1000
+        # 3 days apart guarantees distinct calendar dates regardless of
+        # the test machine's own timezone.
+        rows = [
+            input_changed_row(1_700_000_000_000, 1, 4, True, "MousePresence Detected"),
+            input_changed_row(1_700_000_000_000 + 3 * day_ms, 1, 4, True, "MousePresence Detected"),
+        ]
+        run = _run(tmp_path, rows)
+        days = activity_by_day(run)
+        assert len(days) == 2
+        assert days[0].date < days[1].date
+
+    def test_empty_when_no_matching_events(self, tmp_path):
+        run = _run(tmp_path, [can_event_row(0, 1, CanEvent.Loaded)])
+        assert activity_by_day(run) == []
+
+    def test_only_detected_not_cleared_counts_by_default(self, tmp_path):
+        rows = [
+            input_changed_row(0, 1, 4, True, "MousePresence Detected"),
+            input_changed_row(5000, 1, 4, False, "MousePresence Cleared"),
+        ]
+        run = _run(tmp_path, rows)
+        days = activity_by_day(run)
+        assert len(days) == 1
+        assert len(days[0].times) == 1
+
+    def test_event_names_override_selects_a_different_proxy(self, tmp_path):
+        rows = [
+            input_changed_row(0, 1, 4, True, "MousePresence Detected"),
+            can_event_row(1000, 1, CanEvent.PelletTaken, bytes([1, 0, 1])),
+        ]
+        run = _run(tmp_path, rows)
+        default_days = activity_by_day(run)
+        taken_days = activity_by_day(run, event_names=("Pellet Taken",))
+        assert len(default_days[0].times) == 1
+        assert len(taken_days[0].times) == 1
+        # Different events, same day -- but a different single timestamp.
+        assert default_days[0].times != taken_days[0].times
+
+    def test_times_within_a_day_are_sorted(self, tmp_path):
+        rows = [
+            input_changed_row(5000, 1, 4, True, "MousePresence Detected"),
+            input_changed_row(1000, 1, 4, True, "MousePresence Detected"),
+            input_changed_row(3000, 1, 4, True, "MousePresence Detected"),
+        ]
+        run = _run(tmp_path, rows)
+        days = activity_by_day(run)
+        assert len(days) == 1
+        assert days[0].times == sorted(days[0].times)
+
+    def test_pools_across_nodes(self, tmp_path):
+        rows = [
+            input_changed_row(0, 1, 4, True, "MousePresence Detected"),
+            input_changed_row(1000, 2, 4, True, "MousePresence Detected"),
+        ]
+        run = _run(tmp_path, rows)
+        days = activity_by_day(run)
+        assert len(days) == 1
+        assert len(days[0].times) == 2
 
 
 class TestStatsSanityCheckedHere:

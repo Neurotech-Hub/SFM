@@ -226,6 +226,86 @@ def _fmt_duration(seconds: float) -> str:
     return f"{s}s"
 
 
+def _actogram_panel(days, *, lights_on: float, lights_off: float) -> str:
+    lanes = [d.date.strftime("%b %d") for d in days]
+    frame = Frame(h=max(140, 40 + len(lanes) * 16))
+    x = charts.linear(0.0, 24.0, frame.px0, frame.px1)
+    lane_gap = (frame.py1 - frame.py0) / len(lanes)
+    lane_h = min(14, lane_gap * 0.8)
+
+    body = []
+    # Night shading first, so activity ticks draw on top of it. Two spans
+    # per lane unless the whole day (or none of it) is dark, since the
+    # dark period may wrap around both edges of the [0, 24) axis.
+    for li in range(len(lanes)):
+        ly = frame.py0 + li * lane_gap + (lane_gap - lane_h) / 2
+        for a, b in ((0.0, lights_on), (lights_off, 24.0)):
+            if b <= a:
+                continue
+            x0, x1 = x(a), x(b)
+            body.append(f'<rect class="actogram-night" x="{x0:.1f}" y="{ly:.1f}" '
+                        f'width="{x1 - x0:.1f}" height="{lane_h:.1f}"/>')
+
+    body.append(f'<line class="axis-line" x1="{frame.px0:.1f}" y1="{frame.py1:.1f}" '
+               f'x2="{frame.px1:.1f}" y2="{frame.py1:.1f}"/>')
+    for hour in (0, 6, 12, 18, 24):
+        px = x(float(hour))
+        body.append(f'<line class="gridline" x1="{px:.1f}" y1="{frame.py0:.1f}" x2="{px:.1f}" y2="{frame.py1:.1f}"/>')
+        body.append(f'<text x="{px:.1f}" y="{frame.py1 + 14:.1f}" text-anchor="middle">{hour}:00</text>')
+
+    marks = [
+        Mark(lane=li, t=t, glyph="tick", key=0, title=f"{lanes[li]} {int(t):02d}:{int((t % 1) * 60):02d}")
+        for li, day in enumerate(days) for t in day.times
+    ]
+    body.append(charts.raster(frame, x, lanes, marks, lane_h=lane_h))
+
+    return charts.svg(frame, "".join(body), title="actogram")
+
+
+def actogram_section(ctx: SectionContext) -> Optional[SectionResult]:
+    """
+    One row per calendar day, time-of-day on the x-axis — the figure that
+    replaces dozens of session_raster detail panels for a multi-day run.
+    See metrics.activity_by_day for what counts as "activity" and why
+    grouping needs no UTC offset to be correct.
+
+    Empty (nothing rendered) for any run with fewer than 2 distinct days
+    of activity — a single-day run gets nothing an actogram would add
+    over the session raster above it.
+    """
+    lights_on = float(ctx.opts.get("lights_on", 6.0))
+    lights_off = float(ctx.opts.get("lights_off", 18.0))
+    figs = []
+
+    for run, m in zip(ctx.runs, ctx.metrics):
+        days = m.activity_by_day
+        if len(days) < 2:
+            continue
+        heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
+        panel = _actogram_panel(days, lights_on=lights_on, lights_off=lights_off)
+        figs.append(
+            f'{heading}<figure><figcaption>Activity by day '
+            f'({len(days)} days; shaded = lights off, {_fmt_clock(lights_off)}–{_fmt_clock(lights_on)}).'
+            f'</figcaption>{panel}</figure>'
+        )
+
+    if not figs:
+        return SectionResult(section_id="timeline.actogram", title="Actogram", html="", empty=True)
+
+    return SectionResult(
+        section_id="timeline.actogram",
+        title="Actogram",
+        html="".join(figs),
+    )
+
+
+def _fmt_clock(hour: float) -> str:
+    h = int(hour) % 24
+    m = int(round((hour % 1) * 60))
+    return f"{h:02d}:{m:02d}"
+
+
 SECTIONS = {
     "session_raster": session_raster_section,
+    "actogram": actogram_section,
 }

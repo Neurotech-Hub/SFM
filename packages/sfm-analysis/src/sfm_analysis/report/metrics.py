@@ -14,12 +14,14 @@ is a difference between two Cycle timestamps. See ``build_cycles``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date as _date
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ..protocol import CanEvent, ServiceStatus
 from .loader import LogRow
 from .session import RunData
 from .stats import iqr, median, safe_ratio
+from .timezones import local_date, time_of_day
 
 # CAN EVENT display names that mark a dispense-cycle phase (see
 # protocol.CAN_EVENT_DISPLAY_NAME). Keyed by the *display* name since
@@ -571,6 +573,47 @@ def cumulative_throughput(run: RunData) -> List[ThroughputPoint]:
     return out
 
 
+DEFAULT_ACTIVITY_EVENTS = ("MousePresence Detected",)
+
+
+@dataclass
+class ActogramDay:
+    """One row of an actogram: a calendar day (rig-local) and the
+    time-of-day (0-24h) of every activity event that fell on it."""
+
+    date: _date
+    times: List[float]
+
+
+def activity_by_day(
+    run: RunData,
+    *,
+    event_names: Sequence[str] = DEFAULT_ACTIVITY_EVENTS,
+) -> List[ActogramDay]:
+    """
+    Group activity timestamps by calendar day, in the rig's own local
+    time (see ``timezones.py`` for why that needs no UTC offset) — the
+    data an actogram plots. Days are pooled across every node: an
+    actogram represents one subject's overall activity, not a per-node
+    breakdown.
+
+    ``event_names`` selects which CAN EVENT rows count as "activity";
+    the default is presence-sensor onsets, the one activity proxy
+    available across every experiment type. A day with zero matching
+    events is simply absent from the result, not an empty row — callers
+    that want a fully populated calendar (e.g. to draw a blank row for a
+    day with no data) should fill the gaps themselves from the min/max
+    date present.
+
+    Returned in chronological order.
+    """
+    by_day: Dict[_date, List[float]] = {}
+    for row in run.by_event(*event_names):
+        by_day.setdefault(local_date(row), []).append(time_of_day(row))
+
+    return [ActogramDay(date=d, times=sorted(times)) for d, times in sorted(by_day.items())]
+
+
 @dataclass
 class RunMetrics:
     """Bundle of every generic metric for one run, computed once and reused
@@ -585,6 +628,7 @@ class RunMetrics:
     funnel: Dict[int, InteractionFunnel]
     health: Dict[str, List[LogRow]]
     throughput: List[ThroughputPoint]
+    activity_by_day: List[ActogramDay]
 
 
 def compute_run_metrics(run: RunData) -> RunMetrics:
@@ -599,4 +643,5 @@ def compute_run_metrics(run: RunData) -> RunMetrics:
         funnel=interaction_funnel(cycles),
         health=apparatus_health(run),
         throughput=cumulative_throughput(run),
+        activity_by_day=activity_by_day(run),
     )
