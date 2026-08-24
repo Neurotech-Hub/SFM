@@ -39,6 +39,12 @@ class TestParseSessionName:
         assert ident.date == "20260812"
         assert ident.subject is None
 
+    def test_daily_session_yields_date(self):
+        ident = parse_session_name("session_20260824")
+        assert ident.date == "20260824"
+        assert ident.subject is None
+        assert ident.parsed is True
+
     def test_real_test_session_names_are_unparsed(self):
         for name in ("Exp-Test-01", "EXP-Test-02"):
             ident = parse_session_name(name)

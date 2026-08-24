@@ -5,6 +5,7 @@ import os
 import tempfile
 import csv
 import time
+from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
@@ -107,23 +108,26 @@ class TestLogManager:
         lm = LogManager(max_entries=100, log_dir=str(tmp_path), auto_save=True)
         lm.add(make_entry(event_name="AutoSaved"))
         lm.close()
-        # Find the session file (exclude sibling heartbeat file)
-        csv_files = [p for p in tmp_path.glob("session_*.csv") if "_heartbeats" not in p.name]
-        assert len(csv_files) == 1
-        with open(csv_files[0]) as f:
+        today = datetime.now().strftime("%Y%m%d")
+        main = tmp_path / f"session_{today}.csv"
+        hb = tmp_path / f"session_{today}_heartbeats.csv"
+        assert main.exists()
+        with open(main) as f:
             rows = list(csv.DictReader(f))
         assert len(rows) == 1
         assert rows[0]["event_name"] == "AutoSaved"
-        hb_files = list(tmp_path.glob("session_*_heartbeats.csv"))
-        assert len(hb_files) == 1
+        assert rows[0]["session"] == f"session_{today}"
+        assert rows[0]["run_id"] == "0"
+        assert hb.exists()
 
     def test_heartbeats_go_to_sibling_csv_not_main(self, tmp_path):
         lm = LogManager(log_dir=str(tmp_path), auto_save=True)
         lm.add(make_entry(frame_type="EVENT", event_name="OnPlate"))
         lm.add(make_entry(frame_type="HEARTBEAT", event_name="", node_id=2))
         lm.close()
-        main = [p for p in tmp_path.glob("session_*.csv") if "_heartbeats" not in p.name][0]
-        hb = list(tmp_path.glob("session_*_heartbeats.csv"))[0]
+        today = datetime.now().strftime("%Y%m%d")
+        main = tmp_path / f"session_{today}.csv"
+        hb = tmp_path / f"session_{today}_heartbeats.csv"
         with open(main) as f:
             main_rows = list(csv.DictReader(f))
         with open(hb) as f:
@@ -262,3 +266,105 @@ class TestNamedSession:
         assert entries[0].run_id == run_id
         assert entries[0].trial == 5
         lm.close()
+
+
+class TestDailySink:
+    def test_same_day_second_manager_appends(self, tmp_path):
+        lm1 = LogManager(log_dir=str(tmp_path), auto_save=True)
+        lm1.add(make_entry(event_name="First"))
+        lm1.close()
+
+        lm2 = LogManager(log_dir=str(tmp_path), auto_save=True)
+        lm2.add(make_entry(event_name="Second"))
+        lm2.close()
+
+        today = datetime.now().strftime("%Y%m%d")
+        mains = [p for p in tmp_path.glob("session_*.csv") if "_heartbeats" not in p.name]
+        assert mains == [tmp_path / f"session_{today}.csv"]
+        with open(mains[0]) as f:
+            rows = list(csv.DictReader(f))
+        assert [r["event_name"] for r in rows] == ["First", "Second"]
+        assert all(r["run_id"] == "0" for r in rows)
+
+    def test_stale_daily_header_diverts(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(LogManager, "_today_stamp", lambda self: "20260824")
+        stale = tmp_path / "session_20260824.csv"
+        with open(stale, "w", newline="") as f:
+            csv.writer(f).writerow(["old", "header"])
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        assert lm.csv_path != stale
+        assert lm.csv_path.name.startswith("session_20260824_")
+        lm.close()
+        with open(stale) as f:
+            assert f.readline().strip() == "old,header"
+
+    def test_midnight_rollover_opens_new_day_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(LogManager, "_today_stamp", lambda self: "20260824")
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        lm.add(make_entry(event_name="Mon"))
+        monkeypatch.setattr(LogManager, "_today_stamp", lambda self: "20260825")
+        lm.add(make_entry(event_name="Tue"))
+        lm.close()
+        with open(tmp_path / "session_20260824.csv") as f:
+            assert [r["event_name"] for r in csv.DictReader(f)] == ["Mon"]
+        with open(tmp_path / "session_20260825.csv") as f:
+            assert [r["event_name"] for r in csv.DictReader(f)] == ["Tue"]
+
+
+class TestResumeDaily:
+    def test_post_session_rows_go_to_daily_not_experiment(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        lm.open_session("Bandit_test_01", str(tmp_path))
+        lm.add(make_entry(
+            frame_type="EXPERIMENT", event_name="session_end", source="EXP",
+        ))
+        exp_path = tmp_path / "Bandit_test_01.csv"
+        lm.resume_daily(str(tmp_path))
+        assert lm.is_named_session is False
+        lm.add(make_entry(event_name="PostStopCommand", frame_type="COMMAND"))
+        lm.add(make_entry(frame_type="HEARTBEAT", node_id=1))
+        lm.close()
+
+        with open(exp_path) as f:
+            exp_rows = list(csv.DictReader(f))
+        assert exp_rows[-1]["event_name"] == "session_end"
+        assert all(r["event_name"] != "PostStopCommand" for r in exp_rows)
+        assert all(r["frame_type"] != "HEARTBEAT" for r in exp_rows)
+
+        today = datetime.now().strftime("%Y%m%d")
+        with open(tmp_path / f"session_{today}.csv") as f:
+            daily_rows = list(csv.DictReader(f))
+        assert [r["event_name"] for r in daily_rows] == ["PostStopCommand"]
+        assert all(r["run_id"] == "0" for r in daily_rows)
+
+        with open(tmp_path / f"session_{today}_heartbeats.csv") as f:
+            hb_rows = list(csv.DictReader(f))
+        assert len(hb_rows) == 1
+        assert hb_rows[0]["frame_type"] == "HEARTBEAT"
+
+        # Experiment heartbeat sibling must not receive post-stop heartbeats
+        with open(tmp_path / "Bandit_test_01_heartbeats.csv") as f:
+            exp_hb = list(csv.DictReader(f))
+        assert exp_hb == []
+
+    def test_resume_daily_is_noop_when_already_on_today(self, tmp_path):
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        path = lm.csv_path
+        lm.resume_daily(str(tmp_path))
+        assert lm.csv_path == path
+        lm.close()
+
+    def test_reopen_named_after_resume_still_bumps_run_id(self, tmp_path):
+        lm = LogManager(auto_save=False)
+        assert lm.open_session("cohortA", str(tmp_path)) == 1
+        lm.add(make_entry(event_name="Run1"))
+        lm.resume_daily(str(tmp_path))
+        assert lm.open_session("cohortA", str(tmp_path)) == 2
+        lm.add(make_entry(event_name="Run2"))
+        lm.close()
+        with open(tmp_path / "cohortA.csv") as f:
+            rows = list(csv.DictReader(f))
+        names = [r["event_name"] for r in rows]
+        assert "Run1" in names and "Run2" in names
+        assert rows[-1]["run_id"] == "2"
+        assert all(r["event_name"] != "PostStopCommand" for r in rows)
