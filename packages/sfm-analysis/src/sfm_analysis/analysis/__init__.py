@@ -24,6 +24,7 @@ from . import intervals
 from .intervals import around, count_in, merge, overlap, rate_in, subtract
 from .session import AmbiguousSessionError, Session, SessionNotFoundError, load_session
 from .tables import bouts_table, cycles_table, events_table, to_dataframe, trials_table
+from ..report.timezones import local_date, time_of_day, wall_clock, zeitgeber_time
 
 __all__ = [
     "load_session",
@@ -42,4 +43,8 @@ __all__ = [
     "around",
     "count_in",
     "rate_in",
+    "time_of_day",
+    "local_date",
+    "zeitgeber_time",
+    "wall_clock",
 ]

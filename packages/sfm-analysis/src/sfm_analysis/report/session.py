@@ -42,6 +42,8 @@ class RunData:
     experiment: str = "unknown"
     nodes: List[int] = field(default_factory=list)
     seed: Optional[int] = None
+    utc_offset_s: Optional[float] = None  # from session_start's fields; None on
+                                           # logs recorded before this was captured
     params: Dict[str, Any] = field(default_factory=dict)     # <experiment>_start fields
     end_fields: Dict[str, Any] = field(default_factory=dict)  # session_end fields
     end_reason: Optional[str] = None
@@ -135,6 +137,9 @@ def split_runs(
                     seed = row.fields.get("seed")
                     if isinstance(seed, (int, float)):
                         run.seed = int(seed)
+                    utc_offset_s = row.fields.get("utc_offset_s")
+                    if isinstance(utc_offset_s, (int, float)):
+                        run.utc_offset_s = float(utc_offset_s)
                 elif row.event_name.endswith("_start") and row.event_name != "session_start":
                     run.params = dict(row.fields)
                 elif row.event_name == "session_end":

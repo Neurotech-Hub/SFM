@@ -502,6 +502,22 @@ def test_start_when_defers_activation() -> None:
     assert started == [True]
 
 
+def test_session_start_logs_utc_offset_s() -> None:
+    """See runner.py's _activate: utc_offset_s is what lets an analyst in
+    a different timezone (sfm_analysis) know what "local" meant on this
+    rig, since timestamp_iso elsewhere in the log carries no offset."""
+    exp = Experiment(nodes=[1])
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+
+    entry = next(e for e in runner.ctx.log_entries if e.name == "session_start")
+    assert "utc_offset_s" in entry.fields
+    offset = entry.fields["utc_offset_s"]
+    assert offset is None or isinstance(offset, float)
+    if offset is not None:
+        assert -12 * 3600 <= offset <= 14 * 3600  # every real UTC offset falls in this range
+
+
 def test_on_session_start_fires_once_immediately() -> None:
     exp = Experiment(nodes=[1])
     fired = []
