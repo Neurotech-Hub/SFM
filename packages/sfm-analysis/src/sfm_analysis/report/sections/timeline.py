@@ -171,7 +171,17 @@ def _panel(run, m, nodes: List[int], w0: float, w1: float, *, tall: bool) -> str
 
 
 def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
-    window_s = float(ctx.opts.get("window_s", 600))
+    # None (not set in the design JSON) means "adaptive": window_s scales
+    # up with run duration so panel count never exceeds ~12, rather than
+    # a 24h run producing 144 stacked panels at a fixed 600s. An explicit
+    # window_s in options overrides this per-run scaling entirely and
+    # pins a single fixed panel width regardless of duration, same as
+    # before this became adaptive. min_window_s only applies in the
+    # adaptive case -- it's the short-run floor (a design that wants
+    # coarser panels than 600s even for a short run, e.g. free_feeding's
+    # slower cadence, sets this instead of a fixed window_s).
+    window_s_opt = ctx.opts.get("window_s")
+    min_window_s = float(ctx.opts.get("min_window_s", 600.0))
     figs = []
 
     for run, m in zip(ctx.runs, ctx.metrics):
@@ -179,6 +189,7 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
         if not nodes:
             continue
         duration = max(run.duration_s, 1.0)
+        window_s = float(window_s_opt) if window_s_opt is not None else max(min_window_s, duration / 12.0)
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
 
         overview = _panel(run, m, nodes, 0.0, duration, tall=False)

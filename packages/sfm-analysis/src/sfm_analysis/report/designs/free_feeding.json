@@ -4,7 +4,7 @@
   "description": "Ad libitum dispensing with a fixed reload delay after each take. Reload-latency drift and meal-bout structure are the primary signals.",
   "matches": ["free_feeding"],
   "sections": [
-    { "ref": "timeline.session_raster", "options": { "window_s": 900 } },
+    { "ref": "timeline.session_raster", "options": { "min_window_s": 900 } },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
     { "ref": "generic.data_quality" },

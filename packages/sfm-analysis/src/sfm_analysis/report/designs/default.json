@@ -4,7 +4,7 @@
   "description": "Applies to any session regardless of experiment template: provenance, pellet accounting, retrieval timing, presence/occupancy, interaction funnel, throughput, faults, and apparatus health.",
   "matches": [],
   "sections": [
-    { "ref": "timeline.session_raster", "options": { "window_s": 600 } },
+    { "ref": "timeline.session_raster" },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
     { "ref": "generic.data_quality" },

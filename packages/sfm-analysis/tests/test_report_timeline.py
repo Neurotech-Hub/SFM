@@ -22,6 +22,23 @@ def _ctx(tmp_path, n_trials=3, window_s=600, t0_ms=1_700_000_000_000):
                            opts={"window_s": window_s})
 
 
+def _duration_ctx(tmp_path, duration_s, opts=None, t0_ms=1_700_000_000_000):
+    """A run spanning exactly duration_s, with no explicit window_s in
+    opts unless the caller supplies one -- for exercising the adaptive
+    default in session_raster_section, which _ctx() above always
+    overrides."""
+    rows = [
+        input_changed_row(t0_ms, 1, 4, True, "MousePresence Detected"),
+        input_changed_row(t0_ms + int(duration_s * 1000), 1, 4, False, "MousePresence Cleared"),
+    ]
+    path = write_session(tmp_path, rows, session="DUR")
+    loaded, _, _ = load_rows(path)
+    runs = split_runs(loaded, [], path)
+    metrics = [compute_run_metrics(r) for r in runs]
+    return SectionContext(runs=runs, metrics=metrics, combined=False, align="relative",
+                           opts=opts if opts is not None else {})
+
+
 def _multi_day_ctx(tmp_path, n_days=4, opts=None):
     day_ms = 24 * 3600 * 1000
     rows = [
@@ -66,6 +83,41 @@ class TestSessionRaster:
                               align="relative", opts={})
         result = session_raster_section(ctx)
         assert result.empty is True
+
+
+class TestAdaptiveWindow:
+    def test_short_run_uses_the_600s_floor(self, tmp_path):
+        # duration/12 = 300, below the 600s floor -> window_s=600, same
+        # as the old fixed default.
+        ctx = _duration_ctx(tmp_path, duration_s=3600)
+        result = session_raster_section(ctx)
+        # 1 overview + int(3600//600)=6 detail panels.
+        assert result.html.count("<figure>") == 1 + 6
+
+    def test_long_run_caps_at_twelve_detail_panels(self, tmp_path):
+        # 86400 / 12 = 7200s window_s, exactly 12 panels -- this is the
+        # case that used to be 144 panels at a fixed 600s.
+        ctx = _duration_ctx(tmp_path, duration_s=86400)
+        result = session_raster_section(ctx)
+        assert result.html.count("<figure>") == 1 + 12
+
+    def test_explicit_window_s_overrides_adaptive_scaling(self, tmp_path):
+        ctx = _duration_ctx(tmp_path, duration_s=86400, opts={"window_s": 600})
+        result = session_raster_section(ctx)
+        assert result.html.count("<figure>") == 1 + 144
+
+    def test_min_window_s_raises_the_floor_for_short_runs(self, tmp_path):
+        ctx = _duration_ctx(tmp_path, duration_s=3600, opts={"min_window_s": 900})
+        result = session_raster_section(ctx)
+        # window_s = max(900, 300) = 900 -> int(3600//900)=4 panels.
+        assert result.html.count("<figure>") == 1 + 4
+
+    def test_min_window_s_does_not_apply_once_duration_scaling_wins(self, tmp_path):
+        # duration/12 = 7200 > min_window_s=900, so the floor is
+        # irrelevant here -- still exactly 12 panels.
+        ctx = _duration_ctx(tmp_path, duration_s=86400, opts={"min_window_s": 900})
+        result = session_raster_section(ctx)
+        assert result.html.count("<figure>") == 1 + 12
 
 
 class TestActogram:

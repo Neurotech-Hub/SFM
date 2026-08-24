@@ -4,7 +4,7 @@
   "description": "Per-node role is off/fixed/random. Compares take rate and latency across roles, and the observed random-fire rate against the configured probability.",
   "matches": ["fixed_and_random"],
   "sections": [
-    { "ref": "timeline.session_raster", "options": { "window_s": 600 } },
+    { "ref": "timeline.session_raster" },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
     { "ref": "generic.data_quality" },

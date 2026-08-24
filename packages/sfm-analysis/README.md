@@ -103,6 +103,22 @@ never kills the whole report; it renders a visible error block with the
 traceback instead (`schema.run_section`), so one broken section can't take
 the rest of the report down with it.
 
+### Long and multi-day sessions
+
+`timeline.session_raster`'s detail-panel width (`window_s`) scales with
+run duration by default — `max(600, duration/12)` — so a 24h run gets
+about 12 panels instead of 144 stuck at a fixed 600s. Pin a fixed width
+regardless of duration with `"options": {"window_s": ...}`; raise only
+the short-run floor (e.g. free_feeding's slower cadence) with
+`"options": {"min_window_s": ...}`.
+
+`timeline.actogram` — one row per calendar day, time-of-day on the
+x-axis, night-phase shaded (`lights_on`/`lights_off` options, default
+06:00/18:00) — renders automatically whenever a run spans 2 or more
+distinct days; it's the figure that matters for a multi-day experiment,
+where session_raster's panels (even adaptively sized) stop being the
+right tool. Absent entirely for shorter runs.
+
 ## Python API
 
 ### Custom analysis: `sfm_analysis.analysis`

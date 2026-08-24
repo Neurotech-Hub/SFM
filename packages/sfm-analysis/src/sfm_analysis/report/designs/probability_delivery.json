@@ -4,7 +4,7 @@
   "description": "Each cycle, one node wins a weighted random draw. Compares the realized delivery distribution against the configured weights, and checks whether the animal's visit pattern tracks realized reward (matching law).",
   "matches": ["probability_delivery"],
   "sections": [
-    { "ref": "timeline.session_raster", "options": { "window_s": 600 } },
+    { "ref": "timeline.session_raster" },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
     { "ref": "generic.data_quality" },
