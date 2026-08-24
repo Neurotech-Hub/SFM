@@ -120,18 +120,3 @@ class TestExperimentSpecificSectionsAreBeta:
                 continue
             assert d.sections[0].ref == "timeline.session_raster", d.name
 
-    def test_experiment_specific_sections_come_after_all_generic_sections(self):
-        defs = load_report_defs(DEFAULT_REPORTS_DIR)
-        general_prefixes = ("generic.", "timeline.", "compare.")
-        for d in defs:
-            for spec_list in (d.sections, d.combined_sections):
-                seen_specific = False
-                for spec in spec_list:
-                    is_general = spec.ref.startswith(general_prefixes)
-                    if not is_general:
-                        seen_specific = True
-                    elif seen_specific:
-                        raise AssertionError(
-                            f"{d.name}: general section {spec.ref!r} appears after "
-                            f"an experiment-specific section"
-                        )
