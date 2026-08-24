@@ -1,24 +1,20 @@
-"""Tests for run_report.py (the CLI)."""
+"""Tests for sfm_analysis.cli.report (installed as the sfm-report console
+script). Invoked via `-m` rather than a script path so this works
+identically regardless of install mode (editable, wheel, git checkout) and
+on every OS."""
 
-import os
 import subprocess
 import sys
-from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
+from report_fixtures import bandit_run, legacy9_file, write_session
 
-from report_fixtures import bandit_run, legacy9_file, write_session  # noqa: E402
-
-_HERE = Path(__file__).resolve().parent.parent
-_SCRIPT = _HERE / "run_report.py"
 _PYTHON = sys.executable
 
 
 def _run(args, cwd=None, input_text=None):
     return subprocess.run(
-        [_PYTHON, str(_SCRIPT)] + args,
-        cwd=cwd or _HERE, capture_output=True, text=True, input=input_text, timeout=30,
+        [_PYTHON, "-m", "sfm_analysis.cli.report"] + args,
+        cwd=cwd, capture_output=True, text=True, input=input_text, timeout=30,
     )
 
 
