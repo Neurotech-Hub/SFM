@@ -14,8 +14,10 @@ naturally groups several analyses for the same experiment.
 
 Naming note: ``templates/`` is already taken by
 ``base_station/experiment/templates/`` (the Python behavior for each
-experiment). Report JSON specs therefore live in ``reports/`` (the noun
-"design"), not "templates".
+experiment, in the parent VFM repo). Report JSON specs therefore live in
+this package's ``designs/`` (the noun "design"), not "templates" — and not
+"reports", since that's the name of the *output* directory a report is
+written into (see build_session_report below).
 """
 
 from __future__ import annotations
@@ -27,7 +29,34 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-DEFAULT_REPORTS_DIR = Path(__file__).resolve().parents[2] / "reports"
+
+def _packaged_designs_dir() -> Path:
+    """Filesystem location of the report designs bundled with the package.
+
+    Uses importlib.resources so the path is correct for a wheel installed
+    anywhere on sys.path, but deliberately returns a real pathlib.Path
+    rather than a Traversable: DEFAULT_REPORTS_DIR is public API and every
+    caller does Path things with it (``/``, ``.exists()``, ``.glob()``,
+    and passing it back in as ``load_report_defs(directory=...)``).
+
+    pip always unpacks wheels, so files() yields a filesystem-backed path
+    in every install mode this package supports (wheel, sdist, editable,
+    git subdirectory). The __file__ fallback covers the zipimport case and
+    any Python where the resources machinery misbehaves.
+    """
+    fallback = Path(__file__).resolve().parent / "designs"
+    try:
+        from importlib.resources import files
+    except ImportError:  # pragma: no cover
+        return fallback
+    try:
+        resolved = Path(str(files(f"{__package__}.designs")))
+    except (ImportError, ModuleNotFoundError, TypeError, ValueError, OSError):
+        return fallback
+    return resolved if resolved.is_dir() else fallback
+
+
+DEFAULT_REPORTS_DIR: Path = _packaged_designs_dir()
 
 
 @dataclass
@@ -116,16 +145,19 @@ def resolve_section(ref: str) -> SectionFn:
     """
     Resolve "module.func" to a section callable.
 
-    Dynamically imports ``base_station.report.sections.<module>`` and
-    returns its ``SECTIONS[func]`` entry — mirroring
-    experiment.schema.resolve_builder's dynamic import, with a per-module
-    dict instead of a single factory since one module holds several
-    related sections.
+    Dynamically imports ``sfm_analysis.report.sections.<module>`` and
+    returns its ``SECTIONS[func]`` entry — mirroring the VFM base
+    station's experiment.schema.resolve_builder dynamic import, with a
+    per-module dict instead of a single factory since one module holds
+    several related sections.
+
+    Uses ``__package__`` rather than a hardcoded string so this keeps
+    working if the package is ever renamed or vendored.
     """
     mod_name, sep, func_name = ref.partition(".")
     if not sep:
         raise ValueError(f"Section ref '{ref}' must be 'module.function'")
-    mod = importlib.import_module(f"base_station.report.sections.{mod_name}")
+    mod = importlib.import_module(f"{__package__}.sections.{mod_name}")
     table = getattr(mod, "SECTIONS", None)
     if not isinstance(table, dict) or func_name not in table:
         raise ImportError(f"Section '{ref}' not found in sections.{mod_name}.SECTIONS")

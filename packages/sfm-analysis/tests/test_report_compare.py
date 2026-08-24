@@ -1,24 +1,19 @@
-"""Tests for base_station.report.align and sections.compare."""
+"""Tests for sfm_analysis.report.align and sections.compare."""
 
-import os
-import sys
-import xml.etree.ElementTree as ET
 import re
+import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
+from report_fixtures import bandit_run, write_session
 
-from report_fixtures import bandit_run, write_session  # noqa: E402
-
-from base_station.report.align import compute_offsets  # noqa: E402
-from base_station.report.loader import load_rows  # noqa: E402
-from base_station.report.metrics import compute_run_metrics  # noqa: E402
-from base_station.report.schema import SectionContext  # noqa: E402
-from base_station.report.sections.compare import (  # noqa: E402
+from sfm_analysis.report.align import compute_offsets
+from sfm_analysis.report.loader import load_rows
+from sfm_analysis.report.metrics import compute_run_metrics
+from sfm_analysis.report.schema import SectionContext
+from sfm_analysis.report.sections.compare import (
     cohort_table_section, cumulative_overlay_section, learning_curve_section,
     node_preference_section, quality_matrix_section, subject_spread_section,
 )
-from base_station.report.session import split_runs  # noqa: E402
+from sfm_analysis.report.session import split_runs
 
 
 def _run_from(tmp_path, session, t0_ms, n_trials=3, day=None):

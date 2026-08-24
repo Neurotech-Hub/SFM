@@ -1,26 +1,21 @@
 """Tests for the probability_delivery, fixed_and_random, and free_feeding
 analyses/sections/designs (M9)."""
 
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
+from report_fixtures import exp_row, row, session_open_row, write_session
 
-from report_fixtures import exp_row, row, session_open_row, write_session  # noqa: E402
-
-from base_station.report.analyses.fixed_random import (  # noqa: E402
+from sfm_analysis.report.analyses.fixed_random import (
     observed_random_rate, role_summary,
 )
-from base_station.report.analyses.free_feeding import (  # noqa: E402
+from sfm_analysis.report.analyses.free_feeding import (
     inter_take_intervals, meal_bouts, reload_latencies,
 )
-from base_station.report.analyses.probability import delivery_distribution  # noqa: E402
-from base_station.report.loader import load_rows  # noqa: E402
-from base_station.report.schema import resolve_design  # noqa: E402
-from base_station.report.session import split_runs  # noqa: E402
-from base_station.protocol import CanEvent  # noqa: E402
-from report_fixtures import can_event_row  # noqa: E402
+from sfm_analysis.report.analyses.probability import delivery_distribution
+from sfm_analysis.report.loader import load_rows
+from sfm_analysis.report.schema import resolve_design
+from sfm_analysis.report.session import split_runs
+from sfm_analysis.protocol import CanEvent
+from report_fixtures import can_event_row
 
 
 def _run(tmp_path, rows, session="X"):

@@ -1,13 +1,9 @@
-"""Tests for base_station.report.charts."""
+"""Tests for sfm_analysis.report.charts."""
 
-import os
-import sys
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from base_station.report import charts as c  # noqa: E402
-from base_station.report.charts import Frame, Mark, Series, Span  # noqa: E402
+from sfm_analysis.report import charts as c
+from sfm_analysis.report.charts import Frame, Mark, Series, Span
 
 
 def _parse(svg_body: str, title: str = "t") -> ET.Element:

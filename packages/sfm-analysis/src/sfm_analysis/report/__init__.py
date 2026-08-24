@@ -8,9 +8,9 @@ Public entry points (used by both run_report.py and, later, a GUI hook):
 
 The package is stdlib-only (no jinja2/pandas/matplotlib) and produces a
 single self-contained HTML file with inline SVG charts, printable via
-Ctrl+P. See base_station/report/schema.py for how report "designs"
-(JSON) compose "sections" (Python) — the same split the experiment system
-uses for templates/parameters.
+Ctrl+P. See sfm_analysis/report/schema.py for how report "designs"
+(JSON) compose "sections" (Python) — the same split the VFM base
+station's experiment system uses for templates/parameters.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from ..log_manager import LogManager
+from ..logs import heartbeat_path_for
 from .loader import load_heartbeats, load_rows
 from .render import render_report_html
 from .schema import load_report_def, resolve_design
@@ -39,7 +39,7 @@ def _load_runs(csv_path: Path, run_id: Optional[int] = None) -> List[RunData]:
         raise ValueError(
             f"No usable rows in {csv_path.name} (schema={schema.value}). " + " ".join(warnings)
         )
-    hb_path = LogManager.heartbeat_path_for(csv_path)
+    hb_path = heartbeat_path_for(csv_path)
     heartbeats = load_heartbeats(hb_path) if hb_path.exists() else []
     runs = split_runs(rows, heartbeats, csv_path)
     if run_id is not None:

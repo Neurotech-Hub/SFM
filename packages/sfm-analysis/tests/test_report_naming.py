@@ -1,11 +1,7 @@
-"""Tests for base_station.report.naming."""
+"""Tests for sfm_analysis.report.naming."""
 
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from base_station.report.naming import (  # noqa: E402
+from sfm_analysis.report.naming import (
     NamingSettings, group_by, parse_session_name,
 )
 

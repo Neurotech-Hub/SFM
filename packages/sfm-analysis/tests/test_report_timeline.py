@@ -1,20 +1,15 @@
-"""Tests for base_station.report.sections.timeline."""
+"""Tests for sfm_analysis.report.sections.timeline."""
 
-import os
-import sys
-import xml.etree.ElementTree as ET
 import re
+import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
+from report_fixtures import bandit_run, write_session
 
-from report_fixtures import bandit_run, write_session  # noqa: E402
-
-from base_station.report.loader import load_rows  # noqa: E402
-from base_station.report.metrics import compute_run_metrics  # noqa: E402
-from base_station.report.schema import SectionContext  # noqa: E402
-from base_station.report.sections.timeline import session_raster_section  # noqa: E402
-from base_station.report.session import split_runs  # noqa: E402
+from sfm_analysis.report.loader import load_rows
+from sfm_analysis.report.metrics import compute_run_metrics
+from sfm_analysis.report.schema import SectionContext
+from sfm_analysis.report.sections.timeline import session_raster_section
+from sfm_analysis.report.session import split_runs
 
 
 def _ctx(tmp_path, n_trials=3, window_s=600, t0_ms=1_700_000_000_000):
@@ -49,9 +44,9 @@ class TestSessionRaster:
         assert result.page_break_before is True
 
     def test_no_nodes_yields_empty_result(self, tmp_path):
-        from base_station.report.session import RunData
+        from sfm_analysis.report.session import RunData
         empty_run = RunData(session="Empty", run_id=1, source_path=tmp_path / "e.csv")
-        from base_station.report.metrics import compute_run_metrics as crm
+        from sfm_analysis.report.metrics import compute_run_metrics as crm
         ctx = SectionContext(runs=[empty_run], metrics=[crm(empty_run)], combined=False,
                               align="relative", opts={})
         result = session_raster_section(ctx)

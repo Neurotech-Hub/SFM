@@ -1,14 +1,29 @@
-"""Tests for base_station.report.schema."""
+"""Tests for sfm_analysis.report.schema."""
 
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from base_station.report.schema import (  # noqa: E402
+from sfm_analysis.report.schema import (
     DEFAULT_REPORTS_DIR, SectionContext, SectionSpec, load_report_defs,
     resolve_design, resolve_section, run_section,
 )
+
+
+class TestPackagedDesigns:
+    """Guards the importlib.resources resolution in schema.py's
+    _packaged_designs_dir(): a non-namespace package that setuptools fails
+    to discover, or a files()-vs-Path mismatch, both fail silently under
+    an editable install and only show up once a real wheel is built (see
+    the sdk.yml CI job's wheel-namelist check for the build-time half of
+    this guard)."""
+
+    def test_packaged_designs_dir_is_a_real_directory(self):
+        assert DEFAULT_REPORTS_DIR.is_dir()
+
+    def test_all_five_shipped_designs_are_present(self):
+        stems = {p.stem for p in DEFAULT_REPORTS_DIR.glob("*.json")}
+        assert stems == {
+            "default", "free_feeding", "fixed_and_random",
+            "probability_delivery", "two_armed_bandit",
+        }
 
 
 class TestLoadReportDefs:

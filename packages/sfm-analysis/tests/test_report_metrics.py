@@ -1,31 +1,25 @@
-"""Tests for base_station.report.metrics."""
+"""Tests for sfm_analysis.report.metrics."""
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
-
-from report_fixtures import (  # noqa: E402
+from report_fixtures import (
     can_event_row, exp_row, heartbeat_payload, heartbeat_row,
     input_changed_row, write_session,
 )
 
-from base_station.protocol import CanEvent, ServiceStatus  # noqa: E402
-from base_station.report.loader import load_heartbeats, load_rows  # noqa: E402
-from base_station.report.metrics import (  # noqa: E402
+from sfm_analysis.protocol import CanEvent, ServiceStatus
+from sfm_analysis.logs import heartbeat_path_for
+from sfm_analysis.report.loader import load_heartbeats, load_rows
+from sfm_analysis.report.metrics import (
     build_cycles, bouts, dome_bouts, fault_intervals, interaction_funnel,
     pellet_accounting, presence_bouts,
 )
-from base_station.report.session import split_runs  # noqa: E402
-from base_station.report.stats import chi2_sf, wilson_ci  # noqa: E402
+from sfm_analysis.report.session import split_runs
+from sfm_analysis.report.stats import chi2_sf, wilson_ci
 
 
 def _run(tmp_path, rows, heartbeat_rows=None, session="S"):
-    from base_station.log_manager import LogManager
     path = write_session(tmp_path, rows, session=session, heartbeat_rows=heartbeat_rows)
     loaded, _, _ = load_rows(path)
-    hb = load_heartbeats(LogManager.heartbeat_path_for(path)) if heartbeat_rows else []
+    hb = load_heartbeats(heartbeat_path_for(path)) if heartbeat_rows else []
     return split_runs(loaded, hb, path)[0]
 
 

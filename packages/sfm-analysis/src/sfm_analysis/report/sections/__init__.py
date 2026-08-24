@@ -1,4 +1,4 @@
-"""sections — report rendering, split from base_station.report.analyses.
+"""sections — report rendering, split from sfm_analysis.report.analyses.
 
 Each module exposes a ``SECTIONS: Dict[str, SectionFn]`` registry at its
 tail (see schema.resolve_section). Modules here turn already-computed

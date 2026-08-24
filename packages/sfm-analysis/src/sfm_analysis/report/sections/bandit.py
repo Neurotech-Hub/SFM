@@ -1,6 +1,6 @@
 """sections/bandit.py — HTML rendering for two_armed_bandit analyses.
 
-Consumes base_station.report.analyses.bandit; adds no new metrics of its
+Consumes sfm_analysis.report.analyses.bandit; adds no new metrics of its
 own. Every section here degrades gracefully to a short note instead of a
 misleading chart when a run has too few trials to say anything — the
 real drive's own two_armed_bandit sessions have as few as 3-5 trials, and

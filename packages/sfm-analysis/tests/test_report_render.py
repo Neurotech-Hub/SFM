@@ -1,21 +1,16 @@
-"""Tests for base_station.report.render and the report/__init__.py public API."""
+"""Tests for sfm_analysis.report.render and the report/__init__.py public API."""
 
-import os
 import re
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
+from report_fixtures import bandit_run, write_session
 
-from report_fixtures import bandit_run, write_session  # noqa: E402
-
-from base_station.report import build_session_report  # noqa: E402
-from base_station.report.loader import load_rows  # noqa: E402
-from base_station.report.render import render_report_html  # noqa: E402
-from base_station.report.schema import (  # noqa: E402
+from sfm_analysis.report import build_session_report
+from sfm_analysis.report.loader import load_rows
+from sfm_analysis.report.render import render_report_html
+from sfm_analysis.report.schema import (
     ReportDef, SectionSpec, resolve_design,
 )
-from base_station.report.session import split_runs  # noqa: E402
+from sfm_analysis.report.session import split_runs
 
 
 def _runs(tmp_path, session="Weird&Session<Name>"):
@@ -93,3 +88,25 @@ class TestBuildSessionReport:
         content = out.read_text(encoding="utf-8")
         assert "TestSession01" in content
         assert len(content) > 5000
+
+    def test_explicit_design_name_selects_that_design(self, tmp_path):
+        """Covers report/__init__.py's _resolve_design_for, which reads
+        DEFAULT_REPORTS_DIR directly by filename stem -- a stat/read this
+        test would not otherwise exercise at all. Without this test, a
+        --design free_feeding call could silently fall through to the
+        auto-resolved design (wrong report, exit code 0) with nothing to
+        catch it.
+
+        The session here is a bandit run (which auto-resolves to the
+        two_armed_bandit design), so finding the free_feeding-only
+        "Meal-Bout Analysis" section in the output proves --design
+        actually overrode the auto-resolution rather than being ignored.
+        """
+        rows = bandit_run(n_trials=2, session="ForcedDesignTest")
+        csv_path = write_session(tmp_path, rows, session="ForcedDesignTest")
+        out = build_session_report(
+            csv_path, out_path=tmp_path / "ff.html", design="free_feeding",
+        )
+        content = out.read_text(encoding="utf-8")
+        assert "Meal-Bout Analysis" in content
+        assert "Two-Armed Bandit" not in content

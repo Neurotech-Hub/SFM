@@ -1,8 +1,9 @@
 """loader.py — CSV → typed rows for report generation.
 
-Reads a session CSV (and its sibling ``_heartbeats.csv``) written by
-``LogManager`` (see log_manager.py:114 for the canonical 15-column header)
-and turns each line into a ``LogRow`` / ``HeartbeatRow``. Also sniffs older
+Reads a session CSV (and its sibling ``_heartbeats.csv``) written by the
+VFM base station's ``LogManager`` (see ``sfm_analysis.logs.CSV_HEADER``
+for the canonical 15-column header) and turns each line into a ``LogRow``
+/ ``HeartbeatRow``. Also sniffs older
 schemas still found on disk so a report tool can skip them cleanly instead
 of crashing on a header mismatch.
 
@@ -27,14 +28,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..log_manager import LogManager
+from ..logs import CSV_HEADER, heartbeat_path_for
 from ..protocol import CanEvent, DispenseState, ServiceStatus, parse_heartbeat
 
 
 class LogSchema(str, Enum):
     """Which CSV header shape a file has."""
 
-    UNIFIED = "unified"    # LogManager.CSV_HEADER — the only schema with fields_json
+    UNIFIED = "unified"    # sfm_analysis.logs.CSV_HEADER — the only schema with fields_json
     LEGACY9 = "legacy9"    # timestamp_iso,timestamp_ms,direction,node_id,frame_type,
                             # event_name,raw_id_hex,raw_data_hex,details
     EXP6 = "exp6"           # timestamp_iso,timestamp_ms,elapsed_s,name,node_id,fields
@@ -56,7 +57,7 @@ def sniff_schema(path: Path) -> LogSchema:
             header = next(csv.reader(f), None)
     except OSError:
         return LogSchema.UNKNOWN
-    if header == LogManager.CSV_HEADER:
+    if header == CSV_HEADER:
         return LogSchema.UNIFIED
     if header == LEGACY9_HEADER:
         return LogSchema.LEGACY9
@@ -297,7 +298,7 @@ def discover_sessions(log_dir: Path) -> List[SessionRef]:
             stat = path.stat()
         except OSError:
             continue
-        hb_path = LogManager.heartbeat_path_for(path)
+        hb_path = heartbeat_path_for(path)
         refs.append(SessionRef(
             session=path.stem,
             path=path,

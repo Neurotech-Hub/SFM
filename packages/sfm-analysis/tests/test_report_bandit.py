@@ -1,20 +1,15 @@
-"""Tests for base_station.report.analyses.bandit and sections.bandit."""
+"""Tests for sfm_analysis.report.analyses.bandit and sections.bandit."""
 
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
+from report_fixtures import bandit_run, exp_row, write_session
 
-from report_fixtures import bandit_run, exp_row, write_session  # noqa: E402
-
-from base_station.report.analyses.bandit import (  # noqa: E402
+from sfm_analysis.report.analyses.bandit import (
     build_trials, choice_node, reversal_curve, side_bias,
     trials_to_criterion, validity_summary, win_stay_lose_shift,
     block_curve,
 )
-from base_station.report.loader import load_rows  # noqa: E402
-from base_station.report.session import split_runs  # noqa: E402
+from sfm_analysis.report.loader import load_rows
+from sfm_analysis.report.session import split_runs
 
 
 def _trials(tmp_path, **kw):
@@ -103,7 +98,7 @@ class TestWSLS:
         #         3->4 transition, not this one).
         #   3->4: trial3 rewarded=False (chose 1, fed=2);    trial4 switches
         #         to choice 2 -> lose-shift hit.
-        from base_station.report.analyses.bandit import BanditTrial
+        from sfm_analysis.report.analyses.bandit import BanditTrial
         seq = [
             BanditTrial(trial=1, rich=1, lean=2, fed=1, empty=2, valid=1, first_visit_node=1),
             BanditTrial(trial=2, rich=1, lean=2, fed=1, empty=2, valid=1, first_visit_node=1),
@@ -115,7 +110,7 @@ class TestWSLS:
         assert (result.lose_shift_k, result.lose_shift_n) == (1, 1)
 
     def test_chain_breaks_across_invalid_trial_unless_bridged(self):
-        from base_station.report.analyses.bandit import BanditTrial
+        from sfm_analysis.report.analyses.bandit import BanditTrial
         seq = [
             BanditTrial(trial=1, rich=1, lean=2, fed=1, empty=2, valid=1, first_visit_node=1),
             BanditTrial(trial=2, rich=1, lean=2, fed=1, empty=2, valid=0),   # invalid — omitted from `analyzed`
@@ -137,7 +132,7 @@ class TestReversalCurve:
         assert rels <= {-2, -1, 0, 1, 2}
 
     def test_trials_to_criterion_on_synthetic_learner(self, tmp_path):
-        from base_station.report.analyses.bandit import BanditTrial
+        from sfm_analysis.report.analyses.bandit import BanditTrial
         # Flip at trial 4 (block changes 0->1 there); animal takes 3 trials
         # post-flip to learn (chooses old-rich for 2, then locks onto new-rich).
         seq = [
@@ -156,7 +151,7 @@ class TestReversalCurve:
 
 class TestSideBias:
     def test_all_arm_a_choices_gives_bias_one(self):
-        from base_station.report.analyses.bandit import BanditTrial
+        from sfm_analysis.report.analyses.bandit import BanditTrial
         seq = [
             BanditTrial(trial=1, rich=1, lean=2, valid=1, first_visit_node=1),
             BanditTrial(trial=2, rich=2, lean=1, valid=1, first_visit_node=1),

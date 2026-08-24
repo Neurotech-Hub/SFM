@@ -1,26 +1,25 @@
-"""report_fixtures.py — shared CSV builders for base_station.report tests.
+"""report_fixtures.py — shared CSV builders for sfm_analysis.report tests.
 
-Not a conftest.py (matching this test suite's existing no-conftest
-convention) — import directly: ``from report_fixtures import row, write_session``.
+Not a conftest.py (matching this test suite's no-conftest convention for
+fixture *builders* — see conftest.py's own docstring) — import directly:
+``from report_fixtures import row, write_session``.
 
-Every row is keyed by the *real* ``LogManager.CSV_HEADER`` rather than a
-hand-copied list, so a schema change breaks these tests loudly instead of
-silently drifting out of sync with log_manager.py.
+Every row is keyed by the *real* ``sfm_analysis.logs.CSV_HEADER`` rather
+than a hand-copied list. That constant is also what the VFM base
+station's LogManager binds as its own CSV_HEADER (see log_manager.py in
+the parent repo), so a schema change on either side breaks these tests
+loudly instead of silently drifting out of sync.
 """
 
 import csv
 import json
-import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from sfm_analysis.logs import CSV_HEADER
+from sfm_analysis.protocol import CanEvent
 
-from base_station.log_manager import LogManager  # noqa: E402
-from base_station.protocol import CanEvent  # noqa: E402
-
-HEADER = LogManager.CSV_HEADER
+HEADER = CSV_HEADER
 
 
 def row(
@@ -72,7 +71,7 @@ def can_event_row(
     becomes "Fault: <ServiceStatus name>" rather than plain "Fault", since
     that's what a real log actually contains.
     """
-    from base_station.protocol import CAN_EVENT_DISPLAY_NAME, ServiceStatus
+    from sfm_analysis.protocol import CAN_EVENT_DISPLAY_NAME, ServiceStatus
 
     if event == CanEvent.Fault and "event_name" not in kw:
         code_name = "unknown"

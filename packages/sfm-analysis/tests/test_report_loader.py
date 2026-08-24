@@ -1,22 +1,17 @@
-"""Tests for base_station.report.loader and .session."""
+"""Tests for sfm_analysis.report.loader and .session."""
 
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.dirname(__file__))
-
-from report_fixtures import (  # noqa: E402
+from report_fixtures import (
     bandit_run, can_event_row, exp6_file, exp_row, heartbeat_payload,
     heartbeat_row, input_changed_row, legacy9_file, row, session_open_row,
     write_session,
 )
 
-from base_station.protocol import CanEvent  # noqa: E402
-from base_station.report.loader import (  # noqa: E402
+from sfm_analysis.protocol import CanEvent
+from sfm_analysis.report.loader import (
     LogSchema, discover_sessions, load_heartbeats, load_rows, sniff_schema,
 )
-from base_station.report.session import split_runs  # noqa: E402
+from sfm_analysis.report.session import split_runs
 
 
 class TestSniffSchema:
@@ -62,8 +57,8 @@ class TestLoadRows:
         r = row(ts_ms=1000, source="EXP", frame_type="EXPERIMENT",
                 event_name="trial", fields=None)
         # Corrupt the fields_json column directly (index matches HEADER order).
-        from base_station.log_manager import LogManager
-        idx = LogManager.CSV_HEADER.index("fields_json")
+        from sfm_analysis.logs import CSV_HEADER
+        idx = CSV_HEADER.index("fields_json")
         r[idx] = "{not valid json"
         path = write_session(tmp_path, [r])
         rows, schema, warnings = load_rows(path)
@@ -99,8 +94,8 @@ class TestLoadHeartbeats:
             tmp_path, [row(ts_ms=1000)],
             heartbeat_rows=[heartbeat_row(1000, 2, payload)],
         )
-        from base_station.log_manager import LogManager
-        hb_path = LogManager.heartbeat_path_for(path)
+        from sfm_analysis.logs import heartbeat_path_for
+        hb_path = heartbeat_path_for(path)
         hbs = load_heartbeats(hb_path)
         assert len(hbs) == 1
         assert hbs[0].pellets_presented == 12
@@ -168,8 +163,8 @@ class TestSplitRuns:
     def test_elapsed_s_column_is_ignored(self, tmp_path):
         r = row(ts_ms=1_000_000, run_id=1)
         # Deliberately corrupt elapsed_s to a wrong value.
-        from base_station.log_manager import LogManager
-        idx = LogManager.CSV_HEADER.index("elapsed_s")
+        from sfm_analysis.logs import CSV_HEADER
+        idx = CSV_HEADER.index("elapsed_s")
         r[idx] = "9999.999"
         path = write_session(tmp_path, [r])
         loaded, _, _ = load_rows(path)
@@ -220,12 +215,12 @@ class TestSplitRuns:
         path = write_session(tmp_path, rows1 + rows2, session="S")
         hb1 = heartbeat_row(1_000_005, 1, heartbeat_payload())
         hb2 = heartbeat_row(2_000_005, 1, heartbeat_payload())
-        from base_station.log_manager import LogManager
+        from sfm_analysis.logs import heartbeat_path_for
         from report_fixtures import write_csv
-        write_csv(LogManager.heartbeat_path_for(path), [hb1, hb2])
+        write_csv(heartbeat_path_for(path), [hb1, hb2])
 
         loaded, _, _ = load_rows(path)
-        hb_loaded = load_heartbeats(LogManager.heartbeat_path_for(path))
+        hb_loaded = load_heartbeats(heartbeat_path_for(path))
         runs = split_runs(loaded, hb_loaded, path)
         run1 = next(r for r in runs if r.run_id == 1)
         run2 = next(r for r in runs if r.run_id == 2)
