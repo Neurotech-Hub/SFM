@@ -33,7 +33,9 @@ DEFAULT_PATTERNS: List[str] = [
     r"^(?P<subject>[A-Za-z]*\d+)[_-]d(?:ay)?(?P<day>\d+)$",
     # anything_M014_anything  (subject only)
     r"^.*?[_-](?P<subject>[A-Za-z]{1,3}-?\d{2,4})(?:[_-].*)?$",
-    # session_20260812_150810  (auto-named sink, date only)
+    # session_20260812  (daily activity sink)
+    r"^session_(?P<date>\d{8})$",
+    # session_20260812_150810  (legacy per-process auto-named sink)
     r"^session_(?P<date>\d{8})_\d{6}$",
 ]
 

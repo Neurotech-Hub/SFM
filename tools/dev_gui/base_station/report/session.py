@@ -88,10 +88,10 @@ def split_runs(
     """
     Group rows into one RunData per ``(session, run_id)``, time-sorted.
 
-    Rows with ``run_id == 0`` (the unnamed pre-session sink, or rows from a
-    tool that never called ``open_session``) are grouped together under
-    ``run_id=0`` rather than dropped, so nothing silently disappears; the
-    caller decides whether to report on them.
+    Rows with ``run_id == 0`` (the daily ``session_YYYYMMDD`` activity log,
+    or rows from a tool that never called ``open_session``) are grouped
+    together under ``run_id=0`` rather than dropped, so nothing silently
+    disappears; the caller decides whether to report on them.
     """
     groups: Dict[Tuple[str, int], List[LogRow]] = {}
     for row in rows:

@@ -2,7 +2,7 @@
   "name": "two_armed_bandit",
   "label": "Two-Armed Bandit",
   "template": "two_armed_bandit",
-  "description": "Every trial, both arms run the dispense motion but only one delivers a pellet (chosen by reward probability, flipping every N trials in blocks) — the animal can't use sound or vibration alone to find the baited arm.",
+  "description": "",
   "parameters": [
     {
       "key": "nodes",
