@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sfm-analysis"
+version = "0.1.0"
+description = "Analysis and printable HTML behavior reports for SFM/VFM feeder session logs"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Neurotech Hub" }]
+keywords = ["neuroscience", "behavior", "operant", "feeder", "CAN", "reports"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+# Intentionally empty. The report pipeline is stdlib-only (no jinja2, no
+# pandas, no matplotlib) and produces self-contained HTML with inline SVG.
+# Keeping this list empty is a feature, not an oversight: it's what lets
+# `pip install sfm-analysis` succeed offline, instantly, on any OS, with no
+# compiled wheels to resolve. See the [project.optional-dependencies] below
+# for the one opt-in exception.
+dependencies = []
+
+[project.optional-dependencies]
+# Reserved for a later phase's DataFrame-returning table helpers.
+pandas = ["pandas>=1.3"]
+dev = ["pytest>=7.0"]
+all = ["sfm-analysis[pandas]"]
+
+[project.urls]
+Homepage = "https://github.com/Neurotech-Hub/VFM"
+Source = "https://github.com/Neurotech-Hub/VFM/tree/main/packages/sfm-analysis"
+Issues = "https://github.com/Neurotech-Hub/VFM/issues"
+
+[project.scripts]
+sfm-report = "sfm_analysis.cli.report:cli_main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"sfm_analysis" = ["py.typed"]
+"sfm_analysis.report.designs" = ["*.json"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "realdata: requires a real field-recorded session CSV (see SFM_SMOKE_CSV)",
+]
