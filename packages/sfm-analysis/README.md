@@ -27,6 +27,9 @@ pip install "git+https://github.com/Neurotech-Hub/VFM.git#subdirectory=packages/
 ## Quick start
 
 ```bash
+# Try it right now, with no rig, no log directory, and no real data:
+sfm-report --demo --open
+
 # List every session found in the default log directory
 # ($SFM_LOG_DIR, else an external drive's sfm_logs/, else ~/sfm_logs):
 sfm-report --list
@@ -37,6 +40,10 @@ sfm-report EXP-Test-02 --open
 # Every session for a cohort, combined into one comparative report:
 sfm-report "cohortA_*" --combine -o /tmp/cohortA.html
 ```
+
+`--demo` renders a real, bundled two_armed_bandit session
+(`sfm_analysis.report.demo`) — the fastest way to see what a report looks
+like on a fresh install.
 
 ## The `sfm-report` CLI
 
@@ -50,6 +57,7 @@ sfm-report --help
   --check-names     Show how each session name parses (subject/cohort/day) and exit
   --combine         One comparative report over all targets
   --all             Every session in --log-dir
+  --demo            Render the bundled demo session (no rig or log dir needed)
   --since, --until  Filter by date (YYYY-MM-DD)
   --run             Only this run_id (a file can hold several)
   --design          Force a report design instead of resolving by experiment
@@ -97,41 +105,94 @@ the rest of the report down with it.
 
 ## Python API
 
-There is no `import sfm_analysis; sfm_analysis.load_session(...)`
-convenience API yet — that's planned. Today, build a report
-programmatically the same way the CLI does:
+### Custom analysis: `sfm_analysis.analysis`
+
+This is the entry point for asking your own question of a session — one
+import, tidy `list[dict]` tables, and a small generic interval algebra
+for "was X happening while Y" questions, rather than five imports across
+four modules or a bespoke query language.
+
+```python
+from sfm_analysis.analysis import load_session
+
+s = load_session("EXP-Test-02")      # name, glob, or path — same resolution as the CLI
+cycles = s.cycles_table()            # list[dict], one row per dispense cycle
+bouts = s.bouts_table()              # presence / dome / fault intervals, unified
+
+import pandas as pd
+df = pd.DataFrame(cycles)            # or: from sfm_analysis.analysis import to_dataframe
+df.groupby("node")["retrieval_latency"].median()
+```
+
+`load_session` resolves a target exactly the way `sfm-report` does
+(`$SFM_LOG_DIR`, then an external drive, then `~/sfm_logs`, or pass
+`log_dir=...`), loads the CSV, splits it into runs, and precomputes
+metrics for every run once. If the file holds more than one run — a
+9-row aborted restart followed by the real session, say — `s.run()`
+picks the run with the most rows by default; pass `run_id=` anywhere to
+be explicit instead.
+
+**Tidy tables** (`s.cycles_table()`, `s.bouts_table()`, `s.events_table()`,
+`s.trials_table()`) are the fastest way to get real freedom: every row is
+a plain dict with the same keys, ready for `pandas.DataFrame`, `csv.DictWriter`,
+or a plain list comprehension. `to_dataframe(rows)` is the explicit,
+optional pandas handoff (`pip install sfm-analysis[pandas]`) — the core
+package stays pandas-free.
+
+**Interval algebra** (`sfm_analysis.analysis.intervals`) answers the
+class of question tidy tables alone don't: `overlap`, `subtract`,
+`merge`, `around`, `count_in`, `rate_in`, all plain functions over
+`(t0, t1)` second-pairs.
+
+| Question | One-liner |
+|---|---|
+| Windows where dome-open overlapped presence | `overlap(dome_iv, presence_iv)` |
+| Takes within 30s after a fault started | `count_in(take_times, around(fault_starts, (0, 30)))` |
+| Pellet-take rate during a time window | `rate_in(take_times, [(t0, t1)])` (takes/second) |
+| Time NOT covered by any dome-open bout | `subtract([(0, run.duration_s)], dome_iv)` |
+
+```python
+from sfm_analysis.analysis import intervals as iv
+
+run = s.run()
+m = s.metrics_for()
+presence_iv = iv.as_intervals(m.presence[0], run_end=run.duration_s)
+dome_iv = iv.as_intervals(m.dome[0], run_end=run.duration_s)
+len(iv.overlap(dome_iv, presence_iv))     # dome-open bouts that overlapped presence
+```
+
+`as_intervals` is the one deliberately strict step: a bout still open
+when the run ended (`censored=True`) has `t1=None`, and this refuses to
+guess whether that means zero-length or unbounded — pass `run_end=` to
+resolve it explicitly, or filter censored bouts out yourself first.
+
+### Lower-level: `sfm_analysis.report`
+
+`sfm_analysis.analysis` is built entirely on public functions in
+`sfm_analysis.report` — nothing is hidden from you, and dropping down is
+one import away if you need something the curated API doesn't expose yet
+(a report design's own analysis module, e.g. `report.analyses.bandit`,
+for instance). This is also how the report itself gets built
+programmatically:
 
 ```python
 from pathlib import Path
-from sfm_analysis.report import build_session_report, build_combined_report, render_report_html
+from sfm_analysis.report import build_session_report, build_combined_report, load_runs
 
 build_session_report(Path("EXP-Test-02.csv"), out_path=Path("report.html"))
 build_combined_report([Path("A.csv"), Path("B.csv")], design="two_armed_bandit")
+
+runs = load_runs(Path("EXP-Test-02.csv"))   # what load_session uses internally
 ```
 
-For custom analysis, the same building blocks the reports are made of are
-public and usable directly — this is genuinely the whole analysis
-pipeline, not a cut-down version of it:
+### Five things to know before trusting a number
 
-```python
-from sfm_analysis.report.loader import load_rows, load_heartbeats
-from sfm_analysis.report.session import split_runs
-from sfm_analysis.report.metrics import compute_run_metrics
-from sfm_analysis.logs import heartbeat_path_for
-
-csv_path = Path("EXP-Test-02.csv")
-rows, schema, warnings = load_rows(csv_path)
-heartbeats = load_heartbeats(heartbeat_path_for(csv_path))
-runs = split_runs(rows, heartbeats, csv_path)      # one RunData per (session, run_id)
-
-run = runs[0]
-m = compute_run_metrics(run)                        # cycles, pellets, presence, dome, faults, funnel...
-retrieval_latencies = [c.retrieval_latency for c in m.cycles if c.retrieval_latency is not None]
-```
-
-**Five things to know before trusting a number you compute this way** —
-each is enforced or worked around somewhere in this codebase, but none of
-it is obvious from the CSV alone:
+Each of these is enforced or worked around somewhere in this codebase,
+but none of it is obvious from the CSV alone — `sfm_analysis.analysis`
+handles #1, #3, and #4 for you (via `Session`/`load_runs`,
+`bouts_table`/`dome_bouts`, and `as_intervals`'s required `run_end`,
+respectively), but they're worth understanding regardless of which layer
+you work at:
 
 1. **Scope everything to `(session, run_id)`.** A single CSV can hold
    several runs — reopening a session name appends to the same file and

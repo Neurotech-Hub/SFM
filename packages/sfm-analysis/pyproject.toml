@@ -57,6 +57,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "sfm_analysis" = ["py.typed"]
 "sfm_analysis.report.designs" = ["*.json"]
+"sfm_analysis.report.demo" = ["*.csv"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

@@ -42,6 +42,27 @@ class TestListCommands:
         assert "M014" in result.stdout
 
 
+class TestDemo:
+    def test_demo_renders_without_a_log_dir_or_real_data(self, tmp_path):
+        out = tmp_path / "demo.html"
+        result = _run(["--demo", "--out", str(out)])
+        assert result.returncode == 0, result.stderr
+        assert out.exists()
+        content = out.read_text(encoding="utf-8")
+        assert "Bandit_test_01" in content
+        assert len(content) > 5000
+
+    def test_demo_with_explicit_target_errors(self):
+        result = _run(["--demo", "SomeSession"])
+        assert result.returncode == 2
+        assert "--demo" in result.stderr
+
+    def test_demo_with_all_errors(self):
+        result = _run(["--demo", "--all"])
+        assert result.returncode == 2
+        assert "--demo" in result.stderr
+
+
 class TestGenerateReport:
     def test_single_session_writes_file_over_5kb(self, tmp_path):
         write_session(tmp_path, bandit_run(n_trials=3, session="Sess01"), session="Sess01")

@@ -227,6 +227,7 @@ python run_report.py --help
   --check-names     Show how each session name parses and exit
   --combine         One comparative report over all targets
   --all             Every session in --log-dir
+  --demo            Render the bundled demo session (no rig or log dir needed)
   --since, --until  Filter by date (YYYY-MM-DD)
   --run             Only this run_id (a file can hold several)
   --design          Force a report design instead of resolving by experiment

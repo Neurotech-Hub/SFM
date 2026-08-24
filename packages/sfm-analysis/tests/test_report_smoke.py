@@ -1,10 +1,10 @@
 """Real-data smoke test for the report pipeline.
 
 Runs against a real field-recorded session bundled with the package
-(``tests/data/Bandit_test_01.csv`` + its ``_heartbeats.csv`` sibling) so it
-executes on every machine and in CI, not just on the base station that
-recorded it. These exact counts were independently verified against the
-raw CSV during development:
+itself (``sfm_analysis.report.demo`` — the same file ``sfm-report --demo``
+uses) so it executes on every machine and in CI, not just on the base
+station that recorded it. These exact counts were independently verified
+against the raw CSV during development:
 
   - 521 data rows split into 2 runs: run 1 is a 9-row abortive session
     (started and immediately stopped before any trial), run 2 is the real
@@ -30,10 +30,9 @@ from pathlib import Path
 
 import pytest
 
-_DATA_DIR = Path(__file__).resolve().parent / "data"
-_DEFAULT_FILE = _DATA_DIR / "Bandit_test_01.csv"
+from sfm_analysis.report.demo import DEMO_SESSION_PATH
 
-REAL_FILE = Path(os.environ.get("SFM_SMOKE_CSV", str(_DEFAULT_FILE)))
+REAL_FILE = Path(os.environ.get("SFM_SMOKE_CSV", str(DEMO_SESSION_PATH)))
 
 pytestmark = [
     pytest.mark.realdata,

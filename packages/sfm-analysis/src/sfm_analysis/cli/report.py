@@ -13,6 +13,9 @@ injects the base station's own (writable-probing) log-directory resolver
 
 Examples::
 
+    # Try it with no rig, no log directory, and no real data at all:
+    sfm-report --demo --open
+
     # List sessions found in the default log directory:
     sfm-report --list
 
@@ -159,6 +162,8 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
                         help="Show how each session name parses (subject/cohort/day) and exit")
     parser.add_argument("--combine", action="store_true", help="One comparative report over all targets")
     parser.add_argument("--all", action="store_true", help="Every session in --log-dir")
+    parser.add_argument("--demo", action="store_true",
+                        help="Render the bundled demo session (no rig or log dir needed)")
     parser.add_argument("--since", default=None, metavar="YYYY-MM-DD",
                         help="Only sessions modified on/after this date")
     parser.add_argument("--until", default=None, metavar="YYYY-MM-DD",
@@ -174,6 +179,9 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
     parser.add_argument("--open", action="store_true", help="Open the result in the default browser when done")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.demo and (args.target or args.all):
+        parser.error("--demo cannot be combined with explicit targets or --all")
 
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else Path(resolve_log_dir())
 
@@ -196,7 +204,10 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
 
     targets = args.target
     prompted_combine = False
-    if args.all:
+    if args.demo:
+        from ..report.demo import DEMO_SESSION_PATH
+        paths = [DEMO_SESSION_PATH]
+    elif args.all:
         if targets:
             parser.error("--all cannot be combined with explicit targets")
         paths = [r.path for r in refs]

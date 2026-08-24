@@ -46,6 +46,8 @@ jobs:
       - run: pytest
       - name: console script smoke
         run: sfm-report --list-designs
+      - name: demo report renders with no rig or log dir
+        run: sfm-report --demo --out demo_report.html --quiet
 
   build:
     name: wheel + sdist
@@ -61,7 +63,7 @@ jobs:
       - run: pip install build twine
       - run: python -m build
       - run: twine check dist/*
-      - name: the 5 design JSONs must actually be inside the wheel
+      - name: the 5 design JSONs and the demo CSVs must actually be inside the wheel
         run: |
           python - <<'PY'
           import glob, zipfile
@@ -70,7 +72,10 @@ jobs:
           jsons = [n for n in names
                    if n.startswith("sfm_analysis/report/designs/") and n.endswith(".json")]
           assert len(jsons) == 5, (whl, jsons)
-          print("ok:", jsons)
+          demo_csvs = [n for n in names
+                       if n.startswith("sfm_analysis/report/demo/") and n.endswith(".csv")]
+          assert len(demo_csvs) == 2, (whl, demo_csvs)
+          print("ok:", jsons, demo_csvs)
           PY
       - uses: actions/upload-artifact@v4
         with:
