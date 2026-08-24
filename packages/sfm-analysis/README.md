@@ -222,6 +222,30 @@ you work at:
    `.taken_total` are the ledger-corrected numbers; the bare `.presented`
    / `.taken` fields are what a naive `by_event("Loaded")` count gets you.
 
+## Recipes
+
+`examples/analysis/` has runnable, commented scripts for each cookbook
+question above — copy one as a starting point rather than writing from
+scratch:
+
+| Script | Question |
+|---|---|
+| [`dome_openings_during_presence.py`](examples/analysis/dome_openings_during_presence.py) | Windows where the dome was open while the mouse was present |
+| [`retrieval_latency_by_node.py`](examples/analysis/retrieval_latency_by_node.py) | Per-node summary stats, stdlib-only and pandas paths side by side |
+| [`takes_after_fault.py`](examples/analysis/takes_after_fault.py) | Pellet takes within a window after each fault interval started |
+
+Every one of them runs standalone against the bundled demo session, no
+rig or `--log-dir` needed:
+
+```bash
+python examples/analysis/dome_openings_during_presence.py
+```
+
+They're also executed in CI (`tests/test_examples.py`), with their
+output pinned against the demo session's known ground truth — a change
+that breaks a documented recipe fails the build instead of being found
+by the next person who copies one.
+
 ## Testing your own analysis code
 
 The test suite's own fixture builders are the fastest way to get a
@@ -240,12 +264,22 @@ def test_my_analysis(tmp_path):
     # ... assert against my_analysis_fn(runs[0])
 ```
 
-There's also a real field-recorded fixture, `tests/data/Bandit_test_01.csv`
-(+ `_heartbeats.csv` sibling) — a genuine two_armed_bandit session with a
-fault interval, a dome milestone/edge dedup case, and post-`session_end`
-rows, independently verified against the raw CSV (see
-`test_report_smoke.py`'s docstring for the exact numbers). Point at a
-different real file with `SFM_SMOKE_CSV=/path/to/session.csv`.
+There's also a real field-recorded fixture bundled with the package
+itself, `sfm_analysis.report.demo` (the same session `--demo` renders) —
+a genuine two_armed_bandit session with a fault interval, a dome
+milestone/edge dedup case, and post-`session_end` rows, independently
+verified against the raw CSV (see `test_report_smoke.py`'s docstring for
+the exact numbers):
+
+```python
+from sfm_analysis.analysis import load_session
+from sfm_analysis.report.demo import DEMO_SESSION_PATH
+
+s = load_session(str(DEMO_SESSION_PATH))
+```
+
+Point the smoke test at a different real file with
+`SFM_SMOKE_CSV=/path/to/session.csv`.
 
 ```bash
 cd packages/sfm-analysis
