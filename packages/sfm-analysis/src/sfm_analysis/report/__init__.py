@@ -1,7 +1,9 @@
 """report — turns VFM session CSV logs into printable HTML behavior reports.
 
-Public entry points (used by both run_report.py and, later, a GUI hook):
+Public entry points (used by run_report.py, sfm_analysis.analysis, and,
+later, a GUI hook):
 
+    load_runs(csv_path, ...)              -> List[RunData]
     build_session_report(csv_path, ...)   -> Path
     build_combined_report(csv_paths, ...) -> Path
     render_report_html(...)               -> str  (re-exported from render.py)
@@ -26,13 +28,20 @@ from .schema import load_report_def, resolve_design
 from .session import RunData, split_runs
 
 __all__ = [
+    "load_runs",
     "build_session_report",
     "build_combined_report",
     "render_report_html",
 ]
 
 
-def _load_runs(csv_path: Path, run_id: Optional[int] = None) -> List[RunData]:
+def load_runs(csv_path: Path, run_id: Optional[int] = None) -> List[RunData]:
+    """Load one session CSV into its RunData objects (see session.split_runs).
+
+    Shared by build_session_report/build_combined_report below and by
+    sfm_analysis.analysis.load_session -- the one place a CSV path becomes
+    typed, run-split data.
+    """
     csv_path = Path(csv_path)
     rows, schema, warnings = load_rows(csv_path)
     if not rows:
@@ -71,7 +80,7 @@ def build_session_report(
     title: Optional[str] = None,
 ) -> Path:
     """Render one session's CSV to a standalone HTML report and write it to disk."""
-    runs = _load_runs(csv_path, run_id=run_id)
+    runs = load_runs(csv_path, run_id=run_id)
     report_def = _resolve_design_for(runs, design)
     html = render_report_html(runs, report_def, combined=False, align=align, title=title)
 
@@ -100,7 +109,7 @@ def build_combined_report(
 
     all_runs: List[RunData] = []
     for p in csv_paths:
-        all_runs.extend(_load_runs(p))
+        all_runs.extend(load_runs(p))
 
     report_def = _resolve_design_for(all_runs, design)
     html = render_report_html(all_runs, report_def, combined=True, align=align, title=title)

@@ -29,18 +29,18 @@ Examples::
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import sys
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional
 
 from ..report import build_combined_report, build_session_report
 from ..report.loader import LogSchema, discover_sessions, sniff_schema
 from ..report.naming import parse_session_name
 from ..report.schema import DEFAULT_REPORTS_DIR, load_report_defs
 from ..storage import default_log_dir as _sdk_default_log_dir
+from ..targeting import resolve_targets as _resolve_targets
 
 
 def _print_list(log_dir: Path) -> None:
@@ -77,42 +77,6 @@ def _print_check_names(log_dir: Path) -> None:
         ident = parse_session_name(ref.session)
         print(f"{ref.session:30s} {ident.subject or '—':10s} {ident.cohort or '—':10s} "
               f"{str(ident.day) if ident.day is not None else '—':5s} {'yes' if ident.parsed else 'no'}")
-
-
-def _resolve_targets(targets: Sequence[str], log_dir: Path) -> List[Path]:
-    """
-    Turn CLI targets (session names, globs, or paths) into concrete CSV paths.
-
-    Resolution per target:
-      1. an explicit path that exists → used as-is
-      2. ``<log_dir>/<target>.csv`` if it exists → used
-      3. otherwise treated as a glob over session names in log_dir
-    """
-    refs = discover_sessions(log_dir)
-    by_name = {r.session: r.path for r in refs}
-    resolved: List[Path] = []
-    seen = set()
-
-    for target in targets:
-        path = Path(target)
-        if path.suffix == ".csv" and path.exists():
-            if path not in seen:
-                resolved.append(path)
-                seen.add(path)
-            continue
-        direct = by_name.get(target)
-        if direct is not None:
-            if direct not in seen:
-                resolved.append(direct)
-                seen.add(direct)
-            continue
-        matched = [p for name, p in by_name.items() if fnmatch.fnmatch(name, target)]
-        for p in sorted(matched):
-            if p not in seen:
-                resolved.append(p)
-                seen.add(p)
-
-    return resolved
 
 
 def _filter_by_date(paths: List[Path], refs_by_path: dict, since: Optional[str], until: Optional[str]) -> List[Path]:
