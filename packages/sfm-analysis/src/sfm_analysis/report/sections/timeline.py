@@ -9,135 +9,27 @@ derived from what's drawn here.
 
 Long runs auto-paginate: a whole-run overview strip, then stacked
 ``window_s``-second detail panels — the print-native substitute for pan/
-zoom, since this document ships no JavaScript.
+zoom in this static document. The interactive explorer (``explorer.py``,
+a sibling HTML file with real pan/zoom) draws the identical lanes/spans/
+marks from the same ``timeline_data`` module this file uses, so the two
+views can never show different data for the same session.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from .. import charts
-from ..charts import Frame, Mark, Span, escape_text
-from ..metrics import Cycle
+from ..charts import Frame, Mark, escape_text
+from ..timeline_data import (
+    EVENT_GLYPH as _EVENT_GLYPH,
+    SESSION_MARK_STYLES as _SESSION_MARK_STYLES,
+    SPAN_LEGEND as _SPAN_LEGEND,
+    build_lanes as _build_lanes,
+    node_lane_base as _node_lane_base,
+    panel_marks_spans as _panel_marks_spans,
+)
 from ..schema import SectionContext, SectionResult
-
-# Glyph + key + legend label per discrete node-level event, drawn on the
-# "events" lane. Single source of truth for both drawing (_panel_marks_spans)
-# and the legend (session_raster_section), so they can never drift apart.
-_EVENT_GLYPH = {
-    "Loaded": ("triangle", 0, "Loaded (pellet)"),
-    "Pellet Taken": ("circle", 5, "Pellet Taken"),
-    "NoFeedPresented": ("circle", 3, "No-Feed Presented"),
-    "FeedSkipped": ("diamond", 7, "Feed Skipped"),
-}
-
-# Glyph + key + legend label per session-level mark, drawn on lane 0.
-_SESSION_MARK_STYLES = {
-    "trial": ("tick", 3, "trial start"),  # key 3 = yellow
-    "script_stalled": ("cross", 7, "script stalled"),
-    "session_end": ("diamond", 5, "session end"),
-}
-
-# Span key + legend label per span type drawn (presence/dome/cycle bars, and
-# the hatched fault band inserted inline in _panel_marks_spans).
-_SPAN_LEGEND = [("presence", 0), ("dome open", 1), ("dispense cycle", 2), ("fault", 7)]
-
-# A thin blank lane is inserted between each node's 4-lane group (see
-# _build_lanes) purely for visual whitespace — otherwise n1's last lane and
-# n2's first lane sit flush against each other with nothing to tell them
-# apart at a glance.
-_LANES_PER_NODE = 4
-
-
-def _node_lanes(node: int) -> List[str]:
-    return [f"n{node} presence", f"n{node} dome", f"n{node} cycle", f"n{node} events"]
-
-
-def _build_lanes(nodes: List[int]) -> List[str]:
-    lanes = ["session"]
-    for i, node in enumerate(nodes):
-        if i > 0:
-            lanes.append("")  # spacer — visually separates this node's block from the last
-        lanes.extend(_node_lanes(node))
-    return lanes
-
-
-def _node_lane_base(nodes: List[int], node: int) -> int:
-    idx = nodes.index(node)
-    return 1 + idx * (_LANES_PER_NODE + 1)
-
-
-def _clip(t0: float, t1: float, w0: float, w1: float) -> Optional[Tuple[float, float]]:
-    if t1 < w0 or t0 > w1:
-        return None
-    return max(t0, w0), min(t1, w1)
-
-
-def _panel_marks_spans(run, m, nodes: List[int], w0: float, w1: float) -> Tuple[List[Span], List[Mark]]:
-    spans: List[Span] = []
-    marks: List[Mark] = []
-
-    for row in run.exp("trial"):
-        if w0 <= row.t <= w1:
-            glyph, key, _ = _SESSION_MARK_STYLES["trial"]
-            marks.append(Mark(lane=0, t=row.t, glyph=glyph, key=key, title=f"trial {row.fields.get('trial', '')}"))
-    for row in run.exp("script_stalled"):
-        if w0 <= row.t <= w1:
-            glyph, key, _ = _SESSION_MARK_STYLES["script_stalled"]
-            marks.append(Mark(lane=0, t=row.t, glyph=glyph, key=key, title="script_stalled"))
-    for row in run.exp("session_end"):
-        if w0 <= row.t <= w1:
-            glyph, key, _ = _SESSION_MARK_STYLES["session_end"]
-            marks.append(Mark(lane=0, t=row.t, glyph=glyph, key=key, title="session_end"))
-
-    presence_bouts, _ = m.presence
-    dome_bouts, _ = m.dome
-
-    for node in nodes:
-        base = _node_lane_base(nodes, node)
-
-        for b in presence_bouts:
-            if b.node != node:
-                continue
-            clipped = _clip(b.t0, b.t1 if b.t1 is not None else w1, w0, w1)
-            if clipped:
-                spans.append(Span(lane=base + 0, t0=clipped[0], t1=clipped[1], key=0,
-                                   open_ended=b.censored, title="presence"))
-
-        for b in dome_bouts:
-            if b.node != node:
-                continue
-            clipped = _clip(b.t0, b.t1 if b.t1 is not None else w1, w0, w1)
-            if clipped:
-                spans.append(Span(lane=base + 1, t0=clipped[0], t1=clipped[1], key=1,
-                                   hatch=True, open_ended=b.censored, title="dome open"))
-
-        for c in m.cycles:
-            if c.node != node:
-                continue
-            c_t0 = c.cmd_t if c.cmd_t is not None else (c.ready_t if c.ready_t is not None else c.end_t)
-            clipped = _clip(c_t0, c.end_t, w0, w1)
-            if clipped:
-                spans.append(Span(lane=base + 2, t0=clipped[0], t1=clipped[1], key=2,
-                                   hatch=not c.fed, open_ended=c.censored,
-                                   title=f"cycle {c.index} ({'fed' if c.fed else 'no-feed'})"))
-            for label, t in (("Loaded" if c.fed else "NoFeedPresented", c.ready_t),
-                              ("Pellet Taken", c.taken_t)):
-                if t is not None and w0 <= t <= w1:
-                    glyph, key, _ = _EVENT_GLYPH[label]
-                    marks.append(Mark(lane=base + 3, t=t, glyph=glyph, key=key, title=label))
-
-        for row in run.by_node(node):
-            if row.frame_type == "EVENT" and row.event_name == "FeedSkipped" and w0 <= row.t <= w1:
-                glyph, key, _ = _EVENT_GLYPH["FeedSkipped"]
-                marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key, title="FeedSkipped"))
-            if row.frame_type == "EVENT" and row.event_name.startswith("Fault:") and w0 <= row.t <= w1:
-                # Filled (not hatched) — a solid red band reads unambiguously
-                # against the hatched orange dome-open band on the lane above.
-                spans.append(Span(lane=base + 2, t0=row.t, t1=min(w1, row.t + max(2.0, (w1 - w0) * 0.01)),
-                                   key=7, hatch=False, title=row.event_name))
-
-    return spans, marks
 
 
 def _panel(run, m, nodes: List[int], w0: float, w1: float, *, tall: bool) -> str:
