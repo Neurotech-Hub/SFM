@@ -1,11 +1,12 @@
 """naming.py — parse subject/cohort/day identity out of a session name.
 
 There is no subject/animal field anywhere in the log schema (see
-log_manager.py:114) — the only identifier a session carries is its
-operator-typed name. This module recovers subject/cohort/day from that
-name via a configurable, ordered list of regex patterns, persisted the
-same way dev_settings.py persists DevSettings: versioned JSON under
-~/.sfm/, atomic write, defaults on corruption.
+sfm_analysis.logs.CSV_HEADER) — the only identifier a session carries is
+its operator-typed name. This module recovers subject/cohort/day from
+that name via a configurable, ordered list of regex patterns, persisted
+the same way the VFM base station's dev_settings.py persists
+DevSettings: versioned JSON under ~/.sfm/, atomic write, defaults on
+corruption.
 
 Degradation is always explicit. A name that matches nothing returns a
 SessionIdentity with every field but ``session`` set to None — callers

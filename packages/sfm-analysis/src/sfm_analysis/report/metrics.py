@@ -22,7 +22,7 @@ from .session import RunData
 from .stats import iqr, median, safe_ratio
 
 # CAN EVENT display names that mark a dispense-cycle phase (see
-# protocol.py:87 CAN_EVENT_DISPLAY_NAME). Keyed by the *display* name since
+# protocol.CAN_EVENT_DISPLAY_NAME). Keyed by the *display* name since
 # that's what's written to event_name; the underlying CanEvent still comes
 # from LogRow.can_event where disambiguation matters (e.g. "Dome Opened").
 _PHASE_FIELDS = {

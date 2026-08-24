@@ -96,10 +96,20 @@ python node_simulator.py --help
 
 ## Tests
 
+Base-station tests (GUI, CAN, experiments, discovery, node registry) and
+report/analysis tests are two separate suites now that reporting lives in
+its own package (see [Behavior reports](#behavior-reports-session-csv--printable-html)):
+
 ```bash
+# Base station
 cd tools/dev_gui
-pip install pytest
+pip install -r requirements.txt   # includes -e ../../packages/sfm-analysis
 python -m pytest tests/ -v
+
+# Report / analysis SDK
+cd packages/sfm-analysis   # from the repo root
+pip install -e ".[dev]"
+pytest
 ```
 
 ## Experiment engine (headless task/session API)
@@ -183,6 +193,15 @@ printable HTML behavior report — no server, no JavaScript, no external
 dependencies beyond the standard library. Charts are inline SVG; print
 with Ctrl+P / Cmd+P.
 
+The report generator itself lives in a separate, cross-platform package —
+[`packages/sfm-analysis`](../../packages/sfm-analysis/README.md), installable
+on its own with `pip install sfm-analysis` on any OS. `run_report.py`
+below is a thin wrapper around its `sfm-report` CLI that additionally
+plugs in this base station's own log-directory auto-detection (external
+drive, else `~/sfm_logs`); see `packages/sfm-analysis/README.md` for the
+Python API, the report design/section architecture in full, and the five
+things to know before trusting a number computed from a session log.
+
 ```bash
 # List sessions found on the storage drive (or ~/sfm_logs as a fallback):
 python run_report.py --list
@@ -213,28 +232,32 @@ python run_report.py --help
   --design          Force a report design instead of resolving by experiment
   --align           Combined-report time alignment: relative | wall | trial | event:<name>
   --out, -o         Output file (single report) or directory (multiple)
-  --open            Open the result with xdg-open when done
+  --open            Open the result in your default browser when done
 ```
 
 **How it's structured** (mirrors the experiment engine's own
-JSON-schema/Python split): a report **design** — `reports/<name>.json` —
-declares which **sections** to render and in what order; sections are
+JSON-schema/Python split): a report **design** —
+[`report/designs/<name>.json`](../../packages/sfm-analysis/src/sfm_analysis/report/designs/)
+— declares which **sections** to render and in what order; sections are
 plain Python functions registered under
-[`base_station/report/sections/`](base_station/report/sections/). The
-design is picked automatically from the session's `experiment` field
-(`session_start`'s `fields_json`), falling back to
-[`reports/default.json`](../reports/default.json) for anything without a
-matching design or with no `session_start` at all. Metrics (retrieval
-latency, presence bouts, dispense cycles, bandit choice/WSLS/reversal,
-…) live in [`base_station/report/analyses/`](base_station/report/analyses/)
-and [`base_station/report/metrics.py`](base_station/report/metrics.py),
-separately from the HTML that renders them, so `--json` output (planned)
-and the numbers themselves are testable without parsing HTML.
+[`report/sections/`](../../packages/sfm-analysis/src/sfm_analysis/report/sections/).
+The design is picked automatically from the session's `experiment` field
+(`session_start`'s `fields_json`), falling back to `default.json` for
+anything without a matching design or with no `session_start` at all.
+Metrics (retrieval latency, presence bouts, dispense cycles, bandit
+choice/WSLS/reversal, …) live in
+[`report/analyses/`](../../packages/sfm-analysis/src/sfm_analysis/report/analyses/)
+and
+[`report/metrics.py`](../../packages/sfm-analysis/src/sfm_analysis/report/metrics.py),
+separately from the HTML that renders them, so the numbers themselves are
+testable without parsing HTML.
 
 Add a new comparative view or per-experiment section by writing a
-function returning a `SectionResult` (see `report/schema.py`) and adding
-its `module.function` ref to the relevant `reports/*.json` — no changes
-to `run_report.py` or the render pipeline needed.
+function returning a `SectionResult` and adding its `module.function` ref
+to the relevant `report/designs/*.json` — no changes to `run_report.py`
+or the render pipeline needed. See
+[packages/sfm-analysis/README.md](../../packages/sfm-analysis/README.md)
+for the full picture, including the Python API for custom analysis.
 
 ## Base station I/O (BNC, AEO, button)
 
@@ -261,58 +284,47 @@ to a harmless simulation mode automatically when no GPIO backend
 
 ```
 tools/dev_gui/
-├── requirements.txt
+├── requirements.txt           # dearpygui, python-can, RPi.GPIO, gpiod,
+│                               # and -e ../../packages/sfm-analysis
 ├── run.py                    # GUI entry point
 ├── run_experiment.py         # Headless experiment CLI
-├── run_report.py             # Behavior-report CLI (session CSV → HTML)
+├── run_report.py             # Thin wrapper around sfm_analysis.cli.report
+│                              # (see packages/sfm-analysis/ below)
 ├── node_simulator.py         # Fake VFM nodes for vcan0 testing
-├── reports/                  # Report designs (JSON) — mirrors experiments/
-│   ├── default.json
-│   ├── two_armed_bandit.json
-│   ├── free_feeding.json
-│   ├── probability_delivery.json
-│   └── fixed_and_random.json
 ├── deploy/                   # One-time Pi setup: MCP2515 device tree overlay,
 │                              # systemd-networkd unit — see deploy/README.md
 ├── tests/
 │   ├── test_hat.py           # Interactive hardware validation (not pytest)
-│   ├── report_fixtures.py    # Shared CSV builders for report_*.py tests
+│   ├── test_run_report_shim.py  # Covers only the run_report.py wrapper itself
 │   └── test_*.py             # Automated unit tests (pytest)
 ├── base_station/
-    ├── protocol.py           # CAN protocol constants + parsers
+    ├── protocol.py           # Re-export shim -> sfm_analysis.protocol
     ├── can_manager.py        # SocketCAN wrapper (threaded RX)
     ├── io_manager.py         # BNC I/O, button, AEO GPIO (non-CAN)
     ├── discovery_manager.py  # ANNOUNCE/ASSIGN/REJOIN via IOManager.drive_aeo()
     ├── mac_id_registry.py    # Persistent MAC ↔ Node ID dictionary (~/.sfm/…)
     ├── node_registry.py      # Per-node live state (session)
-    ├── log_manager.py        # Ring buffer + CSV auto-save
-    ├── storage.py            # Log-dir resolution (headless-safe; no dearpygui import)
+    ├── log_manager.py        # Ring buffer + CSV auto-save (schema from sfm_analysis.logs)
+    ├── storage.py            # Writer-side log-dir resolution (headless-safe; no dearpygui import)
     ├── app.py                # DearPyGui screens + render loop
-    ├── experiment/           # Headless event-driven task engine
-    │   ├── events.py         # EventKind + CAN → NodeEvent normalizer
-    │   ├── context.py        # ExperimentControl: actions, timers, counters, experiment CSV
-    │   ├── script.py         # @exp.script sequential-generator scheduler
-    │   ├── runner.py         # Experiment API + tick loop
-    │   ├── kit.py            # Shared template boilerplate (session/trigger/fault logging)
-    │   └── templates/
-    │       ├── free_feeding.py
-    │       ├── fixed_and_random.py
-    │       ├── probability_delivery.py
-    │       └── two_armed_bandit.py
-    └── report/               # Behavior-report generator (see "Behavior reports" above)
-        ├── loader.py         # CSV → typed rows; schema sniffing; heartbeat decode
-        ├── session.py        # Groups rows into per-(session, run_id) RunData
-        ├── naming.py         # Session name → subject/cohort/day
-        ├── metrics.py        # Generic metrics: dispense cycles, bouts, faults, funnel
-        ├── stats.py          # Wilson CI, chi-square GOF — stdlib math only
-        ├── align.py          # Cross-run time alignment for combined reports
-        ├── charts.py         # Inline-SVG chart primitives
-        ├── style.py          # CSS + palette + hatch textures
-        ├── render.py         # HTML document assembly
-        ├── schema.py         # Report "designs" (JSON) ↔ "sections" (Python)
-        ├── analyses/         # Per-experiment metrics (bandit, free_feeding, …)
-        └── sections/         # Per-experiment + generic + comparative HTML sections
+    └── experiment/           # Headless event-driven task engine
+        ├── events.py         # EventKind + CAN → NodeEvent normalizer
+        ├── context.py        # ExperimentControl: actions, timers, counters, experiment CSV
+        ├── script.py         # @exp.script sequential-generator scheduler
+        ├── runner.py         # Experiment API + tick loop
+        ├── kit.py            # Shared template boilerplate (session/trigger/fault logging)
+        └── templates/
+            ├── free_feeding.py
+            ├── fixed_and_random.py
+            ├── probability_delivery.py
+            └── two_armed_bandit.py
 ```
+
+The behavior-report generator itself — `report/`, its `designs/*.json`,
+`protocol.py`, and `logs.py` — moved to
+[`packages/sfm-analysis/`](../../packages/sfm-analysis/README.md), a
+separate, cross-platform, independently pip-installable package; see its
+README for that tree and the Python API.
 
 ## Persistent MAC ↔ Node ID map
 
