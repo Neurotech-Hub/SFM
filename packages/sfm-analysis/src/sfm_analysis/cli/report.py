@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from ..report import build_combined_report, build_session_report
+from ..report import build_combined_report, build_session_explorer, build_session_report, load_runs
 from ..report.loader import LogSchema, discover_sessions, sniff_schema
 from ..report.naming import parse_session_name
 from ..report.schema import DEFAULT_REPORTS_DIR, load_report_defs
@@ -138,6 +138,29 @@ def _prompt_picker(log_dir: Path) -> tuple:
     return paths, combine
 
 
+def _report_and_explorer_paths(csv_path, report_dest, *, run_id, want_explorer):
+    """
+    Resolve the final report path (and, if `want_explorer`, the sibling
+    explorer path) *before* either is built, so the two documents can
+    cross-link on their first and only render each -- avoiding a second
+    render pass just to fill in a filename the other side didn't know
+    about yet.
+
+    If `want_explorer` is False, returns `(report_dest, None)`
+    immediately without loading anything. Otherwise mirrors
+    build_session_report's own default-naming logic when `report_dest`
+    is None, since that's the name the explorer needs to link to.
+    """
+    if not want_explorer:
+        return report_dest, None
+    runs = load_runs(csv_path, run_id=run_id)
+    if report_dest is None:
+        suffix = f"_run{runs[0].run_id}" if len(runs) == 1 else ""
+        report_dest = Path(csv_path).parent / "reports" / f"{runs[0].session}{suffix}_report.html"
+    explorer_dest = report_dest.with_name(report_dest.stem + "_explorer.html")
+    return report_dest, explorer_dest
+
+
 def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable[[], Path]] = None) -> int:
     """
     Entry point. ``default_log_dir`` is injectable so a caller can supply
@@ -176,12 +199,16 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
                              "(default: relative)")
     parser.add_argument("--out", "-o", default=None, help="Output file path")
     parser.add_argument("--title", default=None, help="Override the document title")
+    parser.add_argument("--explorer", action="store_true",
+                        help="Also write an interactive timeline explorer, cross-linked with the report")
     parser.add_argument("--open", action="store_true", help="Open the result in the default browser when done")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
     if args.demo and (args.target or args.all):
         parser.error("--demo cannot be combined with explicit targets or --all")
+    if args.explorer and args.combine:
+        parser.error("--explorer is per-run and cannot be combined with --combine")
 
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else Path(resolve_log_dir())
 
@@ -207,6 +234,14 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
     if args.demo:
         from ..report.demo import DEMO_SESSION_PATH
         paths = [DEMO_SESSION_PATH]
+        if not args.out:
+            # DEMO_SESSION_PATH lives inside the installed package itself;
+            # every other build_session_report default writes next to its
+            # source CSV, which here means the package's own site-packages
+            # directory -- not writable on a normal (non-editable) install.
+            # Default to the current directory instead, same filename
+            # build_session_report would otherwise have chosen.
+            args.out = str(Path.cwd() / f"{DEMO_SESSION_PATH.stem}_report.html")
     elif args.all:
         if targets:
             parser.error("--all cannot be combined with explicit targets")
@@ -255,9 +290,17 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
                 design=args.design, align=align, title=args.title,
             ))
         elif not multi_target:
-            outputs.append(build_session_report(
+            report_dest, explorer_dest = _report_and_explorer_paths(
                 usable[0], Path(args.out) if args.out else None,
-                run_id=args.run_id, design=args.design, align=align, title=args.title,
+                run_id=args.run_id, want_explorer=args.explorer,
+            )
+            if explorer_dest is not None:
+                outputs.append(build_session_explorer(
+                    usable[0], explorer_dest, run_id=args.run_id, report_href=report_dest.name,
+                ))
+            outputs.append(build_session_report(
+                usable[0], report_dest, run_id=args.run_id, design=args.design, align=align,
+                title=args.title, explorer_href=explorer_dest.name if explorer_dest else None,
             ))
         else:
             # Multiple targets without --combine: one report per session,
@@ -267,9 +310,20 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
             if out_dir:
                 out_dir.mkdir(parents=True, exist_ok=True)
             for p in usable:
-                dest = (out_dir / f"{p.stem}_report.html") if out_dir else None
+                if out_dir:
+                    report_dest = out_dir / f"{p.stem}_report.html"
+                    explorer_dest = out_dir / f"{p.stem}_explorer.html" if args.explorer else None
+                else:
+                    report_dest, explorer_dest = _report_and_explorer_paths(
+                        p, None, run_id=args.run_id, want_explorer=args.explorer,
+                    )
+                if explorer_dest is not None:
+                    outputs.append(build_session_explorer(
+                        p, explorer_dest, run_id=args.run_id, report_href=report_dest.name,
+                    ))
                 outputs.append(build_session_report(
-                    p, dest, run_id=args.run_id, design=args.design, align=align,
+                    p, report_dest, run_id=args.run_id, design=args.design, align=align,
+                    explorer_href=explorer_dest.name if explorer_dest else None,
                 ))
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -6,8 +6,11 @@ one HTML string. No file I/O happens here — see report/__init__.py for
 the CLI-facing functions that read CSVs and write the result to disk.
 
 Self-containment is the hard invariant this module must uphold: no
-<script>, no http(s):// reference, nothing that requires network access
-to render or print. test_report_render.py asserts this on every build.
+<script>, no reference to a remote origin (http(s)://, //, javascript:),
+nothing that requires network access to render or print -- a *relative*
+link to a sibling explorer HTML file (explorer_href) is the one
+exception, since a same-directory relative link needs no network either.
+test_report_render.py asserts this on every build.
 """
 
 from __future__ import annotations
@@ -71,6 +74,7 @@ def render_report_html(
     combined: bool = False,
     align: str = "relative",
     title: Optional[str] = None,
+    explorer_href: Optional[str] = None,
 ) -> str:
     """
     Render a complete HTML document for `runs` using `design`.
@@ -78,6 +82,13 @@ def render_report_html(
     `runs` is one session's runs for a per-session report, or the merged
     runs of several sessions for a combined report (`combined=True`,
     which selects `design.combined_sections` instead of `design.sections`).
+
+    `explorer_href`, if given, is a relative link to a sibling
+    interactive explorer HTML file (see report/explorer.py) -- never an
+    absolute or remote URL, so this document stays self-contained and
+    works offline regardless of where the pair of files end up. This is
+    the one link this document ever emits; see test_report_render.py for
+    the scheme-based self-containment check that still allows it.
     """
     metrics = [compute_run_metrics(r) for r in runs]
     specs = design.combined_sections if combined else design.sections
@@ -103,6 +114,10 @@ def render_report_html(
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     session_list = ", ".join(sorted({r.session for r in runs})) or "—"
+    explorer_link = (
+        f' · <a href="{_html.escape(explorer_href)}">interactive timeline</a>'
+        if explorer_href else ""
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -115,7 +130,7 @@ def render_report_html(
 {charts.defs()}
 <div class="report">
   <h1>{_html.escape(doc_title)}</h1>
-  <p class="note">Sessions: {_html.escape(session_list)} · Design: {_html.escape(design.label)}</p>
+  <p class="note">Sessions: {_html.escape(session_list)} · Design: {_html.escape(design.label)}{explorer_link}</p>
   {_kpi_band(runs, metrics)}
   {"".join(section_html_parts)}
   <footer>Generated {generated_at} by run_report.py &mdash; VFM behavior report tool.

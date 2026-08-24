@@ -62,6 +62,70 @@ class TestDemo:
         assert result.returncode == 2
         assert "--demo" in result.stderr
 
+    def test_demo_default_out_writes_to_cwd_not_the_installed_package(self, tmp_path):
+        """DEMO_SESSION_PATH lives inside the installed sfm_analysis
+        package itself; without this default-out override, --demo with
+        no --out would try to write next to it -- typically unwritable
+        on a real (non-editable) pip install."""
+        result = _run(["--demo"], cwd=tmp_path)
+        assert result.returncode == 0, result.stderr
+        written = list(tmp_path.glob("*_report.html"))
+        assert len(written) == 1
+        assert written[0].parent == tmp_path
+
+
+class TestExplorer:
+    def test_explorer_flag_writes_both_files_cross_linked(self, tmp_path):
+        write_session(tmp_path, bandit_run(n_trials=3, session="ExplTest"), session="ExplTest")
+        report_out = tmp_path / "out.html"
+        result = _run(["ExplTest", "--log-dir", str(tmp_path), "--out", str(report_out), "--explorer"])
+        assert result.returncode == 0, result.stderr
+
+        explorer_out = tmp_path / "out_explorer.html"
+        assert report_out.exists()
+        assert explorer_out.exists()
+        assert f'href="{explorer_out.name}"' in report_out.read_text(encoding="utf-8")
+        assert f'href="{report_out.name}"' in explorer_out.read_text(encoding="utf-8")
+
+    def test_explorer_flag_with_default_naming(self, tmp_path):
+        # A single-run session: build_session_report's own default naming
+        # appends "_run<id>" (see report/__init__.py), which the explorer
+        # sibling name must match exactly for the two to cross-link.
+        write_session(tmp_path, bandit_run(n_trials=2, session="ExplDefault"), session="ExplDefault")
+        result = _run(["ExplDefault", "--log-dir", str(tmp_path), "--explorer"], cwd=tmp_path)
+        assert result.returncode == 0, result.stderr
+        reports_dir = tmp_path / "reports"
+        assert (reports_dir / "ExplDefault_run1_report.html").exists()
+        assert (reports_dir / "ExplDefault_run1_report_explorer.html").exists()
+        content = (reports_dir / "ExplDefault_run1_report.html").read_text(encoding="utf-8")
+        assert 'href="ExplDefault_run1_report_explorer.html"' in content
+
+    def test_explorer_with_combine_errors(self, tmp_path):
+        result = _run(["--demo", "--combine", "--explorer"])
+        assert result.returncode == 2
+        assert "--explorer" in result.stderr
+
+    def test_explorer_with_multiple_targets_and_out_dir(self, tmp_path):
+        write_session(tmp_path, bandit_run(n_trials=1, session="A"), session="A")
+        write_session(tmp_path, bandit_run(n_trials=1, session="B"), session="B")
+        out_dir = tmp_path / "out"
+        result = _run(["A", "B", "--log-dir", str(tmp_path), "--out", str(out_dir), "--explorer"])
+        assert result.returncode == 0, result.stderr
+        assert (out_dir / "A_report.html").exists()
+        assert (out_dir / "A_explorer.html").exists()
+        assert (out_dir / "B_report.html").exists()
+        assert (out_dir / "B_explorer.html").exists()
+        assert 'href="A_explorer.html"' in (out_dir / "A_report.html").read_text(encoding="utf-8")
+
+    def test_without_explorer_flag_only_report_is_written(self, tmp_path):
+        write_session(tmp_path, bandit_run(n_trials=2, session="NoExpl"), session="NoExpl")
+        out = tmp_path / "out.html"
+        result = _run(["NoExpl", "--log-dir", str(tmp_path), "--out", str(out)])
+        assert result.returncode == 0, result.stderr
+        assert out.exists()
+        assert not (tmp_path / "out_explorer.html").exists()
+        assert "<a " not in out.read_text(encoding="utf-8")
+
 
 class TestGenerateReport:
     def test_single_session_writes_file_over_5kb(self, tmp_path):

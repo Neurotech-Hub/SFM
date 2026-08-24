@@ -20,14 +20,51 @@ def _runs(tmp_path, session="Weird&Session<Name>"):
     return split_runs(loaded, [], path)
 
 
+_URL_ATTR = re.compile(r"""(?:href|src|srcset|action|poster|background)\s*=\s*["']([^"']*)["']""", re.I)
+_REMOTE_SCHEMES = ("http://", "https://", "//", "ftp://", "file://")
+
+
 class TestRenderReportHtml:
     def test_self_contained_no_script_or_external_resources(self, tmp_path):
+        """The printed report must render with the network unplugged.
+
+        Checked by URL *scheme*, not by substring -- what render.py's
+        module docstring actually promises is "no remote origin", not
+        "no links at all". A relative link to a sibling explorer file
+        (explorer_href) is allowed by design; anything that reaches
+        off-machine is not.
+        """
         runs = _runs(tmp_path)
         design = resolve_design("two_armed_bandit")
         html = render_report_html(runs, design)
-        assert "<script" not in html
-        assert "href=" not in html
-        assert " src=" not in html
+
+        assert "<script" not in html.lower()
+        assert "javascript:" not in html.lower()
+        assert not re.search(r"\son[a-z]+\s*=", html, re.I), "inline event handler"
+        assert "@import" not in html
+        assert not re.search(r"url\(\s*['\"]?(?:https?:)?//", html, re.I)
+
+        for m in _URL_ATTR.finditer(html):
+            url = m.group(1).strip().lower()
+            assert not url.startswith(_REMOTE_SCHEMES), f"external resource: {url!r}"
+
+    def test_no_links_at_all_without_an_explicit_explorer_href(self, tmp_path):
+        """Tripwire: today, with no explorer_href, the report emits zero
+        <a> tags. This is not the real invariant (the scheme-based test
+        above is) -- it just documents that the explorer link is fully
+        opt-in, so a future caller that forgets to pass explorer_href
+        gets the old fully-linkless document, not a broken one."""
+        runs = _runs(tmp_path)
+        html = render_report_html(runs, resolve_design("default"))
+        assert "<a " not in html
+
+    def test_explorer_href_is_embedded_as_a_relative_link(self, tmp_path):
+        runs = _runs(tmp_path)
+        html = render_report_html(runs, resolve_design("default"), explorer_href="Weird_run1_explorer.html")
+        assert 'href="Weird_run1_explorer.html"' in html
+        # The relative link must still pass the scheme check above.
+        for m in _URL_ATTR.finditer(html):
+            assert not m.group(1).lower().startswith(_REMOTE_SCHEMES)
 
     def test_print_rules_present(self, tmp_path):
         runs = _runs(tmp_path)
