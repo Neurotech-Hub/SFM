@@ -28,7 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..logs import CSV_HEADER, heartbeat_path_for
+from ..logs import CSV_HEADER, EXP6_HEADER, heartbeat_path_for
 from ..protocol import CanEvent, DispenseState, ServiceStatus, parse_heartbeat
 
 
@@ -38,8 +38,8 @@ class LogSchema(str, Enum):
     UNIFIED = "unified"    # sfm_analysis.logs.CSV_HEADER — the only schema with fields_json
     LEGACY9 = "legacy9"    # timestamp_iso,timestamp_ms,direction,node_id,frame_type,
                             # event_name,raw_id_hex,raw_data_hex,details
-    EXP6 = "exp6"           # timestamp_iso,timestamp_ms,elapsed_s,name,node_id,fields
-                            # (headless ExperimentControl CSV — see experiment/context.py:111)
+    EXP6 = "exp6"           # sfm_analysis.logs.EXP6_HEADER — the headless
+                            # ExperimentControl CSV (base_station.experiment.context)
     UNKNOWN = "unknown"
 
 
@@ -47,7 +47,6 @@ LEGACY9_HEADER = [
     "timestamp_iso", "timestamp_ms", "direction", "node_id", "frame_type",
     "event_name", "raw_id_hex", "raw_data_hex", "details",
 ]
-EXP6_HEADER = ["timestamp_iso", "timestamp_ms", "elapsed_s", "name", "node_id", "fields"]
 
 
 def sniff_schema(path: Path) -> LogSchema:
