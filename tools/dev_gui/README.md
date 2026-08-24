@@ -233,8 +233,14 @@ python run_report.py --help
   --design          Force a report design instead of resolving by experiment
   --align           Combined-report time alignment: relative | wall | trial | event:<name>
   --out, -o         Output file (single report) or directory (multiple)
+  --explorer        Also write an interactive timeline explorer, cross-linked with the report
   --open            Open the result in your default browser when done
 ```
+
+See [packages/sfm-analysis/README.md](../../packages/sfm-analysis/README.md#the-interactive-explorer)
+for what `--explorer` gives you: real pan/zoom/brush-to-zoom over the
+same timeline data the printed raster panels show, in a second
+self-contained HTML file next to the report.
 
 **How it's structured** (mirrors the experiment engine's own
 JSON-schema/Python split): a report **design** —

@@ -63,6 +63,7 @@ sfm-report --help
   --design          Force a report design instead of resolving by experiment
   --align           Combined-report time alignment: relative | wall | trial | event:<name>
   --out, -o         Output file (single report) or directory (multiple)
+  --explorer        Also write an interactive timeline explorer, cross-linked with the report
   --open            Open the result in your default browser when done
 ```
 
@@ -70,6 +71,54 @@ A **session** is one CSV written by the base station's unified 15-column
 log format (`timestamp_iso, timestamp_ms, ..., fields_json, details`).
 Files in an older schema are skipped with a warning rather than crashing
 the run — see `report.loader.sniff_schema`.
+
+## The interactive explorer
+
+```bash
+sfm-report EXP-Test-02 --explorer --open
+```
+
+writes two files side by side — the usual printable `..._report.html`,
+and `..._explorer.html`: a single self-contained HTML page with real
+pan/zoom over the same timeline the static report's raster panels show,
+each linking to the other. It's the answer to "I don't want 12 stacked
+panels, I want to point at the timeline and zoom in there":
+
+- **Drag on the main view** to brush-select a range and zoom into it.
+- **Drag the overview strip** (the thin bar above the main view) to pan.
+- **Scroll** to zoom in/out centered on the cursor.
+- **Reset zoom** returns to the full run.
+- Hovering shows the cursor's wall-clock time, time-of-day, and time
+  into the run, all three always visible — the wall-clock and time-of-
+  day readouts use the *recording rig's* local clock (the same
+  `timestamp_iso`-based reasoning as `report.timezones`), never the
+  browser's, regardless of what machine you're viewing it on.
+
+It's drawn on `<canvas>`, not SVG — the same design decision as the
+static report's panels would make a bad interactive widget at real data
+volumes (a raster with tens of thousands of DOM nodes is what makes a
+browser tab hang). The data itself — lanes, spans, marks — comes from
+exactly the same `report.timeline_data.panel_marks_spans` the static
+report's overview panel calls, just for the whole run's `[0, duration]`
+window instead of one paginated slice, so the two views can never
+disagree about what a "presence bout" or a "dispense cycle" is.
+
+Build it programmatically with `build_session_explorer` (mirrors
+`build_session_report`):
+
+```python
+from sfm_analysis.report import build_session_report, build_session_explorer
+
+explorer = build_session_explorer(csv_path, report_href="report.html")
+report = build_session_report(csv_path, explorer_href=explorer.name)
+```
+
+The explorer is the one place in this package that ships JavaScript —
+everything else, including the printed report, is deliberately script-free
+so it can be trusted to render and print with the network unplugged. The
+explorer keeps the same "no remote origin" guarantee (no `http(s)://`
+reference anywhere, works fully offline) without the "no script" part,
+since interactivity is the entire point of this file.
 
 ## How a report is put together
 

@@ -48,6 +48,8 @@ jobs:
         run: sfm-report --list-designs
       - name: demo report renders with no rig or log dir
         run: sfm-report --demo --out demo_report.html --quiet
+      - name: demo report + interactive explorer, cross-linked
+        run: sfm-report --demo --explorer --out demo_report2.html --quiet
 
   build:
     name: wheel + sdist
