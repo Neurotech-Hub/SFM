@@ -7,22 +7,25 @@ buffer); the CSV file grows unbounded for the session and is never truncated.
 
 Two kinds of CSV sink exist:
 
-  - The unnamed, per-process sink opened by the constructor
-    (``session_%Y%m%d_%H%M%S.csv``) — catches discovery/registry/manual
-    traffic before an operator names an experiment session.
-  - The named, append-on-reuse sink opened by ``open_session()`` — one file
-    per experiment session name, carrying a ``run_id`` that increments each
-    time the same name is reopened (in this process or a prior one) so a
-    session can be resumed across GUI restarts without losing history.
+  - The daily activity sink opened by the constructor (and again after
+    an experiment ends) — ``session_YYYYMMDD.csv``. One file per calendar
+    day; later GUI sessions on the same day append. Catches discovery,
+    registry, manual commands, and post-experiment traffic. Rows are
+    stamped ``run_id=0``.
+  - The named, append-on-reuse sink opened by ``open_session()`` — one
+    file per experiment session name, carrying a ``run_id`` that increments
+    each time the same name is reopened (in this process or a prior one).
+    ``resume_daily()`` closes that file at experiment end so it stays
+    experiment-only (last row is ``session_end``).
 
 HEARTBEAT rows are always diverted to a sibling file
-(``session_*_heartbeats.csv`` / ``{session}_heartbeats.csv``) so the main
-session CSV stays event/command/experiment traffic only. Heartbeats still
+(``session_YYYYMMDD_heartbeats.csv`` / ``{session}_heartbeats.csv``) so the
+main CSV stays event/command/experiment traffic only. Heartbeats still
 enter the in-memory ring (hidden in the GUI by default).
 
 ``open_session()`` closes whichever sink is currently open and switches to
-the named one; it is not a second, parallel writer, so anything logged
-before the first experiment session lives only in the unnamed file.
+the named one; it is not a second, parallel writer, so daily traffic is
+never merged into the experiment file.
 
 Performance note:
   At 9 nodes × ~1/60 Hz heartbeat + events the CSV load is light.
@@ -106,10 +109,11 @@ class LogManager:
     Usage::
 
         lm = LogManager(log_dir="~/sfm_logs", auto_save=True)
-        lm.add(LogEntry(...))                       # goes to the unnamed sink
+        lm.add(LogEntry(...))                       # goes to today's session_YYYYMMDD.csv
         run_id = lm.open_session("cohortA_day3", "~/sfm_logs")
         lm.set_context(session="cohortA_day3", run_id=run_id, session_start_ts=time.time())
         lm.add(LogEntry(...))                       # goes to the named sink, stamped with run_id
+        lm.resume_daily()                           # close experiment file; back to daily
         entries = lm.get_filtered(show_heartbeats=False)
         lm.export("~/Desktop/my_session.csv")
     """
@@ -129,12 +133,17 @@ class LogManager:
         self._max_entries = max_entries
         self._buffer: Deque[LogEntry] = deque(maxlen=max_entries)
         self._auto_save = auto_save
+        self._log_dir = log_dir
         self._csv_path: Optional[Path] = None
         self._csv_file = None
         self._csv_writer = None
         self._hb_csv_path: Optional[Path] = None
         self._hb_csv_file = None
         self._hb_csv_writer = None
+
+        # "daily" | "named" | None — which CSV pair is currently open.
+        self._sink_kind: Optional[str] = None
+        self._daily_date: Optional[str] = None  # YYYYMMDD of the open daily sink
 
         # Named-session context, applied to any entry that doesn't already
         # carry its own non-default value (see add()).
@@ -144,7 +153,7 @@ class LogManager:
         self._session_start_ts: Optional[float] = None
 
         if auto_save:
-            self._open_csv(log_dir)
+            self._open_daily(log_dir)
 
     # ------------------------------------------------------------------
     # Write
@@ -158,11 +167,13 @@ class LogManager:
         All other types write to the main session CSV.
 
         Writes whenever a CSV sink is open — the constructor's ``auto_save``
-        flag only controls whether the *unnamed* per-process sink opens; an
+        flag only controls whether the daily sink opens at construction; an
         explicit ``open_session()`` call always opens a writer, since naming
         a session is an explicit request to record it regardless of that
         constructor flag.
         """
+        if self._sink_kind == "daily":
+            self._rollover_daily_if_needed()
         self._stamp_context(entry)
         self._buffer.append(entry)
         if entry.frame_type == "HEARTBEAT":
@@ -234,6 +245,11 @@ class LogManager:
     def run_id(self) -> int:
         return self._run_id
 
+    @property
+    def is_named_session(self) -> bool:
+        """True while the named experiment CSV is the active writer."""
+        return self._sink_kind == "named" and self._csv_writer is not None
+
     # Also sourced from sfm_analysis.logs, for the same reason as
     # CSV_HEADER above. staticmethod() is required here: without it,
     # self.heartbeat_path_for(path) would pass self as main_path.
@@ -291,10 +307,9 @@ class LogManager:
         """
         Open (or resume) the named CSV sink for an experiment session.
 
-        Closes whatever sink is currently open first — the unnamed,
-        per-process ``session_<timestamp>.csv`` opened by the constructor
-        (which keeps whatever was written to it before this call; that
-        traffic is never dropped, just not merged into the named file) or a
+        Closes whatever sink is currently open first — today's
+        ``session_YYYYMMDD.csv`` opened by the constructor / ``resume_daily()``
+        (daily traffic is never merged into the named file) or a
         previously-opened named sink. If a file for this name already
         exists with the current header, opens it for append and
         returns one past the highest ``run_id`` found in it; otherwise
@@ -304,12 +319,13 @@ class LogManager:
 
         Returns the run_id that new entries will be stamped with.
         """
-        self._close_named_csv()
+        self.close()
 
         sanitized = sanitize_session_name(session_name)
         if not sanitized:
             raise ValueError("session_name sanitizes to empty — refusing to open a session")
 
+        self._log_dir = log_dir
         dir_path = Path(log_dir).expanduser().resolve()
         dir_path.mkdir(parents=True, exist_ok=True)
         path = dir_path / f"{sanitized}.csv"
@@ -332,6 +348,8 @@ class LogManager:
             self._csv_writer.writerow(self.CSV_HEADER)
         self._open_heartbeat_csv(self.heartbeat_path_for(path), mode)
 
+        self._sink_kind = "named"
+        self._daily_date = None
         self._session = sanitized
         self._run_id = run_id
         self._trial = 0
@@ -380,8 +398,28 @@ class LogManager:
             return 0, 0, False
         return max_run_id, row_count, header_ok
 
+    def resume_daily(self, log_dir: Optional[str] = None) -> None:
+        """
+        Close the named experiment sink (if open) and append to today's
+        ``session_YYYYMMDD.csv``. No-op when already writing that daily file.
+
+        Call after ``session_end`` has been logged so the experiment CSV
+        stays experiment-only. Subsequent CAN/commands/heartbeats go to
+        the daily pair.
+        """
+        if log_dir is not None:
+            self._log_dir = log_dir
+        today = self._today_stamp()
+        if (
+            self._sink_kind == "daily"
+            and self._daily_date == today
+            and self._csv_writer is not None
+        ):
+            return
+        self._open_daily(self._log_dir)
+
     def _close_named_csv(self) -> None:
-        """Close the current sink (named or unnamed) before opening a new one."""
+        """Close the current sink (named or daily) before opening a new one."""
         self.close()
 
     # ------------------------------------------------------------------
@@ -424,15 +462,52 @@ class LogManager:
     # Internal
     # ------------------------------------------------------------------
 
-    def _open_csv(self, log_dir: str) -> None:
-        dir_path = Path(log_dir).expanduser().resolve()
+    def _today_stamp(self) -> str:
+        return datetime.now().strftime("%Y%m%d")
+
+    def _daily_stem(self, stamp: Optional[str] = None) -> str:
+        return f"session_{stamp or self._today_stamp()}"
+
+    def _rollover_daily_if_needed(self) -> None:
+        """If the calendar day changed while on the daily sink, open today's file."""
+        today = self._today_stamp()
+        if self._daily_date == today:
+            return
+        self._open_daily(self._log_dir)
+
+    def _open_daily(self, log_dir: Optional[str] = None) -> None:
+        """Open (or append) ``session_YYYYMMDD.csv`` and its heartbeat sibling."""
+        self.close()
+        if log_dir is not None:
+            self._log_dir = log_dir
+        dir_path = Path(self._log_dir).expanduser().resolve()
         dir_path.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._csv_path = dir_path / f"session_{timestamp}.csv"
-        self._csv_file = open(self._csv_path, "w", newline="", buffering=1)
+        stamp = self._today_stamp()
+        stem = self._daily_stem(stamp)
+        path = dir_path / f"{stem}.csv"
+
+        mode = "w"
+        if path.exists():
+            _max_run_id, _row_count, header_ok = self._scan_existing(path)
+            if header_ok:
+                mode = "a"
+            else:
+                path = dir_path / f"{stem}_{datetime.now().strftime('%H%M%S')}.csv"
+                mode = "w"
+
+        self._csv_path = path
+        self._csv_file = open(path, mode, newline="", buffering=1)
         self._csv_writer = csv.writer(self._csv_file)
-        self._csv_writer.writerow(self.CSV_HEADER)
-        self._open_heartbeat_csv(self.heartbeat_path_for(self._csv_path), "w")
+        if mode == "w":
+            self._csv_writer.writerow(self.CSV_HEADER)
+        self._open_heartbeat_csv(self.heartbeat_path_for(path), mode)
+
+        self._sink_kind = "daily"
+        self._daily_date = stamp
+        self._session = stem
+        self._run_id = 0
+        self._trial = 0
+        self._session_start_ts = None
 
     def _open_heartbeat_csv(self, path: Path, mode: str) -> None:
         """

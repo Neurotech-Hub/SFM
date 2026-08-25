@@ -1225,14 +1225,25 @@ class SFMApp:
             dpg.configure_item("exp_start_btn", enabled=False)
             self._refresh_experiment_status()
             self._refresh_session_hint()
+        else:
+            # Named CSV was opened above; without a running experiment, send
+            # further traffic back to the daily activity log.
+            self._resume_daily_log()
 
     def _on_experiment_stop(self, sender=None, app_data=None, user_data=None) -> None:
         if self._exp.is_running:
             self._exp.stop()
+        self._resume_daily_log()
         self._set_experiment_inputs_enabled(True)
         if dpg.does_item_exist("exp_start_btn"):
             dpg.configure_item("exp_start_btn", enabled=True)
         self._refresh_experiment_status()
+
+    def _resume_daily_log(self) -> None:
+        """Close the experiment CSV (if open) and append to today's daily file."""
+        if self._log is None or not self._log.is_named_session:
+            return
+        self._log.resume_daily(self._exp_log_dir)
 
     def _fire_sync_marker(self) -> None:
         """
@@ -1282,9 +1293,12 @@ class SFMApp:
         # experiment may depend on live presence readings.
         if dpg.does_item_exist("presence_cal_btn"):
             dpg.configure_item("presence_cal_btn", enabled=not running)
-        # Re-enable the form when a run ends on its own (pellet cap / duration).
-        if not running and self._exp_inputs_locked:
-            self._set_experiment_inputs_enabled(True)
+        # Re-enable the form when a run ends on its own (pellet cap / duration)
+        # and send further traffic to the daily activity log.
+        if not running:
+            self._resume_daily_log()
+            if self._exp_inputs_locked:
+                self._set_experiment_inputs_enabled(True)
 
     def _build_log_panel(self) -> None:
         dpg.add_text("Event Log", color=(100, 180, 255, 255))
