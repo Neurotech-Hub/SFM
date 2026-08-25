@@ -52,17 +52,20 @@ EXPLORER_CSS = """
 .sfm-explorer .toolbar button:hover { background: var(--gridline); }
 .sfm-explorer .sfm-readout { font-variant-numeric: tabular-nums; color: var(--ink-primary); }
 .sfm-explorer .sfm-readout b { font-weight: 600; }
+/* touch-action: none on both canvas wraps (border/padding included, not
+   just the canvas element itself) -- a touch-pinch or scroll gesture
+   starting a few pixels into the border/background is claimed by this
+   widget's own zoom/pan handling (see EXPLORER_JS), not the browser's
+   native page zoom, matching the wheel/gesture guards below which are
+   likewise scoped to the whole widget rather than just the canvases. */
 .sfm-explorer .canvas-wrap {
   position: relative; border: 1px solid var(--gridline); border-radius: 4px;
-  background: var(--surface); overflow: hidden;
+  background: var(--surface); overflow: hidden; touch-action: none;
 }
 .sfm-explorer canvas { display: block; width: 100%; }
-.sfm-explorer .sfm-overview { cursor: grab; touch-action: pan-y; }
+.sfm-explorer .sfm-overview { cursor: grab; }
 .sfm-explorer .sfm-overview.dragging { cursor: grabbing; }
-/* touch-action: none -- a touch-pinch on the chart itself is claimed by
-   this widget's own zoom handling (see EXPLORER_JS), not the browser's
-   native page zoom. */
-.sfm-explorer .sfm-main { cursor: crosshair; touch-action: none; }
+.sfm-explorer .sfm-main { cursor: crosshair; }
 .sfm-explorer .sfm-tooltip {
   position: absolute; pointer-events: none; display: none;
   background: var(--ink-primary); color: var(--surface);
@@ -493,6 +496,19 @@ function initSfmExplorer(root, DATA) {
   root.addEventListener("wheel", function (e) {
     if (e.ctrlKey || e.metaKey) e.preventDefault();
   }, { passive: false });
+
+  // Safari/WebKit's trackpad pinch does not go through "wheel" at all --
+  // it fires its own proprietary, non-standard gesturestart/gesturechange/
+  // gestureend events instead (still absent from every other browser's
+  // event model), so the ctrlKey-wheel guard above cannot see or stop it.
+  // A user describing this as "just hovering" triggering an unwanted
+  // vertical zoom is the classic symptom of unguarded Safari trackpad
+  // pinch: resting/moving fingers on the trackpad while the cursor sits
+  // over the widget can register as a pinch even without a deliberate
+  // scroll gesture. Harmless no-op on every non-WebKit browser.
+  ["gesturestart", "gesturechange", "gestureend"].forEach(function (name) {
+    root.addEventListener(name, function (e) { e.preventDefault(); }, { passive: false });
+  });
 
   // ---- overview: drag to pan ----
   var panDrag = null;

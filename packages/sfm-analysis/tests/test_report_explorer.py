@@ -207,8 +207,16 @@ class TestExplorerWidget:
         assert "e.ctrlKey" in root_wheel.group(0) and "e.metaKey" in root_wheel.group(0)
         assert "e.preventDefault()" in root_wheel.group(0)
 
-    def test_main_canvas_blocks_native_touch_pinch(self):
-        rule = re.search(r"\.sfm-explorer \.sfm-main\s*\{([^}]*)\}", EXPLORER_CSS)
+        # Safari/WebKit's trackpad pinch doesn't go through "wheel" at
+        # all -- it fires its own gesturestart/gesturechange/gestureend
+        # events, invisible to the ctrlKey-wheel guard above. A user
+        # describing this as "just hovering" triggering an unwanted zoom
+        # is the classic symptom of unguarded Safari trackpad pinch.
+        for name in ("gesturestart", "gesturechange", "gestureend"):
+            assert f'"{name}"' in EXPLORER_JS, f"no guard registered for {name}"
+
+    def test_canvas_wrap_blocks_native_touch_gestures(self):
+        rule = re.search(r"\.sfm-explorer \.canvas-wrap\s*\{([^}]*)\}", EXPLORER_CSS)
         assert rule is not None
         assert "touch-action: none" in rule.group(1)
 
