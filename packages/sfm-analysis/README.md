@@ -170,6 +170,12 @@ right tool. Absent entirely for shorter runs.
 
 ## Python API
 
+For the full reference — every log column, every event name, every
+`RunMetrics` field and its `None` semantics, every tidy-table column, and a
+worked "question to tested answer" walkthrough — see
+[docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md). What follows here is the
+quick-start version.
+
 ### Custom analysis: `sfm_analysis.analysis`
 
 This is the entry point for asking your own question of a session — one

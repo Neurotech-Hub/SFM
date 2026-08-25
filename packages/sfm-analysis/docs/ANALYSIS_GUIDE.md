@@ -1,0 +1,437 @@
+# Analysis Guide
+
+A reference for designing your own analysis on top of `sfm_analysis`: what's
+actually in a log, what every derived field means (including its `None`
+semantics), and a worked example that goes from a question to a tested
+answer.
+
+This is the **reference** half of the documentation. The
+[README](../README.md) is the **task-oriented** half — install, the CLI,
+quick-start snippets, and a one-liner cookbook. Read that first if you just
+want to run a report or answer a question that's already in the cookbook;
+come here when you need to know exactly what a field means, or you're
+building something the cookbook doesn't cover.
+
+## Contents
+
+1. [Which layer to work at](#1-which-layer-to-work-at)
+2. [The log files](#2-the-log-files)
+3. [Event vocabulary](#3-event-vocabulary)
+4. [Session parameters](#4-session-parameters)
+5. [Derived metrics reference](#5-derived-metrics-reference)
+6. [Tidy-table columns](#6-tidy-table-columns)
+7. [Time, timezone, and time-of-day](#7-time-timezone-and-time-of-day)
+8. [Designing your own analysis: a worked example](#8-designing-your-own-analysis-a-worked-example)
+9. [Turning an analysis into a report section](#9-turning-an-analysis-into-a-report-section)
+
+## 1. Which layer to work at
+
+Every layer below is built directly on the one before it — nothing is
+hidden, and dropping down a layer is always available, but the tidy tables
+answer most real questions with the least code.
+
+| Layer | Type | Gets you | Module |
+|---|---|---|---|
+| CSV | text | The recorded truth. Every row VFM logged. | `report/demo/*.csv`, or your own session file |
+| `LogRow` | dataclass | One row, typed: `fields_json` decoded to `.fields`, hex decoded to `.raw_data`, `.t` filled in | `report.loader` |
+| `RunData` | dataclass | Rows scoped to one `(session, run_id)`, correctly time-ordered, `.t` recomputed from `timestamp_ms` | `report.session` |
+| `RunMetrics` | dataclass bundle | Reconstructed cycles, bouts, faults, pellet accounting — the numbers, computed once | `report.metrics` |
+| Tidy tables | `list[dict]` | `RunMetrics` flattened to one row per cycle/bout/event, ready for `pandas.DataFrame` | `sfm_analysis.analysis.tables` |
+
+**Start at tidy tables.** `s.cycles_table()` / `s.bouts_table()` cover most
+questions with zero knowledge of the layers underneath. Drop to `RunMetrics`
+(`s.metrics_for()`) when you need a field a table doesn't expose yet, or to
+raw rows (`s.events_table()`, or `run.rows` directly) for something no
+existing metric computes at all — see [§5](#5-derived-metrics-reference) and
+[§6](#6-tidy-table-columns) for what's already there before you reach for
+raw rows.
+
+## 2. The log files
+
+A session is one CSV in the **unified 15-column schema**
+(`sfm_analysis.logs.CSV_HEADER`), plus an optional sibling
+`<name>_heartbeats.csv` in the *same* 15-column schema, filtered to
+`frame_type == "HEARTBEAT"` rows — there is only one CSV schema, not two;
+the heartbeat file is a separate sink for a high-frequency frame type so it
+doesn't bloat the main log.
+
+| Column | Holds | Notes |
+|---|---|---|
+| `timestamp_iso` | rig-local wall-clock string, e.g. `2025-06-01T14:32:07.123` | Written with `datetime.fromtimestamp()` **on the rig**, so it's already correct local time — see [§7](#7-time-timezone-and-time-of-day) |
+| `timestamp_ms` | epoch milliseconds | Used to recompute `.t` on load; don't trust it for wall-clock display without knowing the rig's real-world offset |
+| `elapsed_s` | seconds since the row's *originating process* started | **Never read this directly** — it resets across a reopened session and means something different for the GUI vs. a headless script. Use `RunData` rows' `.t` instead (see trap #2 below) |
+| `session` | the session name | Groups rows into files; combined with `run_id` for run-scoping |
+| `run_id` | increments each time a session is reopened | A single CSV can hold several runs — see trap #1 |
+| `trial` | current trial number, `0` outside a trial | Convenience column; the authoritative trial boundary is the `trial` EXPERIMENT event |
+| `source` | `CAN` \| `EXP` \| `BNC` \| `SYS` | `CAN` = node hardware events, `EXP` = experiment-engine events, `BNC` = photogate/beam-break, `SYS` = base-station lifecycle |
+| `direction` | `TX` \| `RX` \| `SYS` \| `LOCAL` | Bus direction for CAN frames; not meaningful for EXP rows |
+| `node_id` | which node (`0` = broadcast / session-scope, not a real node) | |
+| `frame_type` | `EVENT` \| `COMMAND` \| `HEARTBEAT` \| `PELLET_AUDIT` \| ... | What kind of frame this is, independent of `event_name` |
+| `event_name` | the human-readable event/command name | See [§3](#3-event-vocabulary) |
+| `raw_id_hex` | CAN arbitration ID, hex | Only meaningful for `source == "CAN"` |
+| `raw_data_hex` | CAN payload bytes, hex | Decoded by `protocol.py` — heartbeats via `parse_heartbeat()`, events via their own per-type decoder |
+| `fields_json` | JSON object of structured data | Decoded into `LogRow.fields`; `{}` for rows that carry none (mostly raw CAN frames) |
+| `details` | free-text human note | Rare; mostly empty |
+
+## 3. Event vocabulary
+
+### CAN events (`source == "CAN"`, `protocol.CanEvent`)
+
+One node-hardware event per row. `event_name` is the *display* name
+(`protocol.CAN_EVENT_DISPLAY_NAME`), not the enum member name — use
+`LogRow.can_event` when you need the underlying enum back (see the dome
+trap below).
+
+| `CanEvent` | Display name (`event_name`) | Payload (`raw_data`) |
+|---|---|---|
+| `OnPlate` (`0x01`) | `Pellet OnPlate` | — |
+| `Loaded` (`0x02`) | `Loaded` | — |
+| `DomeOpened` (`0x03`) | `Dome Opened` | count (LE16) + pellet_present |
+| `Fault` (`0x04`) | `Fault: <code>` | `raw_data[1]` = `ServiceStatus` |
+| `Pong` (`0x05`) | `Pong` | — |
+| `InputChanged` (`0x06`) | varies (see below) | input id, active flag |
+| `Lowering` (`0x07`) | `Lowering` | — |
+| `Loading` (`0x08`) | `Loading` | — |
+| `Raising` (`0x09`) | `Raising` | — |
+| `DomeOpenWarning` (`0x0A`) | `DomeOpenWarning` | non-sticky, dome open >30s |
+| `PelletTaken` (`0x0B`) | `Pellet Taken` | count (LE16) + dome_open flag |
+| `FeedSkipped` (`0x0C`) | `FeedSkipped` | plate was occupied on Dispense |
+| `Seeking` (`0x0D`) | `Seeking` | — |
+| `NoFeedPresented` (`0x0E`) | `NoFeedPresented` | count (LE16), **not incremented** as a real pellet |
+| `Dwelling` (`0x0F`) | `Dwelling` | holding at drop position |
+| `PresenceCalResult` (`0x10`) | `PresenceCalResult` | ok flag, threshold (LE32), samples (LE16) |
+| `ConfigApplied` (`0x11`) | `ConfigApplied` | config type, ok flag, value (LE32) |
+
+**The `"Dome Opened"` trap.** `CanEvent.DomeOpened` (`0x03`, a real
+milestone with a pellet count) and a renamed `InputChanged` (`0x06`) dome
+edge both render as the *same* `event_name`, `"Dome Opened"`. Pairing
+opens/closes by `event_name` alone double-counts every physical opening.
+`metrics.dome_bouts()` already deduplicates this correctly (see its
+`dedup_window_s` parameter) — use it, or `LogRow.can_event` if you're
+working from raw rows directly.
+
+**Presence/dome/load-position edges** also arrive as `InputChanged`
+(`0x06`) but are *renamed* in the log for readability — e.g. `"MousePresence
+Detected"` / `"MousePresence Cleared"` — via
+`protocol.behavioral_input_log_name`. These renamed edges are the ones
+`presence_bouts()` and the dome dedup consume; the raw `InputChanged` name
+itself should rarely appear in a well-formed log.
+
+### Experiment events (`source == "EXP"`)
+
+Logged by the experiment engine (`ExperimentControl`, script runtime, and
+per-template code), not the node hardware. Two groups:
+
+**Core, present in every session regardless of experiment template:**
+
+| `event_name` | Fires | `fields_json` carries |
+|---|---|---|
+| `session_start` | once, session open | `experiment`, `nodes`, `seed`, `utc_offset_s` (recent logs) |
+| `<experiment>_start` | once, e.g. `two_armed_bandit_start` | template-specific config: node roles, block size, probabilities, ... |
+| `trial` | once per trial boundary | `trial` (the trial number) |
+| `session_end` | once, session close (if a clean close happened) | template-specific end summary |
+| `script_stalled` | script runtime detects no forward progress | — |
+| `fault` / `node_halted` | a node enters a fault state | `node`, `fault_code` (a `ServiceStatus` int) |
+| `node_recovered` / `recovered` | a node's fault clears | `node` |
+| `paused_for_fault` / `resumed_after_fault` | session-level pause/resume around a fault | `node` |
+| `feed_skipped` | a dispense was vetoed (plate occupied) | `node` |
+| `stop_requested` | operator/script requested stop | — |
+
+**Template- and script-runtime-specific** (varies by experiment; not
+exhaustive here — see below for how to discover them on your own file):
+per-trial structure like `bandit_trial` / `bandit_trial_end` /
+`bandit_trial_aborted` / `arm_presented` (two-armed bandit),
+`probability_pick` / `random_dispense` (probability delivery),
+`reload_dispense` (free feeding), plus script-runtime diagnostics
+(`script_bad_yield`, `script_predicate_error`, `script_close_error`,
+`script_advance_cap`, `timer_error`, `callback_error`,
+`start_when_error`, `end_when_error`, `dispense_skipped_halted`,
+`dispense_skipped_in_flight`, `broadcast_dispense_partial_pellet_present`,
+`plates_clear`, `bnc_pulse`).
+
+Rather than trusting this list to stay exhaustive, discover what a
+*specific* file actually contains:
+
+```python
+from sfm_analysis.analysis import load_session
+
+s = load_session("EXP-Test-02")
+names = sorted({row["event_name"] for row in s.events_table(source="EXP")})
+```
+
+`report.metrics.APPARATUS_HEALTH_EVENTS` is the curated subset the report's
+"Apparatus Health" section surfaces — a good starting list of the
+diagnostic (as opposed to trial-structure) events worth watching.
+
+## 4. Session parameters
+
+Everything `session.split_runs` copies onto `RunData` from a run's
+`session_start` / `<experiment>_start` / `session_end` rows:
+
+| Field | From | Meaning |
+|---|---|---|
+| `run.experiment` | `session_start.fields["experiment"]` | The template name (`"two_armed_bandit"`, ...); `"unknown"` if absent |
+| `run.nodes` | `session_start.fields["nodes"]` | Node IDs configured for this run |
+| `run.seed` | `session_start.fields["seed"]` | RNG seed, if the template logged one; `None` otherwise |
+| `run.utc_offset_s` | `session_start.fields["utc_offset_s"]` | Seconds east of UTC; `None` on logs recorded before this was captured — see [§7](#7-time-timezone-and-time-of-day) |
+| `run.params` | `<experiment>_start.fields` | Whatever the template's start event logged — block size, probabilities, roles, ... |
+| `run.end_fields` | `session_end.fields` | Template-specific end summary, `{}` if absent |
+| `run.end_reason` | `session_end.fields.get("reason")`-ish | Why the session ended, when logged |
+| `run.has_session_end` | whether a `session_end` row was found | `False` means the file ends mid-session (crash, power loss, GUI closed without Stop) |
+| `run.notes` | data-quality notes `split_runs` itself generates | Surfaced verbatim; check these before trusting an edge case |
+
+## 5. Derived metrics reference
+
+Everything below lives on `RunMetrics` (`report.metrics.RunMetrics`,
+returned by `compute_run_metrics(run)` — or `s.metrics_for()` at the
+`analysis` layer). Field-by-field, with `None` semantics spelled out,
+since a silent `None → 0` is the easiest way to quietly corrupt an average.
+
+### `Cycle` (`metrics.cycles`) — one dispense-and-retrieve cycle
+
+The central object: every timing metric in the report is a difference
+between two `Cycle` timestamps.
+
+| Field | Type | `None` means |
+|---|---|---|
+| `node`, `trial`, `index` | `int` | never `None` — `index` is 0-based within this node's run |
+| `cmd_t` | `float?` | the cycle was *inferred* from a `Loaded`/phase event with no preceding command row (e.g. the very first cycle, whose command predates this run's window) |
+| `fed` | `bool` | `True` = real pellet (`Dispense`), `False` = `DispenseNoFeed` |
+| `lowering_t` / `loading_t` / `on_plate_t` / `raising_t` / `seeking_t` / `dwelling_t` | `float?` | that dispense phase was never logged for this cycle (not necessarily an error — some phases are skipped depending on state) |
+| `ready_t` | `float?` | the cycle never reached `Loaded`/`NoFeedPresented` — dispense failed or was still in progress when the run ended |
+| `first_presence_t` | `float?` | no presence detected while this cycle was open |
+| `first_dome_t` | `float?` | dome never opened while this cycle was open |
+| `taken_t` | `float?` | pellet never taken (censored, or a no-feed cycle) |
+| `end_t` | `float` | when this cycle closed — by `Pellet Taken`, the next dispense command, or run end |
+| `censored` | `bool` | `True` = still open when the run ended, no outcome observed — see trap #4 |
+
+Derived properties (all `None` unless every timestamp they need is present
+**and** in causal order — a `taken_t` that precedes `ready_t`, e.g. from a
+stray sensor bounce, yields `None` rather than a negative latency):
+
+| Property | = |
+|---|---|
+| `cycle_duration` | `ready_t - cmd_t` |
+| `approach_latency` | `first_presence_t - ready_t` |
+| `dome_latency` | `first_dome_t - ready_t` |
+| `handling_time` | `taken_t - first_dome_t` |
+| `retrieval_latency` | `taken_t - ready_t` |
+| `approached_without_dome` | `bool`: presence detected but dome never opened |
+| `dome_without_take` | `bool`: dome opened but no take followed |
+
+### `Bout` + `BoutIssues` (`metrics.presence`, `metrics.dome`)
+
+`Bout`: `node`, `t0`, `t1` (`None` if censored — still open at run end),
+`censored: bool`, `.dur` property (`None` when `t1` is `None`, never `0`).
+
+`BoutIssues`: `orphan_closes` (a close with no matching open), `duplicate_opens`
+(an open while already open), `censored` (count still-open at run end) — a
+nonzero value here is a data-quality signal worth surfacing, not just an
+internal counter.
+
+### `FaultInterval` (`metrics.faults`)
+
+`node`, `code` (a `ServiceStatus`: `Ok`, `NotInitialized`, `Jam`,
+`InvalidData`, `PelletLost`, `FeedTimeout`, `ActuatorTimeout`, ...), `t0`,
+`t1` (`None` if censored), `censored: bool`, `inferred_close: bool` (`True`
+when no explicit recovery event was logged and the close was inferred from
+the node's next successful `Loaded` instead), `.dur` property.
+
+### `PelletAccounting` (`metrics.pellets`, per node)
+
+Two independent pairs of counts exist **on purpose** (trap #5):
+
+| Field | Meaning |
+|---|---|
+| `presented` / `taken` | rows *actually seen* in this log |
+| `presented_total` / `taken_total` | **what you almost always want** — the base-station ledger's gap-corrected total when available (falls back to `presented`/`taken` on older logs with no ledger) |
+| `no_feed_presented` | `NoFeedPresented` count — not a real pellet |
+| `feed_skipped` | dispenses vetoed (plate occupied) |
+| `ledger_presented` / `ledger_taken` | the raw ledger totals; `None` on logs from before the ledger existed |
+| `missed_frames` | event frames the ledger proved were dropped (so `presented` undercounts `presented_total`) |
+| `counter_restarts` | node power-cycles seen mid-run |
+| `.take_rate` | `taken_total / presented_total`, `None` if `presented_total == 0` |
+| `.bus_loss_presented` / `.bus_loss_taken` | heartbeat-vs-event-count gap, `None` if fewer than 2 heartbeats seen for that node |
+
+### `InteractionFunnel` (`metrics.funnel`, per node)
+
+Built directly from cycles: `presented` → `approached` (presence while
+ready) → `dome_opened` (dome opened while ready) → `taken`, plus
+`approach_without_dome` / `dome_without_take` counts — the same booleans as
+`Cycle`, aggregated.
+
+### `LatencySummary`
+
+`n`, `median`, `q1`, `q3` (all `None` if `n == 0`), `values` (the cleaned
+list — `None`s already dropped). Used wherever the report shows a latency
+distribution.
+
+### `ThroughputPoint` (`metrics.throughput`)
+
+`t`, cumulative `presented`, cumulative `taken` — one point per pellet
+event, in order. Feed straight to a step chart.
+
+### `ActogramDay` (`metrics.activity_by_day`)
+
+`date` (a `datetime.date`, rig-local calendar day), `times` (hours-since-
+midnight, sorted) — see [§7](#7-time-timezone-and-time-of-day) for why this
+needs no UTC offset.
+
+## 6. Tidy-table columns
+
+`sfm_analysis.analysis.tables` — every function returns `list[dict]`, one
+row per item, ready for `pandas.DataFrame(...)` or plain iteration.
+
+**`cycles_table()`** — every `Cycle` field from [§5](#5-derived-metrics-reference)
+verbatim, plus `session`/`run_id`, under the same names: `node`, `trial`,
+`index`, `fed`, `cmd_t`, `lowering_t`, `loading_t`, `on_plate_t`,
+`raising_t`, `seeking_t`, `dwelling_t`, `ready_t`, `first_presence_t`,
+`first_dome_t`, `taken_t`, `end_t`, `censored`, and the five derived
+latencies (`cycle_duration`, `approach_latency`, `dome_latency`,
+`handling_time`, `retrieval_latency`) plus the two booleans
+(`approached_without_dome`, `dome_without_take`).
+
+**`bouts_table()`** — presence bouts, dome bouts, and fault intervals,
+unified under one `kind` column (`"presence"` \| `"dome"` \| `"fault"`):
+`session`, `run_id`, `kind`, `node`, `t0`, `t1`, `dur`, `censored`, `code`
+(fault name, `None` for presence/dome), `inferred_close` (`None` for
+presence/dome).
+
+**`events_table(source=, frame_type=, event_name=)`** — the escape hatch:
+every raw `LogRow`, filterable. Columns: `session`, `run_id`, `t`, `iso`,
+`node_id`, `trial`, `source`, `direction`, `frame_type`, `event_name`,
+`fields` (the decoded dict), `details`, `post_session`. Watch the `"Dome
+Opened"` trap if you filter on `event_name` directly here — prefer
+`bouts_table(kind="dome")`.
+
+**`trials_table()`** — one row per generic `trial` boundary marker:
+`session`, `run_id`, `t`, `trial`, `fields`. For template-specific trial
+structure (choice, reward, block), see `report.analyses.*` instead (e.g.
+`analyses.bandit.build_trials` for two-armed bandit).
+
+## 7. Time, timezone, and time-of-day
+
+Four different "when" values exist on a row; they answer different
+questions:
+
+| Value | Meaning | Trap |
+|---|---|---|
+| `RunData` rows' `.t` | run-relative seconds, recomputed from `timestamp_ms` by `split_runs` | **This is what you want for any timing/latency math.** |
+| `elapsed_s` (raw CSV column) | seconds since the *originating process* started | Resets across a reopened session — never read directly (trap #2) |
+| `timestamp_ms` | epoch milliseconds | Correct for ordering; needs `utc_offset_s` to mean anything as wall-clock |
+| `timestamp_iso` (`row.iso`) | rig-local wall-clock string | Already correct local time, with **no offset needed** — see below |
+
+`report.timezones` gives you four functions, all reading `row.iso`
+directly rather than reconstructing from epoch ms — because
+`datetime.fromtimestamp()`/`.astimezone()` with no arguments implicitly use
+*your own machine's* timezone, which is wrong the moment analyst and rig
+are in different zones:
+
+- **`time_of_day(row)`** → hours since local midnight (`0.0`–`24.0`). No
+  offset needed: `timestamp_iso` was already written in rig-local time.
+- **`local_date(row)`** → the calendar date this row falls on, rig-local.
+- **`zeitgeber_time(row, lights_on=6.0)`** → hours relative to lights-on
+  (ZT0 = lights-on). Also needs no offset — your facility's light schedule
+  is itself set in local wall-clock time.
+- **`wall_clock(row, run)`** → the *only* one of the four that needs
+  `run.utc_offset_s`. Returns a timezone-**aware** `datetime` when the
+  offset is known, a naive one otherwise — the naive case is not a
+  failure, the value is still correct rig-local time, it's just unsafe to
+  compare against another timezone's data or pass to `.astimezone()`.
+
+`utc_offset_s` is `None` on any log recorded before the base station
+started capturing it in `session_start`. That degrades `wall_clock()`
+gracefully (naive instead of aware) — everything else in this list is
+unaffected, since none of it ever needed the offset in the first place.
+
+## 8. Designing your own analysis: a worked example
+
+**The question:** *did the pellet take-rate change in the minutes right
+after a fault, compared to the session overall?* Not in the README's
+cookbook, and it needs the interval algebra plus the tidy tables together.
+
+**Pick the layer.** `cycles_table()` has `taken_t` per cycle already;
+`m.faults` (a `RunMetrics` field, [§5](#5-derived-metrics-reference)) has
+fault intervals. No raw-row work needed.
+
+**Write it**, against the bundled demo session (`sfm-report --demo`'s
+data — has exactly one real fault, verified ground truth in
+`tests/test_report_smoke.py`'s docstring):
+
+```python
+from sfm_analysis.analysis import load_session
+from sfm_analysis.analysis import intervals as iv
+from sfm_analysis.report.demo import DEMO_SESSION_PATH
+
+s = load_session(str(DEMO_SESSION_PATH))
+run = s.run()
+m = s.metrics_for()
+
+takes = [c["taken_t"] for c in s.cycles_table() if c["taken_t"] is not None]
+
+fault = m.faults[0]                       # this session's one fault interval
+window_after = [(fault.t1, fault.t1 + 120)]   # 2 minutes after recovery
+
+overall_rate = iv.rate_in(takes, [(0, run.duration_s)])
+post_fault_rate = iv.rate_in(takes, window_after)
+
+print(f"overall: {overall_rate:.4f} takes/s, post-fault: {post_fault_rate:.4f} takes/s")
+```
+
+**Validate against known ground truth** before trusting the number on a
+new file. On the demo session this prints:
+
+```
+overall: 0.0132 takes/s, post-fault: 0.0250 takes/s
+```
+
+which checks out against the file's independently-verified numbers: 17
+takes over the run's 1291.8s (`17/1291.8 ≈ 0.0132`), and 3 of those 17 fall
+in the 120s after the one fault interval closes at `t=200.404`
+(`3/120 = 0.0250`). If your own first run of a new analysis doesn't reduce
+to arithmetic you can check by hand like this against a file you already
+understand, don't trust the number yet.
+
+**Test it** the same way the test suite does — either build a synthetic
+run with `tests/report_fixtures.py` (see the README's "Testing your own
+analysis code" section) so you control the exact fault timing and takes,
+or pin the assertion against the demo session's known numbers directly, as
+above.
+
+## 9. Turning an analysis into a report section
+
+An analysis that's worth seeing on every report for a given experiment
+becomes a **section**: a plain function `(ctx: SectionContext) ->
+Optional[SectionResult]` (`report.schema`), registered in some
+`report/sections/<module>.py`'s `SECTIONS` dict, referenced by
+`"module.function"` in a design JSON.
+
+```python
+def my_section(ctx: SectionContext) -> Optional[SectionResult]:
+    figs = []
+    for run, m in zip(ctx.runs, ctx.metrics):
+        ...  # ctx.runs / ctx.metrics only -- see the rule below
+    if not figs:
+        return SectionResult(section_id="mymodule.my_section", title="My Analysis", html="", empty=True)
+    return SectionResult(section_id="mymodule.my_section", title="My Analysis", html="".join(figs))
+```
+
+- **A section must not touch the filesystem.** `SectionContext` (`ctx.runs`,
+  `ctx.metrics`, `ctx.opts` for this section's JSON `options` block,
+  `ctx.active_refs` for which other sections are in this document) is
+  built once and handed to every section read-only.
+- **A section that raises never kills the report** — `schema.run_section`
+  catches it and renders a visible error block with the traceback instead,
+  so one broken section can't take the rest down.
+- Add `{"ref": "mymodule.my_section"}` to the relevant
+  `report/designs/*.json`'s `sections` (or `combined_sections`) list — no
+  CLI or render-pipeline change needed.
+- If the section needs to be **interactive** (canvas, real zoom — like
+  `timeline.explorer`), it can set `SectionResult.extra_css` /
+  `.extra_js`: `render.py` collects and deduplicates these across every
+  active section into one `<style>` block and at most one inline
+  `<script>` for the whole document, so a report never carries more than
+  one script element regardless of how many interactive sections it has.
+  See `sections/timeline.py`'s `explorer_section` for the pattern —
+  including its print-only fallback for the static equivalent, since print
+  can't run canvas JS.

@@ -30,6 +30,7 @@ VFM is a firmware library for the Spatial Foraging Platform node. It provides no
 | [tools/dev_gui/deploy/README.md](tools/dev_gui/deploy/README.md) | One-time Raspberry Pi CAN HAT setup (`can0`) before running against real hardware |
 | [tools/dev_gui/base_station/experiment/README.md](tools/dev_gui/base_station/experiment/README.md) | How to author custom experiment templates (Python API + JSON params) |
 | [packages/sfm-analysis/README.md](packages/sfm-analysis/README.md) | Cross-platform session analysis and report generation — install, CLI, report design/section architecture, Python API |
+| [packages/sfm-analysis/docs/ANALYSIS_GUIDE.md](packages/sfm-analysis/docs/ANALYSIS_GUIDE.md) | Analysis reference: every log column, event name, derived metric field, and tidy-table column, plus a worked example |
 | [docs/WIRING.md](docs/WIRING.md) | Firmware pin names → physical jobs (motors, sensors, CAN, LEDs, discovery) |
 | [docs/DISPENSE_CYCLE.md](docs/DISPENSE_CYCLE.md) | How a node loads, raises, and reports pellet take / faults during a dispense |
 | [docs/HARDCODED_VALUES.md](docs/HARDCODED_VALUES.md) | Tunable firmware constants checklist (timings, speeds, thresholds) |
