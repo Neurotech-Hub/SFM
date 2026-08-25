@@ -166,59 +166,45 @@ class TestExplorerWidget:
                 continue
             assert ".sfm-explorer" in rule, f"unscoped rule: {rule!r}"
 
-    def test_wheel_zoom_is_horizontal_only(self):
-        """Regression test for a real bug: a pinch/Ctrl+wheel gesture that
-        lands a few pixels off the canvas -- on the toolbar, the legend,
-        the hint text -- has no handler to stop it there, so the browser's
-        own page zoom fires and scales the whole page (this chart
-        included) in both directions, which reads as "the graph zoomed
-        vertically too" even though nothing in EXPLORER_JS's view state
-        (view.t0/view.t1 only) can represent a vertical zoom at all.
+    def test_canvas_css_height_is_never_re_read_from_the_element(self):
+        """Regression test for a real bug: the canvas grew vertically on
+        every hover, on HiDPI displays only.
 
-        No Node available in this environment to execute the JS, so this
-        is a structural check on the source -- confirmed against a real
-        headless-Chromium repro during development: before the fix, a
-        synthetic ctrlKey wheel event over the toolbar/hint was NOT
-        defaultPrevented (native zoom would fire there); after, it is,
-        everywhere in the widget, while the canvas's own horizontal-only
-        zoom is unaffected.
+        ``canvas.height = N`` is a *reflected* IDL attribute -- assigning
+        it also rewrites the element's "height" content attribute. The
+        original sizeCanvas() read ``getAttribute("height")`` back as its
+        source of truth for the CSS height, so each redraw re-multiplied
+        the already-scaled backing-store height by devicePixelRatio
+        again. mouseleave calls drawMain(), so one hover in-and-out
+        doubled the canvas: measured 230 -> 460 -> 920 -> 1840 -> 3680 ->
+        7360 px over five hovers at dpr 2, with no zoom input at all.
+
+        At devicePixelRatio == 1 the multiply is a no-op and the bug is
+        perfectly invisible -- which is exactly why it shipped, and why
+        this test asserts the *structure* (height is captured once into a
+        variable, never re-read) rather than trying to observe growth.
         """
-        assert "var view = { t0: 0, t1: duration };" in EXPLORER_JS
-        # No vertical view-state field exists anywhere for a wheel/pinch
-        # handler to zoom.
-        assert re.search(r"\bview\.(y0|y1|scaleY|zoomY)\b", EXPLORER_JS) is None
-
-        # The canvas's own zoom handler changes only t0/t1.
-        main_wheel = re.search(
-            r'mainCanvas\.addEventListener\("wheel".*?\}, \{ passive: false \}\);',
-            EXPLORER_JS, re.DOTALL,
+        assert "function sizeCanvas" in EXPLORER_JS
+        body = re.search(r"function sizeCanvas\([^)]*\)\s*\{(.*?)\n  \}", EXPLORER_JS, re.DOTALL)
+        assert body is not None
+        # The CSS height must come from the memoized helper, not a live
+        # read of the attribute that this same function writes to.
+        assert 'getAttribute("height")' not in body.group(1), (
+            "sizeCanvas reads back the height attribute it also writes -- "
+            "this re-scales by devicePixelRatio on every redraw"
         )
-        assert main_wheel is not None
-        assert "setView(t0, t0 + newSpan)" in main_wheel.group(0)
+        assert "baseCssHeight(" in body.group(1)
 
-        # A second, container-level handler blocks the browser's native
-        # pinch/Ctrl+scroll zoom signal (ctrlKey/metaKey wheel) anywhere
-        # in the widget -- not just exactly over the canvas.
-        root_wheel = re.search(
-            r'root\.addEventListener\("wheel".*?\}, \{ passive: false \}\);',
-            EXPLORER_JS, re.DOTALL,
-        )
-        assert root_wheel is not None
-        assert "e.ctrlKey" in root_wheel.group(0) and "e.metaKey" in root_wheel.group(0)
-        assert "e.preventDefault()" in root_wheel.group(0)
-
-        # Safari/WebKit's trackpad pinch doesn't go through "wheel" at
-        # all -- it fires its own gesturestart/gesturechange/gestureend
-        # events, invisible to the ctrlKey-wheel guard above. A user
-        # describing this as "just hovering" triggering an unwanted zoom
-        # is the classic symptom of unguarded Safari trackpad pinch.
-        for name in ("gesturestart", "gesturechange", "gestureend"):
-            assert f'"{name}"' in EXPLORER_JS, f"no guard registered for {name}"
-
-    def test_canvas_wrap_blocks_native_touch_gestures(self):
-        rule = re.search(r"\.sfm-explorer \.canvas-wrap\s*\{([^}]*)\}", EXPLORER_CSS)
-        assert rule is not None
-        assert "touch-action: none" in rule.group(1)
+        # The one permitted read lives in the memoizing helper, guarded so
+        # it can only ever run before the first write.
+        helper = re.search(r"function baseCssHeight\([^)]*\)\s*\{(.*?)\n  \}", EXPLORER_JS, re.DOTALL)
+        assert helper is not None
+        assert "undefined" in helper.group(1), "baseCssHeight must memoize, not re-read"
+        # Exactly one *executable* read in the whole module (the one in
+        # baseCssHeight above). Strip // comments first -- the explanation
+        # of this very bug mentions getAttribute("height") in prose.
+        code_only = re.sub(r"//[^\n]*", "", EXPLORER_JS)
+        assert code_only.count('getAttribute("height")') == 1
 
     def test_bootstrap_js_round_trips_entries(self, tmp_path):
         run, m = _run_and_metrics(tmp_path, session="RoundTrip")

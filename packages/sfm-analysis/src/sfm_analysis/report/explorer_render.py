@@ -52,15 +52,9 @@ EXPLORER_CSS = """
 .sfm-explorer .toolbar button:hover { background: var(--gridline); }
 .sfm-explorer .sfm-readout { font-variant-numeric: tabular-nums; color: var(--ink-primary); }
 .sfm-explorer .sfm-readout b { font-weight: 600; }
-/* touch-action: none on both canvas wraps (border/padding included, not
-   just the canvas element itself) -- a touch-pinch or scroll gesture
-   starting a few pixels into the border/background is claimed by this
-   widget's own zoom/pan handling (see EXPLORER_JS), not the browser's
-   native page zoom, matching the wheel/gesture guards below which are
-   likewise scoped to the whole widget rather than just the canvases. */
 .sfm-explorer .canvas-wrap {
   position: relative; border: 1px solid var(--gridline); border-radius: 4px;
-  background: var(--surface); overflow: hidden; touch-action: none;
+  background: var(--surface); overflow: hidden;
 }
 .sfm-explorer canvas { display: block; width: 100%; }
 .sfm-explorer .sfm-overview { cursor: grab; }
@@ -203,10 +197,31 @@ function initSfmExplorer(root, DATA) {
 
   function dpr() { return window.devicePixelRatio || 1; }
 
-  function sizeCanvas(canvas) {
+  // The canvas's intended *CSS* height, captured once and then held in a
+  // JS variable -- never re-read from the element after the first call.
+  //
+  // This matters because `canvas.height = N` (in sizeCanvas below) is a
+  // reflected IDL attribute: assigning it also rewrites the element's
+  // "height" *content attribute*. Reading getAttribute("height") back as
+  // the source of truth on the next redraw would therefore return the
+  // already-scaled backing-store height and multiply it by
+  // devicePixelRatio again, compounding on every single redraw -- the
+  // canvas doubles on each hover (mouseleave calls drawMain) on any
+  // HiDPI display. It's exactly invisible at devicePixelRatio == 1,
+  // where the multiply is a no-op, which is what makes it easy to miss.
+  var baseCssH = {};
+  function baseCssHeight(canvas, key) {
+    if (baseCssH[key] === undefined) {
+      baseCssH[key] = parseFloat(canvas.getAttribute("height")) ||
+                      canvas.getBoundingClientRect().height || 1;
+    }
+    return baseCssH[key];
+  }
+
+  function sizeCanvas(canvas, key) {
     var rect = canvas.getBoundingClientRect();
     var ratio = dpr();
-    var cssH = parseFloat(canvas.getAttribute("height")) || rect.height;
+    var cssH = baseCssHeight(canvas, key);
     canvas.width = Math.max(1, Math.round(rect.width * ratio));
     canvas.height = Math.max(1, Math.round(cssH * ratio));
     canvas.style.height = cssH + "px";
@@ -363,13 +378,13 @@ function initSfmExplorer(root, DATA) {
   }
 
   function drawMain() {
-    var dims = sizeCanvas(mainCanvas);
+    var dims = sizeCanvas(mainCanvas, "main");
     drawFrame(mainCtx, dims, view.t0, view.t1, { showLabels: true, showAxis: true });
     if (brush) drawBrush(dims);
   }
 
   function drawOverview() {
-    var dims = sizeCanvas(overviewCanvas);
+    var dims = sizeCanvas(overviewCanvas, "overview");
     drawFrame(overviewCtx, dims, 0, duration, { showLabels: false, showAxis: false, laneH: Math.max(2, laneGap(dims.h) * 0.6) });
     var sc = xScale(0, duration, dims.w);
     var x0 = sc.toPx(view.t0), x1 = sc.toPx(view.t1);
@@ -466,11 +481,7 @@ function initSfmExplorer(root, DATA) {
   window.addEventListener("mouseup", mainMouseUp);
   mainCanvas.addEventListener("mouseleave", mainMouseLeave);
 
-  // wheel: zoom at cursor -- horizontal (time) only, never vertical. Every
-  // wheel/trackpad delta over the canvas (including a pinch or Ctrl+wheel,
-  // which arrives as a wheel event with ctrlKey/metaKey set) maps to the
-  // same one-dimensional (view.t0, view.t1) change; there is no vertical
-  // view-state field anywhere in this module for a "vertical zoom" to mean.
+  // wheel: zoom at cursor
   mainCanvas.addEventListener("wheel", function (e) {
     e.preventDefault();
     var rect = mainCanvas.getBoundingClientRect();
@@ -483,32 +494,6 @@ function initSfmExplorer(root, DATA) {
     var t0 = tAtCursor - frac * newSpan;
     setView(t0, t0 + newSpan);
   }, { passive: false });
-
-  // A pinch gesture or Ctrl+wheel that lands a few pixels off the canvas
-  // -- on the toolbar, the legend, the hint text, anywhere else in this
-  // widget -- has no listener above to stop it, so the browser's own
-  // page zoom fires instead: the whole page (this chart included) scales
-  // in both directions at once, which reads as "the graph zoomed
-  // vertically too" even though this module never implements a vertical
-  // zoom. Block that specifically (ctrlKey/metaKey wheel = the browser's
-  // pinch/Ctrl+scroll zoom signal) anywhere within the widget, without
-  // touching plain vertical page-scroll wheel events elsewhere in it.
-  root.addEventListener("wheel", function (e) {
-    if (e.ctrlKey || e.metaKey) e.preventDefault();
-  }, { passive: false });
-
-  // Safari/WebKit's trackpad pinch does not go through "wheel" at all --
-  // it fires its own proprietary, non-standard gesturestart/gesturechange/
-  // gestureend events instead (still absent from every other browser's
-  // event model), so the ctrlKey-wheel guard above cannot see or stop it.
-  // A user describing this as "just hovering" triggering an unwanted
-  // vertical zoom is the classic symptom of unguarded Safari trackpad
-  // pinch: resting/moving fingers on the trackpad while the cursor sits
-  // over the widget can register as a pinch even without a deliberate
-  // scroll gesture. Harmless no-op on every non-WebKit browser.
-  ["gesturestart", "gesturechange", "gestureend"].forEach(function (name) {
-    root.addEventListener(name, function (e) { e.preventDefault(); }, { passive: false });
-  });
 
   // ---- overview: drag to pan ----
   var panDrag = null;
