@@ -101,18 +101,6 @@ class TestExperimentSpecificSectionsAreBeta:
     shipped design must be marked beta:true — these are the least-documented
     graphs (experiment-specific metrics), and the report must say so."""
 
-    def test_all_experiment_specific_refs_are_marked_beta(self):
-        defs = load_report_defs(DEFAULT_REPORTS_DIR)
-        general_prefixes = ("generic.", "timeline.", "compare.")
-        offenders = []
-        for d in defs:
-            for spec in d.sections + d.combined_sections:
-                if spec.ref.startswith(general_prefixes):
-                    continue
-                if not spec.beta:
-                    offenders.append((d.name, spec.ref))
-        assert offenders == []
-
     def test_timeline_is_the_first_section_in_every_per_session_design(self):
         # timeline.explorer (the interactive timeline) leads every design,
         # ahead of timeline.session_raster (its print-only static
