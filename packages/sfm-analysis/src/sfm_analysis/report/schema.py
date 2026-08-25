@@ -70,6 +70,8 @@ class SectionResult:
     notes: List[str] = field(default_factory=list)          # data-quality caveats
     page_break_before: bool = False
     empty: bool = False                                 # nothing to say; section is omitted
+    extra_css: str = ""            # appended once to the document's single <style>
+    extra_js: str = ""             # emitted once in a single inline <script> before </body>
 
 
 @dataclass
@@ -82,6 +84,10 @@ class SectionContext:
     align: str                     # "relative" | "wall" | "trial" | "event:<name>"
     opts: Dict[str, Any] = field(default_factory=dict)   # this section's JSON "options" block
     design: Optional["ReportDef"] = None
+    active_refs: frozenset = field(default_factory=frozenset)  # every section ref actually
+    # rendered into this document (post design/enabled/CLI filtering) -- lets a section
+    # adapt to a neighbour's presence, e.g. session_raster going print-only when
+    # timeline.explorer is also active. Computed once by render.py before any section runs.
 
 
 SectionFn = Callable[[SectionContext], Optional[SectionResult]]

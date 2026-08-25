@@ -218,12 +218,19 @@ details.error pre {{ font-size: 11px; overflow-x: auto; white-space: pre-wrap; }
 
 footer {{ margin-top: 32px; font-size: 10px; color: var(--ink-muted); border-top: 1px solid var(--gridline); padding-top: 8px; }}
 
+/* .print-only is the inverse of .no-print: content (e.g. the static
+   raster panels) that's redundant on screen once an interactive
+   equivalent is present, but must still appear in the printed PDF,
+   which can't run the JS that draws that equivalent. */
+.print-only {{ display: none; }}
+
 @media print {{
   body {{ background: var(--surface); padding: 0; }}
   .report {{ max-width: none; padding: 0; }}
   .section, figure, table {{ page-break-inside: avoid; }}
   h2 {{ page-break-after: avoid; }}
   .no-print {{ display: none; }}
+  .print-only {{ display: block; }}
 }}
 
 @page {{ size: A4 portrait; margin: 12mm; }}

@@ -6,11 +6,16 @@ one HTML string. No file I/O happens here — see report/__init__.py for
 the CLI-facing functions that read CSVs and write the result to disk.
 
 Self-containment is the hard invariant this module must uphold: no
-<script>, no reference to a remote origin (http(s)://, //, javascript:),
-nothing that requires network access to render or print -- a *relative*
-link to a sibling explorer HTML file (explorer_href) is the one
-exception, since a same-directory relative link needs no network either.
-test_report_render.py asserts this on every build.
+reference to a remote origin (http(s)://, //, javascript:), no inline
+on*= event handler, nothing that requires network access to render or
+print -- a *relative* link to a sibling explorer HTML file
+(explorer_href) is one exception, since a same-directory relative link
+needs no network either. A section may also contribute inline CSS/JS
+via SectionResult.extra_css/extra_js (see schema.SectionResult) -- no
+section uses this yet, so a rendered report still carries zero inline
+<script> elements today; once one does, this stays capped at exactly
+one <script>, never a <script src=>. test_report_render.py asserts all
+of this on every build.
 """
 
 from __future__ import annotations
@@ -89,9 +94,15 @@ def render_report_html(
     works offline regardless of where the pair of files end up. This is
     the one link this document ever emits; see test_report_render.py for
     the scheme-based self-containment check that still allows it.
+
+    (This parameter is slated for removal once the explorer is embedded
+    directly as a report section instead of a sibling file -- see the
+    Phase 5 plan. Left wired for now so this commit changes nothing
+    observable.)
     """
     metrics = [compute_run_metrics(r) for r in runs]
     specs = design.combined_sections if combined else design.sections
+    active_refs = frozenset(spec.ref for spec in specs if spec.enabled)
 
     doc_title = title or (
         f"Combined Report — {len(runs)} runs" if combined else
@@ -99,11 +110,14 @@ def render_report_html(
     )
 
     section_html_parts = []
+    css_chunks: List[str] = []
+    js_chunks: List[str] = []
+    seen_css, seen_js = set(), set()
     for spec in specs:
         if not spec.enabled:
             continue
         ctx = SectionContext(runs=runs, metrics=metrics, combined=combined, align=align,
-                              opts=spec.options, design=design)
+                              opts=spec.options, design=design, active_refs=active_refs)
         result = run_section(spec, ctx)
         if result is None or result.empty:
             continue
@@ -111,6 +125,14 @@ def render_report_html(
         section_html_parts.append(
             f'<div class="section"{break_style}><h2>{_html.escape(result.title)}</h2>{result.html}</div>'
         )
+        # Deduplicated (preserving first-seen order): several instances of the
+        # same section type would otherwise repeat identical CSS/JS verbatim.
+        if result.extra_css and result.extra_css not in seen_css:
+            seen_css.add(result.extra_css)
+            css_chunks.append(result.extra_css)
+        if result.extra_js and result.extra_js not in seen_js:
+            seen_js.add(result.extra_js)
+            js_chunks.append(result.extra_js)
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     session_list = ", ".join(sorted({r.session for r in runs})) or "—"
@@ -119,12 +141,14 @@ def render_report_html(
         if explorer_href else ""
     )
 
+    script_block = f"<script>{''.join(js_chunks)}</script>" if js_chunks else ""
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>{_html.escape(doc_title)}</title>
-<style>{style.PAGE_CSS}</style>
+<style>{style.PAGE_CSS}{"".join(css_chunks)}</style>
 </head>
 <body>
 {charts.defs()}
@@ -136,6 +160,7 @@ def render_report_html(
   <footer>Generated {generated_at} by run_report.py &mdash; VFM behavior report tool.
   Print with Ctrl+P / Cmd+P.</footer>
 </div>
+{script_block}
 </body>
 </html>
 """
