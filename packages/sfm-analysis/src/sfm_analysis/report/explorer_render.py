@@ -57,9 +57,12 @@ EXPLORER_CSS = """
   background: var(--surface); overflow: hidden;
 }
 .sfm-explorer canvas { display: block; width: 100%; }
-.sfm-explorer .sfm-overview { cursor: grab; }
+.sfm-explorer .sfm-overview { cursor: grab; touch-action: pan-y; }
 .sfm-explorer .sfm-overview.dragging { cursor: grabbing; }
-.sfm-explorer .sfm-main { cursor: crosshair; }
+/* touch-action: none -- a touch-pinch on the chart itself is claimed by
+   this widget's own zoom handling (see EXPLORER_JS), not the browser's
+   native page zoom. */
+.sfm-explorer .sfm-main { cursor: crosshair; touch-action: none; }
 .sfm-explorer .sfm-tooltip {
   position: absolute; pointer-events: none; display: none;
   background: var(--ink-primary); color: var(--surface);
@@ -460,7 +463,11 @@ function initSfmExplorer(root, DATA) {
   window.addEventListener("mouseup", mainMouseUp);
   mainCanvas.addEventListener("mouseleave", mainMouseLeave);
 
-  // wheel: zoom at cursor
+  // wheel: zoom at cursor -- horizontal (time) only, never vertical. Every
+  // wheel/trackpad delta over the canvas (including a pinch or Ctrl+wheel,
+  // which arrives as a wheel event with ctrlKey/metaKey set) maps to the
+  // same one-dimensional (view.t0, view.t1) change; there is no vertical
+  // view-state field anywhere in this module for a "vertical zoom" to mean.
   mainCanvas.addEventListener("wheel", function (e) {
     e.preventDefault();
     var rect = mainCanvas.getBoundingClientRect();
@@ -472,6 +479,19 @@ function initSfmExplorer(root, DATA) {
     var frac = (tAtCursor - view.t0) / Math.max(view.t1 - view.t0, 0.0001);
     var t0 = tAtCursor - frac * newSpan;
     setView(t0, t0 + newSpan);
+  }, { passive: false });
+
+  // A pinch gesture or Ctrl+wheel that lands a few pixels off the canvas
+  // -- on the toolbar, the legend, the hint text, anywhere else in this
+  // widget -- has no listener above to stop it, so the browser's own
+  // page zoom fires instead: the whole page (this chart included) scales
+  // in both directions at once, which reads as "the graph zoomed
+  // vertically too" even though this module never implements a vertical
+  // zoom. Block that specifically (ctrlKey/metaKey wheel = the browser's
+  // pinch/Ctrl+scroll zoom signal) anywhere within the widget, without
+  // touching plain vertical page-scroll wheel events elsewhere in it.
+  root.addEventListener("wheel", function (e) {
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
   }, { passive: false });
 
   // ---- overview: drag to pan ----

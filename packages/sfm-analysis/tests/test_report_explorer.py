@@ -166,6 +166,52 @@ class TestExplorerWidget:
                 continue
             assert ".sfm-explorer" in rule, f"unscoped rule: {rule!r}"
 
+    def test_wheel_zoom_is_horizontal_only(self):
+        """Regression test for a real bug: a pinch/Ctrl+wheel gesture that
+        lands a few pixels off the canvas -- on the toolbar, the legend,
+        the hint text -- has no handler to stop it there, so the browser's
+        own page zoom fires and scales the whole page (this chart
+        included) in both directions, which reads as "the graph zoomed
+        vertically too" even though nothing in EXPLORER_JS's view state
+        (view.t0/view.t1 only) can represent a vertical zoom at all.
+
+        No Node available in this environment to execute the JS, so this
+        is a structural check on the source -- confirmed against a real
+        headless-Chromium repro during development: before the fix, a
+        synthetic ctrlKey wheel event over the toolbar/hint was NOT
+        defaultPrevented (native zoom would fire there); after, it is,
+        everywhere in the widget, while the canvas's own horizontal-only
+        zoom is unaffected.
+        """
+        assert "var view = { t0: 0, t1: duration };" in EXPLORER_JS
+        # No vertical view-state field exists anywhere for a wheel/pinch
+        # handler to zoom.
+        assert re.search(r"\bview\.(y0|y1|scaleY|zoomY)\b", EXPLORER_JS) is None
+
+        # The canvas's own zoom handler changes only t0/t1.
+        main_wheel = re.search(
+            r'mainCanvas\.addEventListener\("wheel".*?\}, \{ passive: false \}\);',
+            EXPLORER_JS, re.DOTALL,
+        )
+        assert main_wheel is not None
+        assert "setView(t0, t0 + newSpan)" in main_wheel.group(0)
+
+        # A second, container-level handler blocks the browser's native
+        # pinch/Ctrl+scroll zoom signal (ctrlKey/metaKey wheel) anywhere
+        # in the widget -- not just exactly over the canvas.
+        root_wheel = re.search(
+            r'root\.addEventListener\("wheel".*?\}, \{ passive: false \}\);',
+            EXPLORER_JS, re.DOTALL,
+        )
+        assert root_wheel is not None
+        assert "e.ctrlKey" in root_wheel.group(0) and "e.metaKey" in root_wheel.group(0)
+        assert "e.preventDefault()" in root_wheel.group(0)
+
+    def test_main_canvas_blocks_native_touch_pinch(self):
+        rule = re.search(r"\.sfm-explorer \.sfm-main\s*\{([^}]*)\}", EXPLORER_CSS)
+        assert rule is not None
+        assert "touch-action: none" in rule.group(1)
+
     def test_bootstrap_js_round_trips_entries(self, tmp_path):
         run, m = _run_and_metrics(tmp_path, session="RoundTrip")
         payload = build_explorer_payload(run, m)
