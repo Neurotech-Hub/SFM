@@ -7,15 +7,17 @@ the CLI-facing functions that read CSVs and write the result to disk.
 
 Self-containment is the hard invariant this module must uphold: no
 reference to a remote origin (http(s)://, //, javascript:), no inline
-on*= event handler, nothing that requires network access to render or
-print -- a *relative* link to a sibling explorer HTML file
-(explorer_href) is one exception, since a same-directory relative link
-needs no network either. A section may also contribute inline CSS/JS
-via SectionResult.extra_css/extra_js (see schema.SectionResult) -- no
-section uses this yet, so a rendered report still carries zero inline
-<script> elements today; once one does, this stays capped at exactly
-one <script>, never a <script src=>. test_report_render.py asserts all
-of this on every build.
+on*= event handler, no <script src=>, nothing that requires network
+access to render or print. A section may contribute inline CSS/JS via
+SectionResult.extra_css/extra_js (see schema.SectionResult) -- today
+only sections/timeline.py's interactive explorer widget does, which is
+the one exception to "no script": at most one inline <script>, built
+from every active section's extra_js, appears immediately before
+</body>. Printing never depends on it -- everything the explorer draws
+has a print-only static fallback (session_raster_section, gated by
+PAGE_CSS's .print-only). There is exactly one HTML document per report;
+nothing here ever links out to a sibling file. test_report_render.py
+asserts all of this on every build.
 """
 
 from __future__ import annotations
@@ -79,7 +81,7 @@ def render_report_html(
     combined: bool = False,
     align: str = "relative",
     title: Optional[str] = None,
-    explorer_href: Optional[str] = None,
+    include_explorer: bool = True,
 ) -> str:
     """
     Render a complete HTML document for `runs` using `design`.
@@ -88,20 +90,25 @@ def render_report_html(
     runs of several sessions for a combined report (`combined=True`,
     which selects `design.combined_sections` instead of `design.sections`).
 
-    `explorer_href`, if given, is a relative link to a sibling
-    interactive explorer HTML file (see report/explorer.py) -- never an
-    absolute or remote URL, so this document stays self-contained and
-    works offline regardless of where the pair of files end up. This is
-    the one link this document ever emits; see test_report_render.py for
-    the scheme-based self-containment check that still allows it.
-
-    (This parameter is slated for removal once the explorer is embedded
-    directly as a report section instead of a sibling file -- see the
-    Phase 5 plan. Left wired for now so this commit changes nothing
-    observable.)
+    `include_explorer=False` drops the `timeline.explorer` section (see
+    sections/timeline.py) even if the design lists it -- the escape
+    hatch for a caller that wants a guaranteed script-free document, or
+    just the leaner printable-only report. When it's included (the
+    default, and a design must list it for this to matter at all), the
+    interactive timeline is embedded directly in this document rather
+    than written as a sibling file -- there is only ever one HTML
+    artifact per report.
     """
     metrics = [compute_run_metrics(r) for r in runs]
     specs = design.combined_sections if combined else design.sections
+    if not include_explorer:
+        # "timeline.explorer" is sections/timeline.py's EXPLORER_REF,
+        # duplicated as a literal here rather than imported so render.py
+        # (generic over any design's section list) doesn't take a direct
+        # dependency on one specific section module -- resolution of
+        # every *other* section ref already happens dynamically, by
+        # string, via schema.resolve_section.
+        specs = [s for s in specs if s.ref != "timeline.explorer"]
     active_refs = frozenset(spec.ref for spec in specs if spec.enabled)
 
     doc_title = title or (
@@ -136,10 +143,6 @@ def render_report_html(
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     session_list = ", ".join(sorted({r.session for r in runs})) or "—"
-    explorer_link = (
-        f' · <a href="{_html.escape(explorer_href)}">interactive timeline</a>'
-        if explorer_href else ""
-    )
 
     script_block = f"<script>{''.join(js_chunks)}</script>" if js_chunks else ""
 
@@ -154,7 +157,7 @@ def render_report_html(
 {charts.defs()}
 <div class="report">
   <h1>{_html.escape(doc_title)}</h1>
-  <p class="note">Sessions: {_html.escape(session_list)} · Design: {_html.escape(design.label)}{explorer_link}</p>
+  <p class="note">Sessions: {_html.escape(session_list)} · Design: {_html.escape(design.label)}</p>
   {_kpi_band(runs, metrics)}
   {"".join(section_html_parts)}
   <footer>Generated {generated_at} by run_report.py &mdash; VFM behavior report tool.

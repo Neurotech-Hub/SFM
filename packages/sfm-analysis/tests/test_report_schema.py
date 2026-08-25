@@ -114,9 +114,12 @@ class TestExperimentSpecificSectionsAreBeta:
         assert offenders == []
 
     def test_timeline_is_the_first_section_in_every_per_session_design(self):
+        # timeline.explorer (the interactive timeline) leads every design,
+        # ahead of timeline.session_raster (its print-only static
+        # fallback once the explorer is active -- see sections/timeline.py).
         defs = load_report_defs(DEFAULT_REPORTS_DIR)
         for d in defs:
             if not d.sections:
                 continue
-            assert d.sections[0].ref == "timeline.session_raster", d.name
+            assert d.sections[0].ref == "timeline.explorer", d.name
 

@@ -25,20 +25,25 @@ _REMOTE_SCHEMES = ("http://", "https://", "//", "ftp://", "file://")
 
 
 class TestRenderReportHtml:
-    def test_self_contained_no_script_or_external_resources(self, tmp_path):
-        """The printed report must render with the network unplugged.
+    def test_self_contained_no_remote_origin_or_script_src(self, tmp_path):
+        """The printed report must render (and print) with the network
+        unplugged.
 
-        Checked by URL *scheme*, not by substring -- what render.py's
-        module docstring actually promises is "no remote origin", not
-        "no links at all". A relative link to a sibling explorer file
-        (explorer_href) is allowed by design; anything that reaches
-        off-machine is not.
+        Checked by URL *scheme* and by tag shape, not by a blunt
+        "<script" substring ban -- what render.py's module docstring
+        actually promises is "no remote origin" and "no <script src=>",
+        not "no script at all". The default design's timeline.explorer
+        section legitimately contributes one inline <script> (see
+        test_report_explorer.py for that section's own tests); this test
+        instead asserts there's at most one, and that it never has a
+        src= attribute pointing off-machine (or anywhere).
         """
         runs = _runs(tmp_path)
         design = resolve_design("two_armed_bandit")
         html = render_report_html(runs, design)
 
-        assert "<script" not in html.lower()
+        assert "<script src" not in html.lower()
+        assert html.lower().count("<script") <= 1
         assert "javascript:" not in html.lower()
         assert not re.search(r"\son[a-z]+\s*=", html, re.I), "inline event handler"
         assert "@import" not in html
@@ -48,23 +53,14 @@ class TestRenderReportHtml:
             url = m.group(1).strip().lower()
             assert not url.startswith(_REMOTE_SCHEMES), f"external resource: {url!r}"
 
-    def test_no_links_at_all_without_an_explicit_explorer_href(self, tmp_path):
-        """Tripwire: today, with no explorer_href, the report emits zero
-        <a> tags. This is not the real invariant (the scheme-based test
-        above is) -- it just documents that the explorer link is fully
-        opt-in, so a future caller that forgets to pass explorer_href
-        gets the old fully-linkless document, not a broken one."""
+    def test_no_explorer_yields_zero_script_and_zero_links(self, tmp_path):
+        """With include_explorer=False, the report reverts to the fully
+        script-free, link-free document this used to always be -- the
+        guaranteed escape hatch for a caller that needs that."""
         runs = _runs(tmp_path)
-        html = render_report_html(runs, resolve_design("default"))
+        html = render_report_html(runs, resolve_design("default"), include_explorer=False)
+        assert "<script" not in html.lower()
         assert "<a " not in html
-
-    def test_explorer_href_is_embedded_as_a_relative_link(self, tmp_path):
-        runs = _runs(tmp_path)
-        html = render_report_html(runs, resolve_design("default"), explorer_href="Weird_run1_explorer.html")
-        assert 'href="Weird_run1_explorer.html"' in html
-        # The relative link must still pass the scheme check above.
-        for m in _URL_ATTR.finditer(html):
-            assert not m.group(1).lower().startswith(_REMOTE_SCHEMES)
 
     def test_print_rules_present(self, tmp_path):
         runs = _runs(tmp_path)

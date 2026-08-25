@@ -46,10 +46,10 @@ jobs:
       - run: pytest
       - name: console script smoke
         run: sfm-report --list-designs
-      - name: demo report renders with no rig or log dir
+      - name: demo report renders with no rig or log dir (embedded explorer, the default)
         run: sfm-report --demo --out demo_report.html --quiet
-      - name: demo report + interactive explorer, cross-linked
-        run: sfm-report --demo --explorer --out demo_report2.html --quiet
+      - name: demo report, guaranteed script-free path
+        run: sfm-report --demo --no-explorer --out demo_report_no_explorer.html --quiet
 
   build:
     name: wheel + sdist

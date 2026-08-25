@@ -1,77 +1,73 @@
-"""explorer_render.py — renders the explorer payload into a self-contained
-interactive HTML document.
+"""explorer_render.py — renders the explorer payload into an embeddable,
+reusable interactive widget: real pan/zoom/brush-zoom over a run's
+timeline, drawn on `<canvas>`.
 
-Self-containment is the same hard invariant as the printed report (see
-render.py's module docstring): no external ``http(s)://`` reference,
-nothing that requires network access. Unlike the printed report, this
-document *does* ship a ``<script>`` — that's the whole point of it — so
-the invariant here is scoped to "no remote origin", not "no script".
-``tests/test_report_explorer.py`` asserts this.
+This used to render a whole standalone `<html>` document (one run's
+timeline, one file). It now renders a *widget* -- a `<div>` fragment plus
+shared CSS/JS -- so `sections/timeline.py`'s `explorer_section` can embed
+one instance per run directly inside the printed report, and a report
+covering several runs gets several independent widgets on one page.
 
-The JSON payload is embedded via ``json.dumps(..., separators=(",", ":"))``
-inline, with ``</script`` runs escaped so a title or event detail string
+Self-containment is the same hard invariant as the rest of the report
+(see render.py's module docstring): no external `http(s)://` reference,
+nothing that requires network access. This module's JS is what makes
+`extra_js` non-empty on the document it's embedded in -- see
+`sections/timeline.py`'s `explorer_section` for how `EXPLORER_CSS`/
+`EXPLORER_JS` reach `render.py`, and `render.py` for how the document
+caps at exactly one inline `<script>` however many widgets exist.
+
+The JSON payload is embedded via `json.dumps(..., separators=(",", ":"))`
+inline, with `</script` runs escaped so a title or event detail string
 containing that literal text can never terminate the script tag early
-(the same class of injection risk ``render.py`` already guards against
-for ``<style>``, applied here to ``<script>``).
+(the same class of injection risk `render.py` already guards against for
+`<style>`, applied here to `<script>`).
 """
 
 from __future__ import annotations
 
-import html as _html
 import json
 from typing import Any, Dict
 
-from . import charts
-from .timeline_data import EVENT_GLYPH, SESSION_MARK_STYLES, SPAN_LEGEND
+# Each widget is identified by a caller-supplied dom_id (unique within
+# the document -- explorer_section.py uses "sfm-explorer-<i>" per run)
+# rather than a module-level counter, so two independent renders in the
+# same process (e.g. two tests) can't collide.
 
-_CSS = """
-:root {
-  --surface: #fcfcfb; --page: #f9f9f7; --ink-primary: #0b0b0b;
-  --ink-secondary: #52514e; --ink-muted: #898781;
-  --gridline: #e1e0d9; --axis: #c3c2b7;
-}
-* { box-sizing: border-box; }
-body {
-  background: var(--page); color: var(--ink-primary);
-  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-  margin: 0; padding: 20px;
-}
-h1 { font-size: 18px; margin: 0 0 4px; }
-.note { color: var(--ink-secondary); font-size: 12px; margin: 0 0 14px; }
-.note a { color: var(--ink-secondary); }
-.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11px; color: var(--ink-secondary); margin: 0 0 6px; }
-.legend-item { display: inline-flex; align-items: center; gap: 5px; }
-.legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-.legend-label { font-weight: 600; }
-.legend-glyph { display: inline-block; vertical-align: middle; }
-.toolbar {
-  display: flex; align-items: center; gap: 10px; margin: 10px 0;
+# Scoped under .sfm-explorer so multiple widgets, and the report's own
+# unrelated styles, can coexist on one page without bleeding into each
+# other. Legend styling (.legend / .legend-item / .legend-swatch / ...)
+# is deliberately NOT duplicated here -- report/style.py's PAGE_CSS
+# already defines it, and the widget's legends are built with the same
+# charts.legend()/charts.legend_glyphs() the rest of the report uses.
+EXPLORER_CSS = """
+.sfm-explorer { margin: 4px 0 18px; }
+.sfm-explorer .toolbar {
+  display: flex; align-items: center; gap: 10px; margin: 6px 0;
   font-size: 12px; color: var(--ink-secondary);
 }
-.toolbar button {
+.sfm-explorer .toolbar button {
   font: inherit; padding: 4px 10px; border: 1px solid var(--axis);
   background: var(--surface); border-radius: 4px; cursor: pointer;
 }
-.toolbar button:hover { background: var(--gridline); }
-#readout { font-variant-numeric: tabular-nums; color: var(--ink-primary); }
-#readout b { font-weight: 600; }
-.canvas-wrap {
+.sfm-explorer .toolbar button:hover { background: var(--gridline); }
+.sfm-explorer .sfm-readout { font-variant-numeric: tabular-nums; color: var(--ink-primary); }
+.sfm-explorer .sfm-readout b { font-weight: 600; }
+.sfm-explorer .canvas-wrap {
   position: relative; border: 1px solid var(--gridline); border-radius: 4px;
   background: var(--surface); overflow: hidden;
 }
-canvas { display: block; width: 100%; }
-#overview { cursor: grab; }
-#overview.dragging { cursor: grabbing; }
-#main { cursor: crosshair; }
-#tooltip {
+.sfm-explorer canvas { display: block; width: 100%; }
+.sfm-explorer .sfm-overview { cursor: grab; }
+.sfm-explorer .sfm-overview.dragging { cursor: grabbing; }
+.sfm-explorer .sfm-main { cursor: crosshair; }
+.sfm-explorer .sfm-tooltip {
   position: absolute; pointer-events: none; display: none;
   background: var(--ink-primary); color: var(--surface);
   font-size: 11px; padding: 4px 7px; border-radius: 3px;
   white-space: nowrap; z-index: 10; transform: translate(-50%, -100%);
   margin-top: -8px;
 }
-.hint { color: var(--ink-muted); font-size: 11px; margin-top: 6px; }
-footer { color: var(--ink-muted); font-size: 11px; margin-top: 18px; }
+.sfm-explorer .sfm-hint { color: var(--ink-muted); font-size: 11px; margin-top: 6px; }
 """
 
 
@@ -83,69 +79,56 @@ def _escape_for_script(payload_json: str) -> str:
     return payload_json.replace("</script", "<\\/script").replace("<!--", "<\\!--")
 
 
-def render_explorer_html(payload: Dict[str, Any], *, report_href: str = "") -> str:
+def explorer_widget_html(payload: Dict[str, Any], *, dom_id: str) -> str:
     """
-    Render ``payload`` (from ``build_explorer_payload``) into a complete,
-    self-contained interactive HTML document.
-
-    ``report_href``, if given, is a relative link back to the sibling
-    printed report — never an absolute or remote URL, so the explorer
-    stays a standalone file usable offline and independently of where it
-    ends up.
+    Markup for one widget instance: toolbar, overview strip, main canvas,
+    tooltip. No `<script>` or payload data here -- `explorer_section`
+    collects every widget's payload into one `window.__SFM_EXPLORERS__`
+    array and one shared `<script>` for the whole document (see
+    render.py, which is what keeps the document capped at one inline
+    script regardless of how many runs/widgets it holds).
     """
     meta = payload["meta"]
-    title = f"{meta['session']} · run {meta['run_id']} — interactive timeline"
+    main_h = max(220, 30 + len(meta["lanes"]) * 20)
+    return f"""<div class="sfm-explorer" id="{dom_id}">
+  <p class="note">Drag on the main view to zoom into a range, drag the overview
+  strip to pan, scroll to zoom at the cursor.</p>
+  <div class="toolbar">
+    <button class="sfm-reset" type="button">Reset zoom</button>
+    <span class="sfm-readout">&nbsp;</span>
+  </div>
+  <div class="canvas-wrap">
+    <canvas class="sfm-overview" height="46"></canvas>
+  </div>
+  <div class="canvas-wrap" style="margin-top:8px">
+    <canvas class="sfm-main" height="{main_h}"></canvas>
+    <div class="sfm-tooltip"></div>
+  </div>
+  <p class="sfm-hint">Time-of-day and wall-clock use the recording rig's own
+  local clock, not the viewer's.</p>
+</div>"""
 
-    span_legend = charts.legend(SPAN_LEGEND, prefix="Bands:")
-    mark_legend = charts.legend_glyphs(
-        [(label, glyph, key) for glyph, key, label in SESSION_MARK_STYLES.values()]
-        + [(label, glyph, key) for glyph, key, label in EVENT_GLYPH.values()],
-        prefix="Markers:",
+
+def explorer_bootstrap_js(entries) -> str:
+    """
+    ``entries`` is a list of ``{"dom_id": str, "payload": dict}``. Returns
+    the JS that seeds ``window.__SFM_EXPLORERS__`` and boots one
+    ``initSfmExplorer`` instance per entry -- appended after ``EXPLORER_JS``
+    to form one section's ``extra_js`` (see explorer_section).
+    """
+    packed = _escape_for_script(json.dumps(entries, separators=(",", ":")))
+    return (
+        f"\nwindow.__SFM_EXPLORERS__ = (window.__SFM_EXPLORERS__ || []).concat({packed});\n"
+        "(function () { var q = window.__SFM_EXPLORERS__; "
+        "for (var i = 0; i < q.length; i++) { "
+        "if (q[i].booted) continue; q[i].booted = true; "
+        "var root = document.getElementById(q[i].dom_id); "
+        "if (root) initSfmExplorer(root, q[i].payload); } })();\n"
     )
 
-    report_link = ""
-    if report_href:
-        report_link = f' · <a href="{_html.escape(report_href)}">printable report</a>'
 
-    payload_json = _escape_for_script(json.dumps(payload, separators=(",", ":")))
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{_html.escape(title)}</title>
-<style>{_CSS}</style>
-</head>
-<body>
-<h1>{_html.escape(title)}</h1>
-<p class="note">Interactive timeline · drag on the main view to zoom into a range,
-drag the overview strip to pan, scroll to zoom at the cursor{report_link}</p>
-{span_legend}{mark_legend}
-<div class="toolbar">
-  <button id="resetZoom" type="button">Reset zoom</button>
-  <span id="readout">&nbsp;</span>
-</div>
-<div class="canvas-wrap">
-  <canvas id="overview" height="46"></canvas>
-</div>
-<div class="canvas-wrap" style="margin-top:8px">
-  <canvas id="main" height="{max(220, 30 + len(meta['lanes']) * 20)}"></canvas>
-  <div id="tooltip"></div>
-</div>
-<p class="hint">Time-of-day and wall-clock use the recording rig's own local clock,
-not this browser's.</p>
-<footer>Generated by sfm-report. Self-contained: works fully offline.</footer>
-<script>
-const DATA = {payload_json};
-{_JS}
-</script>
-</body>
-</html>
-"""
-
-
-_JS = r"""
-(function () {
+EXPLORER_JS = r"""
+function initSfmExplorer(root, DATA) {
   "use strict";
 
   var meta = DATA.meta;
@@ -205,12 +188,12 @@ _JS = r"""
   // ---- view state ----
   var view = { t0: 0, t1: duration };
 
-  var mainCanvas = document.getElementById("main");
+  var mainCanvas = root.querySelector(".sfm-main");
   var mainCtx = mainCanvas.getContext("2d");
-  var overviewCanvas = document.getElementById("overview");
+  var overviewCanvas = root.querySelector(".sfm-overview");
   var overviewCtx = overviewCanvas.getContext("2d");
-  var tooltip = document.getElementById("tooltip");
-  var readout = document.getElementById("readout");
+  var tooltip = root.querySelector(".sfm-tooltip");
+  var readout = root.querySelector(".sfm-readout");
 
   function dpr() { return window.devicePixelRatio || 1; }
 
@@ -410,7 +393,7 @@ _JS = r"""
     updateReadout(null);
   }
 
-  document.getElementById("resetZoom").addEventListener("click", function () {
+  root.querySelector(".sfm-reset").addEventListener("click", function () {
     setView(0, duration);
   });
 
@@ -435,10 +418,11 @@ _JS = r"""
     // Registered on window (not just the canvas) so a brush drag keeps
     // tracking even if the cursor leaves the canvas mid-drag. When NOT
     // dragging, that means this also fires for mouse movement anywhere
-    // on the page -- over the legend, the toolbar, the footer -- so the
-    // hover/readout logic below must only run while the cursor is
-    // actually within the canvas's own bounds, or hovering unrelated
-    // page elements would show a bogus cursor-time readout.
+    // on the page -- over another widget, the legend, the footer -- so
+    // the hover/readout logic below must only run while the cursor is
+    // actually within *this* canvas's own bounds, or hovering unrelated
+    // page elements (including a sibling widget's canvas) would show a
+    // bogus cursor-time readout on this one.
     var rect = mainCanvas.getBoundingClientRect();
     var px = e.clientX - rect.left, py = e.clientY - rect.top;
     if (brush) {
@@ -567,5 +551,5 @@ _JS = r"""
 
   redraw();
   updateReadout(null);
-})();
+}
 """

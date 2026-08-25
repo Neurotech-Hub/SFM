@@ -5,23 +5,21 @@ later, a GUI hook):
 
     load_runs(csv_path, ...)              -> List[RunData]
     build_session_report(csv_path, ...)   -> Path
-    build_session_explorer(csv_path, ...) -> Path
     build_combined_report(csv_paths, ...) -> Path
     render_report_html(...)               -> str  (re-exported from render.py)
 
 The package is stdlib-only (no jinja2/pandas/matplotlib) and produces a
-single self-contained HTML file with inline SVG charts, printable via
-Ctrl+P. See sfm_analysis/report/schema.py for how report "designs"
-(JSON) compose "sections" (Python) — the same split the VFM base
-station's experiment system uses for templates/parameters.
+single self-contained HTML file, printable via Ctrl+P. See
+sfm_analysis/report/schema.py for how report "designs" (JSON) compose
+"sections" (Python) — the same split the VFM base station's experiment
+system uses for templates/parameters.
 
-build_session_explorer is the one exception to "no JavaScript": it
-writes a sibling interactive HTML file (pan/zoom/brush-to-zoom over a
-canvas) for exploring a single run's timeline — see explorer.py and
-explorer_render.py. It is never produced automatically by
-build_session_report; a caller that wants both asks for both and, if it
-wants them cross-linked, passes the explorer's path as
-build_session_report's explorer_href.
+Every report is exactly one HTML file, never a pair. The interactive
+timeline (pan/zoom/brush-to-zoom over a canvas) is one such section —
+sections/timeline.py's timeline.explorer, backed by explorer.py/
+explorer_render.py — embedded directly rather than written as a sibling
+document; pass build_session_report(..., include_explorer=False) for
+the leaner, guaranteed-script-free printable-only document.
 """
 
 from __future__ import annotations
@@ -39,7 +37,6 @@ from .session import RunData, split_runs
 __all__ = [
     "load_runs",
     "build_session_report",
-    "build_session_explorer",
     "build_combined_report",
     "render_report_html",
 ]
@@ -88,64 +85,23 @@ def build_session_report(
     design: Optional[str] = None,
     align: str = "relative",
     title: Optional[str] = None,
-    explorer_href: Optional[str] = None,
+    include_explorer: bool = True,
 ) -> Path:
     """Render one session's CSV to a standalone HTML report and write it to disk.
 
-    `explorer_href`, if given, is a relative link embedded in the report
-    to a sibling interactive explorer file -- this function does not
-    build that file itself; see build_session_explorer.
+    `include_explorer=False` drops the embedded interactive timeline
+    (see render_report_html) even if the design lists it, for a caller
+    that wants the guaranteed-script-free printable-only document.
     """
     runs = load_runs(csv_path, run_id=run_id)
     report_def = _resolve_design_for(runs, design)
     html = render_report_html(runs, report_def, combined=False, align=align, title=title,
-                               explorer_href=explorer_href)
+                               include_explorer=include_explorer)
 
     if out_path is None:
         session = runs[0].session
         suffix = f"_run{runs[0].run_id}" if len(runs) == 1 else ""
         out_path = Path(csv_path).parent / "reports" / f"{session}{suffix}_report.html"
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(html, encoding="utf-8")
-    return out_path
-
-
-def build_session_explorer(
-    csv_path: Path,
-    out_path: Optional[Path] = None,
-    *,
-    run_id: Optional[int] = None,
-    report_href: str = "",
-) -> Path:
-    """
-    Render one run's interactive timeline explorer and write it to disk —
-    a sibling artifact to build_session_report's printed output, not a
-    replacement for it (see this module's docstring).
-
-    An explorer represents exactly one run's timeline. If csv_path holds
-    more than one run and run_id isn't given, the run with the most rows
-    is used, so a session's aborted restart doesn't win over the real
-    session that followed it -- the same heuristic
-    sfm_analysis.analysis.Session.run() uses (duplicated here rather than
-    imported from there, since `analysis` depends on this package, not
-    the other way around).
-
-    `report_href`, if given, is a relative link back to the sibling
-    printed report, shown in the explorer's own header.
-    """
-    from .explorer import build_explorer_payload
-    from .explorer_render import render_explorer_html
-    from .metrics import compute_run_metrics
-
-    runs = load_runs(csv_path, run_id=run_id)
-    run = runs[0] if len(runs) == 1 else max(runs, key=lambda r: len(r.rows))
-    m = compute_run_metrics(run)
-    payload = build_explorer_payload(run, m)
-    html = render_explorer_html(payload, report_href=report_href)
-
-    if out_path is None:
-        out_path = Path(csv_path).parent / "reports" / f"{run.session}_run{run.run_id}_explorer.html"
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")

@@ -4,6 +4,7 @@
   "description": "Choice, reversal learning, and retrieval timing for the two-armed bandit task. Both arms run the identical dispense motion each trial; only one is baited — the animal's choice is which arm it visits first, not which pellet it eventually takes.",
   "matches": ["two_armed_bandit"],
   "sections": [
+    { "ref": "timeline.explorer" },
     { "ref": "timeline.session_raster" },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },

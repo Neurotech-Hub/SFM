@@ -21,6 +21,8 @@ from typing import List, Optional
 
 from .. import charts
 from ..charts import Frame, Mark, escape_text
+from ..explorer import build_explorer_payload
+from ..explorer_render import EXPLORER_CSS, EXPLORER_JS, explorer_bootstrap_js, explorer_widget_html
 from ..timeline_data import (
     EVENT_GLYPH as _EVENT_GLYPH,
     SESSION_MARK_STYLES as _SESSION_MARK_STYLES,
@@ -30,6 +32,12 @@ from ..timeline_data import (
     panel_marks_spans as _panel_marks_spans,
 )
 from ..schema import SectionContext, SectionResult
+
+# The ref this module's interactive section registers under (SECTIONS
+# below) -- session_raster_section checks ctx.active_refs against this
+# exact string to decide whether it should go print-only, so the two
+# stay coupled by name rather than by import-time ordering.
+EXPLORER_REF = "timeline.explorer"
 
 
 def _panel(run, m, nodes: List[int], w0: float, w1: float, *, tall: bool) -> str:
@@ -110,10 +118,21 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
     if not figs:
         return SectionResult(section_id="timeline.session_raster", title="Session Timeline", html="", empty=True)
 
+    # When the interactive explorer is also in this document, these panels
+    # are redundant on screen (the explorer draws the same lanes/spans/
+    # marks, plus real zoom) -- but the printed PDF can't run the JS that
+    # draws the explorer, so the panels must still appear there. See
+    # PAGE_CSS's .print-only and explorer_section below.
+    html = "".join(figs)
+    title = "Session Timeline"
+    if EXPLORER_REF in ctx.active_refs:
+        html = f'<div class="print-only">{html}</div>'
+        title = "Session Timeline (printed panels)"
+
     return SectionResult(
         section_id="timeline.session_raster",
-        title="Session Timeline",
-        html="".join(figs),
+        title=title,
+        html=html,
         page_break_before=True,
     )
 
@@ -208,7 +227,68 @@ def _fmt_clock(hour: float) -> str:
     return f"{h:02d}:{m:02d}"
 
 
+def explorer_section(ctx: SectionContext) -> Optional[SectionResult]:
+    """
+    The interactive timeline: one real pan/zoom/brush-zoom widget per run,
+    embedded directly in the report rather than a sibling file (see
+    explorer.py/explorer_render.py). Draws from exactly the same
+    timeline_data.panel_marks_spans session_raster_section uses above, so
+    the two can never disagree about what a span or mark means.
+
+    session_raster_section (this module) checks EXPLORER_REF against
+    ctx.active_refs to go print-only whenever this section is also
+    active, so the printed PDF still gets full detail without this
+    section's canvas -- which print can't run.
+    """
+    entries = []
+    legends_done = False
+    span_legend = mark_legend = ""
+    body = []
+
+    for i, (run, m) in enumerate(zip(ctx.runs, ctx.metrics)):
+        nodes = sorted(set(run.nodes) | {r.node_id for r in run.rows if r.node_id != 0})
+        if not nodes:
+            continue
+        payload = build_explorer_payload(run, m)
+        dom_id = f"sfm-explorer-{i}"
+        entries.append({"dom_id": dom_id, "payload": payload})
+
+        if not legends_done:
+            # Legends are the same regardless of run (fixed vocabularies in
+            # timeline_data.py), so build them once rather than repeating
+            # per widget.
+            span_legend = charts.legend(_SPAN_LEGEND, prefix="Bands:")
+            mark_legend = charts.legend_glyphs(
+                [(label, glyph, key) for glyph, key, label in _SESSION_MARK_STYLES.values()]
+                + [(label, glyph, key) for glyph, key, label in _EVENT_GLYPH.values()],
+                prefix="Markers:",
+            )
+            legends_done = True
+
+        heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
+        body.append(f"{heading}{explorer_widget_html(payload, dom_id=dom_id)}")
+
+    if not entries:
+        return SectionResult(section_id=EXPLORER_REF, title="Interactive Timeline", html="", empty=True)
+
+    # A no-JS viewer must not see a blank hole where the timeline should
+    # be -- fall back to the print-only static panels being visible on
+    # screen too, mirroring what happens automatically when actually
+    # printing.
+    noscript = '<noscript><style>.print-only{display:block!important}.sfm-explorer{display:none}</style></noscript>'
+
+    return SectionResult(
+        section_id=EXPLORER_REF,
+        title="Interactive Timeline",
+        html=f"{noscript}{span_legend}{mark_legend}{''.join(body)}",
+        extra_css=EXPLORER_CSS,
+        extra_js=EXPLORER_JS + explorer_bootstrap_js(entries),
+        page_break_before=True,
+    )
+
+
 SECTIONS = {
     "session_raster": session_raster_section,
     "actogram": actogram_section,
+    "explorer": explorer_section,
 }

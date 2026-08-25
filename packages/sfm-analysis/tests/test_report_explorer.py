@@ -1,6 +1,8 @@
 """Tests for sfm_analysis.report.explorer's payload builder and
-explorer_render's HTML/JS document."""
+explorer_render's embeddable widget -- and, at the report level, for the
+timeline.explorer section it's embedded through (sections/timeline.py)."""
 
+import html.parser
 import json
 import re
 
@@ -9,7 +11,14 @@ from report_fixtures import bandit_run, write_session
 from sfm_analysis.report.loader import load_rows
 from sfm_analysis.report.metrics import compute_run_metrics
 from sfm_analysis.report.explorer import build_explorer_payload
-from sfm_analysis.report.explorer_render import render_explorer_html
+from sfm_analysis.report.explorer_render import (
+    EXPLORER_CSS,
+    EXPLORER_JS,
+    explorer_bootstrap_js,
+    explorer_widget_html,
+)
+from sfm_analysis.report.render import render_report_html
+from sfm_analysis.report.schema import resolve_design
 from sfm_analysis.report.session import split_runs
 from sfm_analysis.report import style
 
@@ -23,6 +32,34 @@ def _run_and_metrics(tmp_path, n_trials=4, session="EXP"):
     loaded, _, _ = load_rows(path)
     run = split_runs(loaded, [], path)[0]
     return run, compute_run_metrics(run)
+
+
+def _runs(tmp_path, session="EXP", n_trials=4):
+    rows = bandit_run(n_trials=n_trials, session=session)
+    path = write_session(tmp_path, rows, session=session)
+    loaded, _, _ = load_rows(path)
+    return split_runs(loaded, [], path)
+
+
+def _script_tag_events(doc: str):
+    """Real <script> start/end tags as the HTML parser sees them -- not a
+    substring count, which can't tell a real tag from harmless text
+    sitting inside a script element's own content (a literal "<script>"
+    with no leading slash inside a script element's text does not open a
+    nested element or end anything; only "</script" closes it)."""
+    starts, ends = [], []
+
+    class _Counter(html.parser.HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == "script":
+                starts.append(True)
+
+        def handle_endtag(self, tag):
+            if tag == "script":
+                ends.append(True)
+
+    _Counter(convert_charrefs=True).feed(doc)
+    return starts, ends
 
 
 class TestBuildExplorerPayload:
@@ -105,170 +142,136 @@ class TestBuildExplorerPayload:
         assert payload["meta"]["utc_offset_s"] is None
 
 
-class TestRenderExplorerHtml:
-    def test_exactly_one_inline_script(self, tmp_path):
+class TestExplorerWidget:
+    """Unit tests on the reusable widget module itself (explorer_render.py),
+    independent of how a section assembles several instances into a page."""
+
+    def test_widget_html_scoped_under_dom_id(self, tmp_path):
         run, m = _run_and_metrics(tmp_path)
         payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload)
-        assert html.count("<script") == 1
-        assert html.count("</script>") == 1
+        markup = explorer_widget_html(payload, dom_id="sfm-explorer-0")
+        assert 'id="sfm-explorer-0"' in markup
+        assert 'class="sfm-explorer"' in markup
+        # No inline <script>/<style> of its own -- those are assembled
+        # once per document by explorer_section, not per widget.
+        assert "<script" not in markup
+        assert "<style" not in markup
 
-    def test_no_remote_origins(self, tmp_path):
-        """Self-contained means offline-capable, not link-free -- unlike
-        the printed report, this document legitimately ships a <script>
-        (that's the whole point of it). The invariant is scoped to
-        "reaches no remote origin", same reasoning as
-        test_report_render.py's scheme-based check."""
-        run, m = _run_and_metrics(tmp_path)
+    def test_css_scoped_under_sfm_explorer(self):
+        # Every rule must be scoped so N widgets (and the report's own
+        # unrelated styles) can't bleed into each other.
+        for rule in re.findall(r"([^\n{}]+)\s*\{", EXPLORER_CSS):
+            rule = rule.strip()
+            if not rule:
+                continue
+            assert ".sfm-explorer" in rule, f"unscoped rule: {rule!r}"
+
+    def test_bootstrap_js_round_trips_entries(self, tmp_path):
+        run, m = _run_and_metrics(tmp_path, session="RoundTrip")
         payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload, report_href="Weird_run1_report.html")
-
-        assert "javascript:" not in html.lower()
-        assert "@import" not in html
-        assert not re.search(r"url\(\s*['\"]?(?:https?:)?//", html, re.I)
-        for m2 in _URL_ATTR.finditer(html):
-            url = m2.group(1).strip().lower()
-            assert not url.startswith(_REMOTE_SCHEMES), f"external resource: {url!r}"
-
-    def test_payload_json_round_trips(self, tmp_path):
-        run, m = _run_and_metrics(tmp_path)
-        payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload)
-        match = re.search(r"const DATA = (.*?);\n", html, re.DOTALL)
+        entries = [{"dom_id": "sfm-explorer-0", "payload": payload}]
+        js = explorer_bootstrap_js(entries)
+        match = re.search(r"window\.__SFM_EXPLORERS__ = \(window\.__SFM_EXPLORERS__ \|\| \[\]\)\.concat\((.*?)\);\n",
+                           js, re.DOTALL)
         assert match is not None
-        parsed = json.loads(match.group(1))
-        assert parsed["meta"]["session"] == run.session
-        assert len(parsed["spans"]) == len(payload["spans"])
+        decoded = json.loads(match.group(1))
+        assert decoded[0]["dom_id"] == "sfm-explorer-0"
+        assert decoded[0]["payload"]["meta"]["session"] == "RoundTrip"
 
-    def test_deterministic(self, tmp_path):
-        run, m = _run_and_metrics(tmp_path)
-        payload = build_explorer_payload(run, m)
-        html1 = render_explorer_html(payload, report_href="r.html")
-        html2 = render_explorer_html(payload, report_href="r.html")
-        assert html1 == html2
-
-    def test_title_contains_session_and_run(self, tmp_path):
-        run, m = _run_and_metrics(tmp_path, session="MyExplorerSession")
-        payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload)
-        assert "MyExplorerSession" in html
-        assert f"run {run.run_id}" in html
-
-    def test_report_href_omitted_when_not_given(self, tmp_path):
-        run, m = _run_and_metrics(tmp_path)
-        payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload)
-        assert "printable report" not in html
-
-    def test_report_href_link_present_when_given(self, tmp_path):
-        run, m = _run_and_metrics(tmp_path)
-        payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload, report_href="Weird_run1_report.html")
-        assert 'href="Weird_run1_report.html"' in html
-
-    def test_session_name_is_escaped_in_title_and_heading(self, tmp_path):
-        # "&" and "<" reach the filesystem fine as a session name (unlike
-        # "/", which report_fixtures.write_session uses as a path
-        # separator, so no closing tag like "</em>" here) -- this
-        # exercises the <title>/<h1> escaping. The same raw text
-        # legitimately (and correctly) appears un-escaped inside the
-        # <script> element's JSON payload -- JSON string data, not HTML
-        # body text -- so the check is scoped to the HTML outside it.
-        run, m = _run_and_metrics(tmp_path, session="A&B<em>not-italic")
-        payload = build_explorer_payload(run, m)
-        html = render_explorer_html(payload)
-        before_script = html.split("<script", 1)[0]
-        assert "A&amp;B" in before_script
-        assert "<em>not-italic" not in before_script
-
-    def _script_tag_events(self, doc: str):
-        """Real <script> start/end tags as the HTML parser sees them --
-        not a substring count, which can't tell a real tag from harmless
-        text sitting inside the one genuine script element's content
-        (see the test this backs: a literal "<script>" with no leading
-        slash inside a script element's text does not open a nested
-        element or end anything; only "</script" closes it)."""
-        import html.parser
-        starts, ends = [], []
-
-        class _Counter(html.parser.HTMLParser):
-            def handle_starttag(self, tag, attrs):
-                if tag == "script":
-                    starts.append(True)
-
-            def handle_endtag(self, tag):
-                if tag == "script":
-                    ends.append(True)
-
-        _Counter(convert_charrefs=True).feed(doc)
-        return starts, ends
-
-    def test_a_title_string_cannot_terminate_the_script_tag_early(self, tmp_path):
-        """The payload's string pool can carry arbitrary event/detail
-        text (from CSV fields_json, not under this code's control) -- a
-        title containing the literal text "</script" must not be able to
-        close the <script> element early regardless of it sitting inside
-        a JS string literal, since the HTML parser tokenizes the closing
-        tag before any JS ever runs. Built directly (not via a session
-        name, which becomes a filename and can't contain "/")."""
+    def test_bootstrap_js_escapes_dangerous_script_close(self, tmp_path):
+        """The payload's string pool can carry arbitrary event/detail text
+        (from CSV fields_json, not under this code's control) -- a title
+        containing the literal text "</script" must not be able to close
+        the enclosing <script> element early, regardless of it sitting
+        inside a JS string literal, since the HTML parser tokenizes the
+        closing tag before any JS ever runs."""
         run, m = _run_and_metrics(tmp_path)
         payload = build_explorer_payload(run, m)
         payload["strings"][0] = "</script><script>window.pwned=1</script>"
-        html = render_explorer_html(payload)
+        entries = [{"dom_id": "sfm-explorer-0", "payload": payload}]
+        js = explorer_bootstrap_js(entries)
 
-        starts, ends = self._script_tag_events(html)
+        doc = f"<html><body><script>{EXPLORER_JS}{js}</script></body></html>"
+        starts, ends = _script_tag_events(doc)
         assert len(starts) == 1 and len(ends) == 1, "the injected text opened/closed a real script element"
 
-        # The escaped payload must still be valid JSON once unescaped,
-        # and the dangerous text must survive intact as DATA rather than
-        # being dropped or mangled.
-        match = re.search(r"const DATA = (.*?);\n", html, re.DOTALL)
+        match = re.search(r"\.concat\((.*?)\);\n", js, re.DOTALL)
         decoded = json.loads(match.group(1).replace("<\\/script", "</script").replace("<\\!--", "<!--"))
-        assert decoded["strings"][0] == "</script><script>window.pwned=1</script>"
+        assert decoded[0]["payload"]["strings"][0] == "</script><script>window.pwned=1</script>"
+
+
+class TestExplorerSectionInReport:
+    """Integration tests at the level a real report is built -- one
+    <script> for the whole document, one widget per run, and the
+    session_raster/timeline.explorer interplay (print-only wrapping,
+    --no-explorer)."""
+
+    def _render(self, runs, *, include_explorer=True):
+        design = resolve_design("default")
+        return render_report_html(runs, design, include_explorer=include_explorer)
+
+    def test_exactly_one_inline_script(self, tmp_path):
+        runs = _runs(tmp_path)
+        html_doc = self._render(runs)
+        starts, ends = _script_tag_events(html_doc)
+        assert len(starts) == 1 and len(ends) == 1
+
+    def test_no_remote_origins(self, tmp_path):
+        runs = _runs(tmp_path)
+        html_doc = self._render(runs)
+        assert "javascript:" not in html_doc.lower()
+        assert "@import" not in html_doc
+        assert not re.search(r"url\(\s*['\"]?(?:https?:)?//", html_doc, re.I)
+        for m in _URL_ATTR.finditer(html_doc):
+            url = m.group(1).strip().lower()
+            assert not url.startswith(_REMOTE_SCHEMES), f"external resource: {url!r}"
+
+    def test_one_widget_per_run_with_unique_dom_ids(self, tmp_path):
+        # Two real runs (each with its own nodes/trials), not one real run
+        # plus an abortive no-node restart -- explorer_section skips a run
+        # with no nodes, same as session_raster_section does.
+        rows_a = bandit_run(n_trials=2, session="Multi", run_id=1, t0_ms=1_700_000_000_000)
+        rows_b = bandit_run(n_trials=2, session="Multi", run_id=2, t0_ms=1_800_000_000_000)
+        path = write_session(tmp_path, rows_a + rows_b, session="Multi")
+        loaded, _, _ = load_rows(path)
+        runs = split_runs(loaded, [], path)
+        assert len(runs) == 2
+
+        html_doc = self._render(runs)
+        dom_ids = re.findall(r'class="sfm-explorer" id="([^"]+)"', html_doc)
+        assert len(dom_ids) == len(runs)
+        assert len(set(dom_ids)) == len(dom_ids)
+
+    def test_no_explorer_flag_yields_zero_scripts(self, tmp_path):
+        runs = _runs(tmp_path)
+        html_doc = self._render(runs, include_explorer=False)
+        starts, ends = _script_tag_events(html_doc)
+        assert starts == [] and ends == []
+        assert "sfm-explorer" not in html_doc
+
+    def test_session_raster_is_print_only_when_explorer_active(self, tmp_path):
+        runs = _runs(tmp_path)
+        with_explorer = self._render(runs, include_explorer=True)
+        without_explorer = self._render(runs, include_explorer=False)
+
+        assert "Session Timeline (printed panels)" in with_explorer
+        assert 'class="print-only"' in with_explorer
+
+        assert "Session Timeline (printed panels)" not in without_explorer
+        assert "<h2>Session Timeline</h2>" in without_explorer
+
+    def test_deterministic(self, tmp_path):
+        runs = _runs(tmp_path)
+        html1 = self._render(runs)
+        html2 = self._render(runs)
+        assert html1 == html2
 
     def test_well_formed_enough_for_html_parser(self, tmp_path):
-        import html.parser
-
-        run, m = _run_and_metrics(tmp_path)
-        payload = build_explorer_payload(run, m)
-        doc = render_explorer_html(payload, report_href="r.html")
+        runs = _runs(tmp_path)
+        doc = self._render(runs)
 
         class _Checker(html.parser.HTMLParser):
             def error(self, message):  # pragma: no cover - py<3.10 shim, unused on 3.9+
                 raise AssertionError(message)
 
         _Checker(convert_charrefs=True).feed(doc)  # raises on malformed markup
-
-
-class TestBuildSessionExplorer:
-    def test_writes_a_file_and_links_back_to_the_report(self, tmp_path):
-        from sfm_analysis.report import build_session_explorer
-
-        rows = bandit_run(n_trials=3, session="BuildExplorerTest")
-        path = write_session(tmp_path, rows, session="BuildExplorerTest")
-        out = build_session_explorer(path, out_path=tmp_path / "explorer.html", report_href="report.html")
-        assert out.exists()
-        content = out.read_text(encoding="utf-8")
-        assert "BuildExplorerTest" in content
-        assert 'href="report.html"' in content
-
-    def test_default_out_path_includes_session_and_run(self, tmp_path):
-        from sfm_analysis.report import build_session_explorer
-
-        rows = bandit_run(n_trials=2, session="DefaultPathTest")
-        path = write_session(tmp_path, rows, session="DefaultPathTest")
-        out = build_session_explorer(path)
-        assert out.name == "DefaultPathTest_run1_explorer.html"
-        assert out.exists()
-
-    def test_picks_the_run_with_the_most_rows_by_default(self, tmp_path):
-        from report_fixtures import session_open_row
-        from sfm_analysis.report import build_session_explorer
-
-        rows = bandit_run(n_trials=4, session="MultiRun", t0_ms=1_700_000_000_000)
-        abortive = [session_open_row(1_800_000_000_000, "MultiRun", run_id=2)]
-        path = write_session(tmp_path, rows + abortive, session="MultiRun")
-
-        out = build_session_explorer(path, out_path=tmp_path / "explorer.html")
-        content = out.read_text(encoding="utf-8")
-        assert "run 1" in content  # the real run, not the 1-row abortive run 2

@@ -63,7 +63,7 @@ sfm-report --help
   --design          Force a report design instead of resolving by experiment
   --align           Combined-report time alignment: relative | wall | trial | event:<name>
   --out, -o         Output file (single report) or directory (multiple)
-  --explorer        Also write an interactive timeline explorer, cross-linked with the report
+  --no-explorer     Skip the embedded interactive timeline (guaranteed script-free, leaner output)
   --open            Open the result in your default browser when done
 ```
 
@@ -72,17 +72,19 @@ log format (`timestamp_iso, timestamp_ms, ..., fields_json, details`).
 Files in an older schema are skipped with a warning rather than crashing
 the run — see `report.loader.sniff_schema`.
 
-## The interactive explorer
+## The interactive timeline
 
 ```bash
-sfm-report EXP-Test-02 --explorer --open
+sfm-report EXP-Test-02 --open
 ```
 
-writes two files side by side — the usual printable `..._report.html`,
-and `..._explorer.html`: a single self-contained HTML page with real
-pan/zoom over the same timeline the static report's raster panels show,
-each linking to the other. It's the answer to "I don't want 12 stacked
-panels, I want to point at the timeline and zoom in there":
+is enough — every design embeds a real pan/zoom/brush-zoom timeline
+directly in the one report file by default, right where the static
+raster panels used to sit alone. It's the answer to "I don't want 12
+stacked panels, I want to point at the timeline and zoom in there", and
+it's the whole report you get from one self-contained `.html` you can
+email or drop somewhere — never a pair of files that has to travel
+together:
 
 - **Drag on the main view** to brush-select a range and zoom into it.
 - **Drag the overview strip** (the thin bar above the main view) to pan.
@@ -99,26 +101,21 @@ static report's panels would make a bad interactive widget at real data
 volumes (a raster with tens of thousands of DOM nodes is what makes a
 browser tab hang). The data itself — lanes, spans, marks — comes from
 exactly the same `report.timeline_data.panel_marks_spans` the static
-report's overview panel calls, just for the whole run's `[0, duration]`
-window instead of one paginated slice, so the two views can never
-disagree about what a "presence bout" or a "dispense cycle" is.
+raster panels use, just for the whole run's `[0, duration]` window
+instead of one paginated slice, so the two can never disagree about
+what a "presence bout" or a "dispense cycle" is. Those static panels
+don't disappear — they go **print-only**: hidden on screen (the
+interactive view replaces them there), but still present for `Ctrl+P`,
+since the printed PDF can't run the JS that draws the canvas.
 
-Build it programmatically with `build_session_explorer` (mirrors
-`build_session_report`):
-
-```python
-from sfm_analysis.report import build_session_report, build_session_explorer
-
-explorer = build_session_explorer(csv_path, report_href="report.html")
-report = build_session_report(csv_path, explorer_href=explorer.name)
-```
-
-The explorer is the one place in this package that ships JavaScript —
-everything else, including the printed report, is deliberately script-free
-so it can be trusted to render and print with the network unplugged. The
-explorer keeps the same "no remote origin" guarantee (no `http(s)://`
-reference anywhere, works fully offline) without the "no script" part,
-since interactivity is the entire point of this file.
+`build_session_report(..., include_explorer=False)` — or `--no-explorer`
+on the CLI — drops the embedded timeline (and its one inline `<script>`)
+entirely, for a caller that wants the guaranteed-script-free,
+leaner document. It's the only place in this package that ships
+JavaScript — everything else, including the rest of the printed report,
+is deliberately script-free. Self-containment is still the invariant
+either way: no `http(s)://` reference anywhere, nothing that needs the
+network to render or print.
 
 ## How a report is put together
 
@@ -159,7 +156,10 @@ run duration by default — `max(600, duration/12)` — so a 24h run gets
 about 12 panels instead of 144 stuck at a fixed 600s. Pin a fixed width
 regardless of duration with `"options": {"window_s": ...}`; raise only
 the short-run floor (e.g. free_feeding's slower cadence) with
-`"options": {"min_window_s": ...}`.
+`"options": {"min_window_s": ...}`. When `timeline.explorer` is also
+active (the default — see "The interactive timeline" above), these
+panels go print-only: hidden on screen since the embedded explorer
+covers the same ground with real zoom, still present in the printed PDF.
 
 `timeline.actogram` — one row per calendar day, time-of-day on the
 x-axis, night-phase shaded (`lights_on`/`lights_off` options, default

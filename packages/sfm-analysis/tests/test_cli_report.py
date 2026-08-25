@@ -75,56 +75,50 @@ class TestDemo:
 
 
 class TestExplorer:
-    def test_explorer_flag_writes_both_files_cross_linked(self, tmp_path):
+    """The interactive timeline is embedded directly in the one report
+    file by default (sections/timeline.py's timeline.explorer) -- there
+    is no longer a second, sibling explorer file to write or cross-link."""
+
+    def test_default_run_writes_one_file_with_the_embedded_widget(self, tmp_path):
         write_session(tmp_path, bandit_run(n_trials=3, session="ExplTest"), session="ExplTest")
         report_out = tmp_path / "out.html"
-        result = _run(["ExplTest", "--log-dir", str(tmp_path), "--out", str(report_out), "--explorer"])
+        result = _run(["ExplTest", "--log-dir", str(tmp_path), "--out", str(report_out)])
         assert result.returncode == 0, result.stderr
 
-        explorer_out = tmp_path / "out_explorer.html"
         assert report_out.exists()
-        assert explorer_out.exists()
-        assert f'href="{explorer_out.name}"' in report_out.read_text(encoding="utf-8")
-        assert f'href="{report_out.name}"' in explorer_out.read_text(encoding="utf-8")
+        assert not (tmp_path / "out_explorer.html").exists()
+        content = report_out.read_text(encoding="utf-8")
+        assert content.lower().count("<script") == 1
+        assert 'class="sfm-explorer"' in content
 
-    def test_explorer_flag_with_default_naming(self, tmp_path):
-        # A single-run session: build_session_report's own default naming
-        # appends "_run<id>" (see report/__init__.py), which the explorer
-        # sibling name must match exactly for the two to cross-link.
+    def test_no_explorer_flag_yields_a_script_free_file(self, tmp_path):
         write_session(tmp_path, bandit_run(n_trials=2, session="ExplDefault"), session="ExplDefault")
-        result = _run(["ExplDefault", "--log-dir", str(tmp_path), "--explorer"], cwd=tmp_path)
+        result = _run(["ExplDefault", "--log-dir", str(tmp_path), "--no-explorer"], cwd=tmp_path)
         assert result.returncode == 0, result.stderr
         reports_dir = tmp_path / "reports"
-        assert (reports_dir / "ExplDefault_run1_report.html").exists()
-        assert (reports_dir / "ExplDefault_run1_report_explorer.html").exists()
-        content = (reports_dir / "ExplDefault_run1_report.html").read_text(encoding="utf-8")
-        assert 'href="ExplDefault_run1_report_explorer.html"' in content
+        report_file = reports_dir / "ExplDefault_run1_report.html"
+        assert report_file.exists()
+        content = report_file.read_text(encoding="utf-8")
+        assert "<script" not in content.lower()
+        assert 'class="sfm-explorer"' not in content
 
-    def test_explorer_with_combine_errors(self, tmp_path):
-        result = _run(["--demo", "--combine", "--explorer"])
-        assert result.returncode == 2
-        assert "--explorer" in result.stderr
-
-    def test_explorer_with_multiple_targets_and_out_dir(self, tmp_path):
+    def test_multiple_targets_and_out_dir_each_get_one_file(self, tmp_path):
         write_session(tmp_path, bandit_run(n_trials=1, session="A"), session="A")
         write_session(tmp_path, bandit_run(n_trials=1, session="B"), session="B")
         out_dir = tmp_path / "out"
-        result = _run(["A", "B", "--log-dir", str(tmp_path), "--out", str(out_dir), "--explorer"])
+        result = _run(["A", "B", "--log-dir", str(tmp_path), "--out", str(out_dir)])
         assert result.returncode == 0, result.stderr
         assert (out_dir / "A_report.html").exists()
-        assert (out_dir / "A_explorer.html").exists()
         assert (out_dir / "B_report.html").exists()
-        assert (out_dir / "B_explorer.html").exists()
-        assert 'href="A_explorer.html"' in (out_dir / "A_report.html").read_text(encoding="utf-8")
+        assert not (out_dir / "A_explorer.html").exists()
+        assert 'class="sfm-explorer"' in (out_dir / "A_report.html").read_text(encoding="utf-8")
 
-    def test_without_explorer_flag_only_report_is_written(self, tmp_path):
-        write_session(tmp_path, bandit_run(n_trials=2, session="NoExpl"), session="NoExpl")
-        out = tmp_path / "out.html"
-        result = _run(["NoExpl", "--log-dir", str(tmp_path), "--out", str(out)])
+    def test_demo_no_explorer(self, tmp_path):
+        result = _run(["--demo", "--no-explorer"], cwd=tmp_path)
         assert result.returncode == 0, result.stderr
-        assert out.exists()
-        assert not (tmp_path / "out_explorer.html").exists()
-        assert "<a " not in out.read_text(encoding="utf-8")
+        written = list(tmp_path.glob("*_report.html"))
+        assert len(written) == 1
+        assert "<script" not in written[0].read_text(encoding="utf-8").lower()
 
 
 class TestGenerateReport:

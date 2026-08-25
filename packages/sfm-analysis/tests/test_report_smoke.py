@@ -131,7 +131,14 @@ def test_real_session_generates_a_complete_report(tmp_path):
     content = out.read_text(encoding="utf-8")
     assert len(content) > 10_000
     assert "Bandit_test_01" in content
-    assert "<script" not in content
+    # The default design embeds the interactive timeline.explorer section
+    # by default (see sections/timeline.py) -- one inline <script>, never
+    # a <script src=>. build_session_report(..., include_explorer=False)
+    # is the guaranteed-script-free path; see test_report_render.py for
+    # that invariant and test_report_explorer.py for the explorer's own
+    # self-containment tests.
+    assert content.lower().count("<script") == 1
+    assert "<script src" not in content.lower()
 
     import xml.etree.ElementTree as ET
     import re
