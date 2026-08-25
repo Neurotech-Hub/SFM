@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from datetime import datetime
 from typing import (
     Any,
     Callable,
@@ -480,11 +481,18 @@ class ExperimentRunner:
         self._active = True
         self.ctx.begin(now)
         start_ev = NodeEvent(kind=EventKind.SESSION_START, timestamp=now)
+        # utc_offset_s records the base station's local UTC offset at the
+        # moment the session starts (DST-aware). timestamp_iso elsewhere in
+        # the log carries no offset, so without this an analyst in a
+        # different timezone has no way to know what "local" meant here --
+        # see sfm_analysis.report.timezones for how the SDK consumes it.
+        utc_offset_s = datetime.now().astimezone().utcoffset()
         self.ctx.log(
             "session_start",
             experiment=self.experiment.name,
             nodes=self.ctx.nodes,
             seed=self.ctx.seed,
+            utc_offset_s=utc_offset_s.total_seconds() if utc_offset_s is not None else None,
         )
         if self.ctx.on_session_start is not None:
             try:

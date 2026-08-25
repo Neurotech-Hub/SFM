@@ -43,6 +43,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from sfm_analysis.logs import CSV_HEADER as _CSV_HEADER
+from sfm_analysis.logs import heartbeat_path_for as _heartbeat_path_for
 from typing import Any, Deque, Dict, List, Optional
 
 
@@ -115,23 +118,11 @@ class LogManager:
         lm.export("~/Desktop/my_session.csv")
     """
 
-    CSV_HEADER = [
-        "timestamp_iso",
-        "timestamp_ms",
-        "elapsed_s",
-        "session",
-        "run_id",
-        "trial",
-        "source",
-        "direction",
-        "node_id",
-        "frame_type",
-        "event_name",
-        "raw_id_hex",
-        "raw_data_hex",
-        "fields_json",
-        "details",
-    ]
+    # The canonical 15-column schema now lives in sfm_analysis.logs so that
+    # readers (the sfm-analysis report SDK) and this writer cannot drift
+    # apart. Bound as a class attribute so LogManager.CSV_HEADER keeps
+    # working for every existing caller.
+    CSV_HEADER = _CSV_HEADER
 
     def __init__(
         self,
@@ -259,10 +250,10 @@ class LogManager:
         """True while the named experiment CSV is the active writer."""
         return self._sink_kind == "named" and self._csv_writer is not None
 
-    @staticmethod
-    def heartbeat_path_for(main_path: Path) -> Path:
-        """Sibling path: ``foo.csv`` → ``foo_heartbeats.csv``."""
-        return main_path.with_name(f"{main_path.stem}_heartbeats.csv")
+    # Also sourced from sfm_analysis.logs, for the same reason as
+    # CSV_HEADER above. staticmethod() is required here: without it,
+    # self.heartbeat_path_for(path) would pass self as main_path.
+    heartbeat_path_for = staticmethod(_heartbeat_path_for)
 
     # ------------------------------------------------------------------
     # Named session management

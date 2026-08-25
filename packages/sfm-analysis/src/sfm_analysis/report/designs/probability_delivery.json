@@ -1,0 +1,29 @@
+{
+  "name": "probability_delivery",
+  "label": "Probability Delivery — Behavior Report",
+  "description": "Each cycle, one node wins a weighted random draw. Compares the realized delivery distribution against the configured weights, and checks whether the animal's visit pattern tracks realized reward (matching law).",
+  "matches": ["probability_delivery"],
+  "sections": [
+    { "ref": "timeline.explorer" },
+    { "ref": "timeline.session_raster" },
+    { "ref": "timeline.actogram" },
+    { "ref": "generic.provenance" },
+    { "ref": "generic.data_quality" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.throughput" },
+    { "ref": "generic.presence" },
+    { "ref": "generic.interaction_funnel" },
+    { "ref": "generic.faults" },
+    { "ref": "generic.apparatus_health" },
+    { "ref": "probability.delivery_fit", "beta": true },
+    { "ref": "probability.matching_law", "beta": true }
+  ],
+  "combined_sections": [
+    { "ref": "compare.cohort_table" },
+    { "ref": "compare.quality_matrix" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.faults" },
+    { "ref": "probability.delivery_fit", "beta": true },
+    { "ref": "probability.matching_law", "beta": true }
+  ]
+}

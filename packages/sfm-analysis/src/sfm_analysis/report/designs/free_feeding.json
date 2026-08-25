@@ -1,0 +1,30 @@
+{
+  "name": "free_feeding",
+  "label": "Free Feeding — Behavior Report",
+  "description": "Ad libitum dispensing with a fixed reload delay after each take. Reload-latency drift and meal-bout structure are the primary signals.",
+  "matches": ["free_feeding"],
+  "sections": [
+    { "ref": "timeline.explorer" },
+    { "ref": "timeline.session_raster", "options": { "min_window_s": 900 } },
+    { "ref": "timeline.actogram" },
+    { "ref": "generic.provenance" },
+    { "ref": "generic.data_quality" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.presence" },
+    { "ref": "generic.interaction_funnel" },
+    { "ref": "generic.throughput" },
+    { "ref": "generic.faults" },
+    { "ref": "generic.apparatus_health" },
+    { "ref": "free_feeding.reload_latency", "beta": true },
+    { "ref": "free_feeding.meal_bouts", "options": { "meal_gap_s": 300 }, "beta": true }
+  ],
+  "combined_sections": [
+    { "ref": "compare.cohort_table" },
+    { "ref": "compare.quality_matrix" },
+    { "ref": "compare.learning_curve", "options": { "metric": "take_rate" } },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.faults" },
+    { "ref": "free_feeding.reload_latency", "beta": true },
+    { "ref": "free_feeding.meal_bouts", "beta": true }
+  ]
+}

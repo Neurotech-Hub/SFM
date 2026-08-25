@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar, Union
 
+from sfm_analysis.logs import EXP6_HEADER as _EXP6_HEADER
+
 from ..protocol import CanCmd, build_setconfig_heartbeat
 from .events import EventKind, NodeEvent
 from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind, _until_label
@@ -108,14 +110,10 @@ class ExperimentControl:
     timers and counters live on this object.
     """
 
-    CSV_HEADER = [
-        "timestamp_iso",
-        "timestamp_ms",
-        "elapsed_s",
-        "name",
-        "node_id",
-        "fields",
-    ]
+    # Schema now lives in sfm_analysis.logs.EXP6_HEADER so this writer and
+    # sfm_analysis.report.loader's schema-sniffing (which reads this exact
+    # header) cannot drift apart across the two distributions.
+    CSV_HEADER = _EXP6_HEADER
 
     def __init__(
         self,

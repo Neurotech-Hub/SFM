@@ -1,0 +1,522 @@
+timestamp_iso,timestamp_ms,elapsed_s,session,run_id,trial,source,direction,node_id,frame_type,event_name,raw_id_hex,raw_data_hex,fields_json,details
+2026-08-17T15:03:49.170,1786997029170,0.000,Bandit_test_01,1,0,CAN,SYS,0,SESSION_OPEN,SessionOpen,0x000,,,session=Bandit_test_01 run=1 mode=create path=/media/base-station-00/STORAGE/sfm_logs/Bandit_test_01.csv
+2026-08-17T15:03:49.170,1786997029170,0.000,Bandit_test_01,1,0,CAN,TX,0,COMMAND,SetConfig (broadcast),0x100,05 01 60 EA,,heartbeat=60s
+2026-08-17T15:03:49.170,1786997029170,0.000,Bandit_test_01,1,0,EXP,SYS,0,EXPERIMENT,session_start,0x000,,"{""experiment"": ""two_armed_bandit"", ""nodes"": [1, 2], ""seed"": 1025782770}","experiment=two_armed_bandit nodes=[1, 2] seed=1025782770"
+2026-08-17T15:03:49.170,1786997029170,0.001,Bandit_test_01,1,0,CAN,TX,0,SYNC,SyncFlash (broadcast),0x100,,,500ms LED + BNC OUT · run 1
+2026-08-17T15:03:49.170,1786997029170,0.000,Bandit_test_01,1,0,EXP,SYS,0,EXPERIMENT,two_armed_bandit_start,0x000,,"{""nodes"": [1, 2], ""arm_a"": 1, ""arm_b"": 2, ""block_size"": 10, ""p_high"": 0.8999999761581421, ""mimic"": 1, ""next_trial_wait"": ""fixed_delay"", ""seed"": 1025782770}","nodes=[1, 2] arm_a=1 arm_b=2 block_size=10 p_high=0.8999999761581421 mimic=1 next_trial_wait=fixed_delay seed=1025782770"
+2026-08-17T15:03:49.172,1786997029172,0.002,Bandit_test_01,1,0,CAN,RX,2,EVENT,ConfigApplied,0x302,11 01 01 60 EA 00 00,,config=heartbeat_interval ok=1 value=60000
+2026-08-17T15:03:49.230,1786997029230,0.061,Bandit_test_01,1,0,CAN,RX,1,EVENT,ConfigApplied,0x301,11 01 01 60 EA 00 00,,config=heartbeat_interval ok=1 value=60000
+2026-08-17T15:03:53.948,1786997033948,4.778,Bandit_test_01,1,0,EXP,SYS,0,EXPERIMENT,session_end,0x000,,"{""elapsed_s"": 4.778, ""pellets"": 0}",elapsed_s=4.778 pellets=0
+2026-08-17T15:03:53.948,1786997033948,4.778,Bandit_test_01,1,0,EXP,SYS,0,EXPERIMENT,two_armed_bandit_end,0x000,,"{""trials"": 0, ""trials_invalid"": 0, ""pellets"": 0, ""elapsed_s"": 4.778}",trials=0 trials_invalid=0 pellets=0 elapsed_s=4.778
+2026-08-17T15:03:59.446,1786997039446,0.000,Bandit_test_01,2,0,CAN,SYS,0,SESSION_OPEN,SessionOpen,0x000,,,session=Bandit_test_01 run=2 mode=append path=/media/base-station-00/STORAGE/sfm_logs/Bandit_test_01.csv
+2026-08-17T15:03:59.447,1786997039447,0.001,Bandit_test_01,2,0,CAN,TX,0,COMMAND,SetConfig (broadcast),0x100,05 01 60 EA,,heartbeat=60s
+2026-08-17T15:03:59.448,1786997039448,0.002,Bandit_test_01,2,0,EXP,SYS,0,EXPERIMENT,session_start,0x000,,"{""experiment"": ""two_armed_bandit"", ""nodes"": [1, 2], ""seed"": 2011668843}","experiment=two_armed_bandit nodes=[1, 2] seed=2011668843"
+2026-08-17T15:03:59.448,1786997039448,0.002,Bandit_test_01,2,0,CAN,TX,0,SYNC,SyncFlash (broadcast),0x100,,,500ms LED + BNC OUT · run 2
+2026-08-17T15:03:59.448,1786997039448,0.002,Bandit_test_01,2,0,EXP,SYS,0,EXPERIMENT,two_armed_bandit_start,0x000,,"{""nodes"": [1, 2], ""arm_a"": 1, ""arm_b"": 2, ""block_size"": 10, ""p_high"": 0.8999999761581421, ""mimic"": 1, ""next_trial_wait"": ""presence_clear"", ""seed"": 2011668843}","nodes=[1, 2] arm_a=1 arm_b=2 block_size=10 p_high=0.8999999761581421 mimic=1 next_trial_wait=presence_clear seed=2011668843"
+2026-08-17T15:03:59.450,1786997039450,0.004,Bandit_test_01,2,0,CAN,RX,2,EVENT,ConfigApplied,0x302,11 01 01 60 EA 00 00,,config=heartbeat_interval ok=1 value=60000
+2026-08-17T15:03:59.514,1786997039514,0.068,Bandit_test_01,2,0,CAN,RX,1,EVENT,ConfigApplied,0x301,11 01 01 60 EA 00 00,,config=heartbeat_interval ok=1 value=60000
+2026-08-17T15:04:19.281,1786997059281,19.835,Bandit_test_01,2,0,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:04:19.463,1786997059463,20.017,Bandit_test_01,2,0,EXP,SYS,0,EXPERIMENT,script_timeout,0x000,,"{""waiting_on"": ""nodes_online"", ""after_s"": 20.016}",waiting_on=nodes_online after_s=20.016
+2026-08-17T15:04:19.463,1786997059463,20.017,Bandit_test_01,2,0,EXP,SYS,0,EXPERIMENT,bandit_startup_nodes_offline,0x000,,"{""nodes"": [1, 2]}","nodes=[1, 2]"
+2026-08-17T15:04:19.463,1786997059463,20.017,Bandit_test_01,2,0,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 1}",trial=1
+2026-08-17T15:04:19.463,1786997059463,20.017,Bandit_test_01,2,0,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:04:19.463,1786997059463,20.017,Bandit_test_01,2,0,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:04:19.463,1786997059463,20.017,Bandit_test_01,2,0,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 1, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=1 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:04:19.531,1786997059531,20.086,Bandit_test_01,2,1,CAN,RX,1,EVENT,Lowering,0x301,07 0D 00,,count=13
+2026-08-17T15:04:19.532,1786997059532,20.086,Bandit_test_01,2,1,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:04:19.598,1786997059598,20.152,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dome Opened,0x302,06 03 01,,input=Dome active=1
+2026-08-17T15:04:20.048,1786997060048,20.602,Bandit_test_01,2,1,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:04:20.114,1786997060114,20.668,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:04:22.464,1786997062464,23.019,Bandit_test_01,2,1,CAN,RX,1,EVENT,Loading,0x301,08 0D 00,,count=13
+2026-08-17T15:04:22.531,1786997062531,23.085,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:04:25.998,1786997065998,26.552,Bandit_test_01,2,1,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:04:26.716,1786997066716,27.270,Bandit_test_01,2,1,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 0D 00,,count=13
+2026-08-17T15:04:26.717,1786997066717,27.271,Bandit_test_01,2,1,CAN,RX,1,EVENT,Raising,0x301,09 0D 00,,count=13
+2026-08-17T15:04:28.964,1786997068964,29.518,Bandit_test_01,2,1,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:04:29.681,1786997069681,30.235,Bandit_test_01,2,1,CAN,RX,1,EVENT,Loaded,0x301,02 0E 00,,count=14 delivery=PELLET
+2026-08-17T15:04:29.682,1786997069682,30.236,Bandit_test_01,2,1,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 1, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=1 role=fed presented=pellet delivered=1
+2026-08-17T15:04:29.682,1786997069682,30.236,Bandit_test_01,2,1,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 1, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=1 role=empty presented=empty delivered=0
+2026-08-17T15:04:31.014,1786997071014,31.568,Bandit_test_01,2,1,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:04:32.047,1786997072047,32.602,Bandit_test_01,2,1,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:04:32.665,1786997072665,33.219,Bandit_test_01,2,1,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:04:33.331,1786997073331,33.885,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dome Opened,0x302,03 10 00 00,,count=16 pellet_present=0
+2026-08-17T15:04:34.764,1786997074764,35.318,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:04:35.565,1786997075565,36.119,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dome Opened,0x302,03 10 00 00,,count=16 pellet_present=0
+2026-08-17T15:04:36.448,1786997076448,37.002,Bandit_test_01,2,1,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:04:37.248,1786997077248,37.802,Bandit_test_01,2,1,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:04:37.382,1786997077382,37.936,Bandit_test_01,2,1,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:04:39.364,1786997079364,39.919,Bandit_test_01,2,1,CAN,RX,1,EVENT,Dome Opened,0x301,03 0E 00 01,,count=14 pellet_present=1
+2026-08-17T15:04:46.515,1786997086515,47.069,Bandit_test_01,2,1,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 0E 00 01,,count=14 dome_open=1
+2026-08-17T15:04:46.515,1786997086515,47.069,Bandit_test_01,2,1,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 1, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=1 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:04:47.114,1786997087114,47.669,Bandit_test_01,2,1,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:04:47.714,1786997087714,48.269,Bandit_test_01,2,1,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:04:48.715,1786997088715,49.269,Bandit_test_01,2,1,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 2}",trial=2
+2026-08-17T15:04:48.715,1786997088715,49.269,Bandit_test_01,2,1,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:04:48.715,1786997088715,49.269,Bandit_test_01,2,1,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:04:48.715,1786997088715,49.269,Bandit_test_01,2,1,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 2, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=2 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:04:48.798,1786997088798,49.352,Bandit_test_01,2,2,CAN,RX,1,EVENT,Lowering,0x301,07 0E 00,,count=14
+2026-08-17T15:04:48.798,1786997088798,49.353,Bandit_test_01,2,2,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:04:51.716,1786997091716,52.270,Bandit_test_01,2,2,CAN,RX,1,EVENT,Loading,0x301,08 0E 00,,count=14
+2026-08-17T15:04:51.800,1786997091800,52.354,Bandit_test_01,2,2,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:04:55.248,1786997095248,55.802,Bandit_test_01,2,2,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:04:55.965,1786997095965,56.519,Bandit_test_01,2,2,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 0E 00,,count=14
+2026-08-17T15:04:55.965,1786997095965,56.519,Bandit_test_01,2,2,CAN,RX,1,EVENT,Raising,0x301,09 0E 00,,count=14
+2026-08-17T15:04:58.215,1786997098215,58.769,Bandit_test_01,2,2,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:04:58.931,1786997098931,59.485,Bandit_test_01,2,2,CAN,RX,1,EVENT,Loaded,0x301,02 0F 00,,count=15 delivery=PELLET
+2026-08-17T15:04:58.931,1786997098931,59.486,Bandit_test_01,2,2,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 2, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=2 role=fed presented=pellet delivered=1
+2026-08-17T15:04:58.931,1786997098931,59.486,Bandit_test_01,2,2,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 2, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=2 role=empty presented=empty delivered=0
+2026-08-17T15:05:01.431,1786997101431,61.986,Bandit_test_01,2,2,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:05:02.015,1786997102015,62.569,Bandit_test_01,2,2,CAN,RX,1,EVENT,Dome Opened,0x301,03 0F 00 01,,count=15 pellet_present=1
+2026-08-17T15:05:04.949,1786997104949,65.503,Bandit_test_01,2,2,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 0F 00 01,,count=15 dome_open=1
+2026-08-17T15:05:04.949,1786997104949,65.503,Bandit_test_01,2,2,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 2, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=2 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:05:05.248,1786997105248,65.802,Bandit_test_01,2,2,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:05:07.765,1786997107765,68.319,Bandit_test_01,2,2,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:05:08.782,1786997108782,69.336,Bandit_test_01,2,2,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 3}",trial=3
+2026-08-17T15:05:08.782,1786997108782,69.336,Bandit_test_01,2,2,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:05:08.782,1786997108782,69.336,Bandit_test_01,2,2,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:05:08.782,1786997108782,69.336,Bandit_test_01,2,2,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 3, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=3 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:05:08.848,1786997108848,69.402,Bandit_test_01,2,3,CAN,RX,1,EVENT,Lowering,0x301,07 0F 00,,count=15
+2026-08-17T15:05:08.848,1786997108848,69.402,Bandit_test_01,2,3,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:05:11.782,1786997111782,72.336,Bandit_test_01,2,3,CAN,RX,1,EVENT,Loading,0x301,08 0F 00,,count=15
+2026-08-17T15:05:11.848,1786997111848,72.402,Bandit_test_01,2,3,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:05:15.316,1786997115315,75.870,Bandit_test_01,2,3,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:05:15.918,1786997115918,76.472,Bandit_test_01,2,3,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 0F 00,,count=15
+2026-08-17T15:05:15.918,1786997115918,76.472,Bandit_test_01,2,3,CAN,RX,1,EVENT,Raising,0x301,09 0F 00,,count=15
+2026-08-17T15:05:18.283,1786997118283,78.837,Bandit_test_01,2,3,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:05:18.666,1786997118666,79.221,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:05:18.889,1786997118889,79.443,Bandit_test_01,2,3,CAN,RX,1,EVENT,Loaded,0x301,02 10 00,,count=16 delivery=PELLET
+2026-08-17T15:05:18.889,1786997118889,79.443,Bandit_test_01,2,3,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 3, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=3 role=fed presented=pellet delivered=1
+2026-08-17T15:05:18.889,1786997118889,79.443,Bandit_test_01,2,3,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 3, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=3 role=empty presented=empty delivered=0
+2026-08-17T15:05:23.799,1786997123799,84.353,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:05:25.086,1786997125086,85.640,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:05:28.352,1786997128352,88.906,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:06:30.749,1786997190749,151.304,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:06:31.685,1786997191685,152.239,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:06:54.366,1786997214366,174.920,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:06:54.749,1786997214749,175.303,Bandit_test_01,2,3,CAN,RX,1,EVENT,Dome Opened,0x301,03 10 00 01,,count=16 pellet_present=1
+2026-08-17T15:06:56.699,1786997216699,177.254,Bandit_test_01,2,3,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 10 00 01,,count=16 dome_open=1
+2026-08-17T15:06:56.700,1786997216700,177.254,Bandit_test_01,2,3,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 3, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=3 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:06:56.916,1786997216916,177.470,Bandit_test_01,2,3,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:06:57.516,1786997217516,178.070,Bandit_test_01,2,3,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:06:58.532,1786997218532,179.086,Bandit_test_01,2,3,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 4}",trial=4
+2026-08-17T15:06:58.532,1786997218532,179.086,Bandit_test_01,2,3,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:06:58.532,1786997218532,179.086,Bandit_test_01,2,3,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:06:58.532,1786997218532,179.086,Bandit_test_01,2,3,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 4, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=4 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:06:58.599,1786997218599,179.153,Bandit_test_01,2,4,CAN,RX,1,EVENT,Lowering,0x301,07 10 00,,count=16
+2026-08-17T15:06:58.599,1786997218599,179.153,Bandit_test_01,2,4,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:07:00.800,1786997220800,181.354,Bandit_test_01,2,4,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:07:01.483,1786997221483,182.037,Bandit_test_01,2,4,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:07:01.549,1786997221549,182.103,Bandit_test_01,2,4,CAN,RX,1,EVENT,Loading,0x301,08 10 00,,count=16
+2026-08-17T15:07:01.616,1786997221616,182.170,Bandit_test_01,2,4,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:07:05.066,1786997225066,185.620,Bandit_test_01,2,4,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:07:05.716,1786997225716,186.270,Bandit_test_01,2,4,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 10 00,,count=16
+2026-08-17T15:07:05.716,1786997225716,186.270,Bandit_test_01,2,4,CAN,RX,1,EVENT,Raising,0x301,09 10 00,,count=16
+2026-08-17T15:07:08.033,1786997228033,188.587,Bandit_test_01,2,4,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:07:08.649,1786997228649,189.203,Bandit_test_01,2,4,CAN,RX,1,EVENT,Fault: PelletLost,0x301,04 04,,fault=PelletLost — Pellet lost from the plate during raise
+2026-08-17T15:07:08.649,1786997228649,189.204,Bandit_test_01,2,4,EXP,SYS,1,EXPERIMENT,node_halted,0x000,,,
+2026-08-17T15:07:08.649,1786997228649,189.204,Bandit_test_01,2,4,EXP,SYS,1,EXPERIMENT,fault,0x000,,"{""fault_code"": 4}",fault_code=4
+2026-08-17T15:07:08.649,1786997228649,189.204,Bandit_test_01,2,4,EXP,SYS,1,EXPERIMENT,bandit_trial_aborted,0x000,,"{""trial"": 4}",trial=4
+2026-08-17T15:07:08.649,1786997228649,189.204,Bandit_test_01,2,4,EXP,SYS,0,EXPERIMENT,paused_for_fault,0x000,,"{""nodes"": [1]}",nodes=[1]
+2026-08-17T15:07:10.699,1786997230699,191.254,Bandit_test_01,2,4,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:07:11.116,1786997231116,191.670,Bandit_test_01,2,4,CAN,RX,1,EVENT,Dome Opened,0x301,06 03 01,,input=Dome active=1
+2026-08-17T15:07:12.499,1786997232499,193.053,Bandit_test_01,2,4,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:07:12.766,1786997232766,193.320,Bandit_test_01,2,4,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,TX,1,COMMAND,Recover,0x101,03,"{""cmd"": ""Recover"", ""payload_hex"": """"}",stop motion & clear fault — Two-Armed Bandit
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,SYS,1,EXPERIMENT,node_recovered,0x000,,,
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,SYS,1,EXPERIMENT,recovered,0x000,,,
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,SYS,0,EXPERIMENT,resumed_after_fault,0x000,,,
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 5}",trial=5
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:07:19.850,1786997239850,200.404,Bandit_test_01,2,4,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 5, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=5 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:07:19.867,1786997239867,200.421,Bandit_test_01,2,4,CAN,RX,1,EVENT,Lowering,0x301,07 10 00,,count=16
+2026-08-17T15:07:19.867,1786997239867,200.421,Bandit_test_01,2,4,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:07:22.801,1786997242801,203.355,Bandit_test_01,2,5,CAN,RX,1,EVENT,Loading,0x301,08 10 00,,count=16
+2026-08-17T15:07:22.884,1786997242884,203.438,Bandit_test_01,2,5,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:07:26.383,1786997246383,206.937,Bandit_test_01,2,5,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:07:27.067,1786997247067,207.621,Bandit_test_01,2,5,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 10 00,,count=16
+2026-08-17T15:07:27.067,1786997247067,207.621,Bandit_test_01,2,5,CAN,RX,1,EVENT,Raising,0x301,09 10 00,,count=16
+2026-08-17T15:07:29.350,1786997249350,209.905,Bandit_test_01,2,5,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:07:30.049,1786997250049,210.604,Bandit_test_01,2,5,CAN,RX,1,EVENT,Loaded,0x301,02 11 00,,count=17 delivery=PELLET
+2026-08-17T15:07:30.050,1786997250050,210.604,Bandit_test_01,2,5,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 5, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=5 role=fed presented=pellet delivered=1
+2026-08-17T15:07:30.050,1786997250050,210.604,Bandit_test_01,2,5,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 5, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=5 role=empty presented=empty delivered=0
+2026-08-17T15:07:34.484,1786997254484,215.038,Bandit_test_01,2,5,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:07:34.851,1786997254851,215.405,Bandit_test_01,2,5,CAN,RX,1,EVENT,Dome Opened,0x301,03 11 00 01,,count=17 pellet_present=1
+2026-08-17T15:07:37.566,1786997257566,218.120,Bandit_test_01,2,5,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 11 00 01,,count=17 dome_open=1
+2026-08-17T15:07:37.567,1786997257567,218.121,Bandit_test_01,2,5,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 5, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=5 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:07:40.405,1786997260405,220.959,Bandit_test_01,2,5,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:07:40.668,1786997260668,221.222,Bandit_test_01,2,5,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:07:42.466,1786997262466,223.020,Bandit_test_01,2,5,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:07:43.101,1786997263101,223.655,Bandit_test_01,2,5,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:07:44.117,1786997264117,224.671,Bandit_test_01,2,5,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 6}",trial=6
+2026-08-17T15:07:44.117,1786997264117,224.671,Bandit_test_01,2,5,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:07:44.117,1786997264117,224.671,Bandit_test_01,2,5,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:07:44.117,1786997264117,224.671,Bandit_test_01,2,5,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 6, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=6 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:07:44.200,1786997264200,224.754,Bandit_test_01,2,6,CAN,RX,1,EVENT,Lowering,0x301,07 11 00,,count=17
+2026-08-17T15:07:44.200,1786997264200,224.754,Bandit_test_01,2,6,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:07:47.101,1786997267101,227.655,Bandit_test_01,2,6,CAN,RX,1,EVENT,Loading,0x301,08 11 00,,count=17
+2026-08-17T15:07:47.205,1786997267205,227.759,Bandit_test_01,2,6,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:07:50.651,1786997270651,231.205,Bandit_test_01,2,6,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:07:51.301,1786997271301,231.855,Bandit_test_01,2,6,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 11 00,,count=17
+2026-08-17T15:07:51.301,1786997271301,231.855,Bandit_test_01,2,6,CAN,RX,1,EVENT,Raising,0x301,09 11 00,,count=17
+2026-08-17T15:07:53.618,1786997273618,234.172,Bandit_test_01,2,6,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:07:54.266,1786997274266,234.821,Bandit_test_01,2,6,CAN,RX,1,EVENT,Loaded,0x301,02 12 00,,count=18 delivery=PELLET
+2026-08-17T15:07:54.267,1786997274267,234.821,Bandit_test_01,2,6,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 6, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=6 role=fed presented=pellet delivered=1
+2026-08-17T15:07:54.267,1786997274267,234.821,Bandit_test_01,2,6,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 6, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=6 role=empty presented=empty delivered=0
+2026-08-17T15:08:08.600,1786997288600,249.154,Bandit_test_01,2,6,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:08:09.267,1786997289267,249.821,Bandit_test_01,2,6,CAN,RX,1,EVENT,Dome Opened,0x301,03 12 00 01,,count=18 pellet_present=1
+2026-08-17T15:08:11.533,1786997291533,252.088,Bandit_test_01,2,6,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 12 00 01,,count=18 dome_open=1
+2026-08-17T15:08:11.534,1786997291534,252.088,Bandit_test_01,2,6,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 6, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=6 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:08:11.750,1786997291750,252.304,Bandit_test_01,2,6,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:08:12.951,1786997292951,253.505,Bandit_test_01,2,6,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:08:13.967,1786997293967,254.521,Bandit_test_01,2,6,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 7}",trial=7
+2026-08-17T15:08:13.967,1786997293967,254.521,Bandit_test_01,2,6,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:08:13.967,1786997293967,254.521,Bandit_test_01,2,6,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:08:13.967,1786997293967,254.521,Bandit_test_01,2,6,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 7, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=7 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:08:14.050,1786997294050,254.604,Bandit_test_01,2,7,CAN,RX,1,EVENT,Lowering,0x301,07 12 00,,count=18
+2026-08-17T15:08:14.050,1786997294050,254.605,Bandit_test_01,2,7,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:08:16.952,1786997296952,257.506,Bandit_test_01,2,7,CAN,RX,1,EVENT,Loading,0x301,08 12 00,,count=18
+2026-08-17T15:08:17.074,1786997297074,257.628,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:08:19.336,1786997299336,259.890,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:08:20.486,1786997300486,261.040,Bandit_test_01,2,7,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:08:21.184,1786997301184,261.738,Bandit_test_01,2,7,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 12 00,,count=18
+2026-08-17T15:08:21.185,1786997301185,261.739,Bandit_test_01,2,7,CAN,RX,1,EVENT,Raising,0x301,09 12 00,,count=18
+2026-08-17T15:08:22.067,1786997302067,262.621,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:08:23.401,1786997303401,263.955,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:08:23.500,1786997303500,264.054,Bandit_test_01,2,7,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:08:24.167,1786997304167,264.721,Bandit_test_01,2,7,CAN,RX,1,EVENT,Loaded,0x301,02 13 00,,count=19 delivery=PELLET
+2026-08-17T15:08:24.168,1786997304168,264.722,Bandit_test_01,2,7,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 7, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=7 role=fed presented=pellet delivered=1
+2026-08-17T15:08:24.168,1786997304168,264.722,Bandit_test_01,2,7,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 7, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=7 role=empty presented=empty delivered=0
+2026-08-17T15:08:25.785,1786997305785,266.339,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:08:27.150,1786997307150,267.705,Bandit_test_01,2,7,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:08:27.767,1786997307767,268.321,Bandit_test_01,2,7,CAN,RX,1,EVENT,Dome Opened,0x301,03 13 00 01,,count=19 pellet_present=1
+2026-08-17T15:08:29.936,1786997309936,270.490,Bandit_test_01,2,7,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 13 00 01,,count=19 dome_open=1
+2026-08-17T15:08:29.936,1786997309936,270.490,Bandit_test_01,2,7,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 7, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=7 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:08:32.921,1786997312921,273.476,Bandit_test_01,2,7,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:08:33.553,1786997313553,274.107,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:08:34.167,1786997314167,274.721,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:08:41.101,1786997321101,281.655,Bandit_test_01,2,7,CAN,RX,1,EVENT,Dome Opened,0x301,06 03 01,,input=Dome active=1
+2026-08-17T15:08:42.651,1786997322651,283.205,Bandit_test_01,2,7,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:08:44.719,1786997324719,285.273,Bandit_test_01,2,7,CAN,RX,1,EVENT,Dome Opened,0x301,06 03 01,,input=Dome active=1
+2026-08-17T15:08:45.773,1786997325773,286.327,Bandit_test_01,2,7,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:08:52.302,1786997332302,292.856,Bandit_test_01,2,7,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:08:52.401,1786997332401,292.955,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:08:54.234,1786997334234,294.788,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dome Opened,0x302,03 10 00 00,,count=16 pellet_present=0
+2026-08-17T15:08:56.918,1786997336918,297.472,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:09:00.202,1786997340202,300.756,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dome Opened,0x302,03 10 00 00,,count=16 pellet_present=0
+2026-08-17T15:09:01.719,1786997341719,302.273,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:09:02.139,1786997342139,302.693,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dome Opened,0x302,03 10 00 00,,count=16 pellet_present=0
+2026-08-17T15:09:02.874,1786997342874,303.428,Bandit_test_01,2,7,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:09:03.872,1786997343872,304.426,Bandit_test_01,2,7,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:09:04.885,1786997344885,305.439,Bandit_test_01,2,7,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 8}",trial=8
+2026-08-17T15:09:04.885,1786997344885,305.439,Bandit_test_01,2,7,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:09:04.885,1786997344885,305.439,Bandit_test_01,2,7,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:09:04.885,1786997344885,305.439,Bandit_test_01,2,7,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 8, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=8 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:09:04.984,1786997344984,305.538,Bandit_test_01,2,8,CAN,RX,1,EVENT,Lowering,0x301,07 13 00,,count=19
+2026-08-17T15:09:04.984,1786997344984,305.539,Bandit_test_01,2,8,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:09:07.868,1786997347868,308.422,Bandit_test_01,2,8,CAN,RX,1,EVENT,Loading,0x301,08 13 00,,count=19
+2026-08-17T15:09:07.986,1786997347986,308.540,Bandit_test_01,2,8,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:09:11.401,1786997351401,311.955,Bandit_test_01,2,8,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:09:14.101,1786997354101,314.656,Bandit_test_01,2,8,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 13 00,,count=19
+2026-08-17T15:09:14.102,1786997354102,314.656,Bandit_test_01,2,8,CAN,RX,1,EVENT,Raising,0x301,09 13 00,,count=19
+2026-08-17T15:09:14.368,1786997354368,314.922,Bandit_test_01,2,8,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:09:17.068,1786997357068,317.622,Bandit_test_01,2,8,CAN,RX,1,EVENT,Loaded,0x301,02 14 00,,count=20 delivery=PELLET
+2026-08-17T15:09:17.068,1786997357068,317.622,Bandit_test_01,2,8,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 8, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=8 role=fed presented=pellet delivered=1
+2026-08-17T15:09:17.068,1786997357068,317.622,Bandit_test_01,2,8,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 8, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=8 role=empty presented=empty delivered=0
+2026-08-17T15:09:24.401,1786997364401,324.955,Bandit_test_01,2,8,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:09:24.685,1786997364685,325.239,Bandit_test_01,2,8,CAN,RX,1,EVENT,Dome Opened,0x301,03 14 00 01,,count=20 pellet_present=1
+2026-08-17T15:09:32.018,1786997372018,332.572,Bandit_test_01,2,8,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 14 00 01,,count=20 dome_open=1
+2026-08-17T15:09:32.018,1786997372018,332.572,Bandit_test_01,2,8,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 8, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=8 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:09:32.818,1786997372818,333.373,Bandit_test_01,2,8,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:09:33.769,1786997373769,334.323,Bandit_test_01,2,8,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:09:34.784,1786997374784,335.338,Bandit_test_01,2,8,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 9}",trial=9
+2026-08-17T15:09:34.784,1786997374784,335.338,Bandit_test_01,2,8,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:09:34.784,1786997374784,335.338,Bandit_test_01,2,8,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:09:34.784,1786997374784,335.338,Bandit_test_01,2,8,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 9, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=9 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:09:34.885,1786997374885,335.439,Bandit_test_01,2,9,CAN,RX,1,EVENT,Lowering,0x301,07 14 00,,count=20
+2026-08-17T15:09:34.885,1786997374885,335.439,Bandit_test_01,2,9,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:09:37.785,1786997377785,338.339,Bandit_test_01,2,9,CAN,RX,1,EVENT,Loading,0x301,08 14 00,,count=20
+2026-08-17T15:09:37.885,1786997377885,338.439,Bandit_test_01,2,9,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:09:41.318,1786997381318,341.872,Bandit_test_01,2,9,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:09:44.286,1786997384286,344.840,Bandit_test_01,2,9,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:09:52.452,1786997392452,353.007,Bandit_test_01,2,9,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 14 00,,count=20
+2026-08-17T15:09:52.453,1786997392453,353.007,Bandit_test_01,2,9,CAN,RX,1,EVENT,Raising,0x301,09 14 00,,count=20
+2026-08-17T15:09:55.424,1786997395424,355.978,Bandit_test_01,2,9,CAN,RX,1,EVENT,Loaded,0x301,02 15 00,,count=21 delivery=PELLET
+2026-08-17T15:09:55.426,1786997395426,355.980,Bandit_test_01,2,9,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 9, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=9 role=fed presented=pellet delivered=1
+2026-08-17T15:09:55.426,1786997395426,355.980,Bandit_test_01,2,9,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 9, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=9 role=empty presented=empty delivered=0
+2026-08-17T15:09:56.902,1786997396902,357.456,Bandit_test_01,2,9,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:09:57.268,1786997397268,357.822,Bandit_test_01,2,9,CAN,RX,1,EVENT,Dome Opened,0x301,03 15 00 01,,count=21 pellet_present=1
+2026-08-17T15:10:05.452,1786997405452,366.006,Bandit_test_01,2,9,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 15 00 01,,count=21 dome_open=1
+2026-08-17T15:10:05.452,1786997405452,366.006,Bandit_test_01,2,9,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 9, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=9 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:10:09.074,1786997409074,369.628,Bandit_test_01,2,9,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:10:09.571,1786997409571,370.125,Bandit_test_01,2,9,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:10:10.586,1786997410586,371.140,Bandit_test_01,2,9,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 10}",trial=10
+2026-08-17T15:10:10.586,1786997410586,371.140,Bandit_test_01,2,9,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:10:10.586,1786997410586,371.140,Bandit_test_01,2,9,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:10:10.586,1786997410586,371.140,Bandit_test_01,2,9,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 10, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=10 block=0 rich=1 lean=2 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:10:10.703,1786997410703,371.257,Bandit_test_01,2,10,CAN,RX,1,EVENT,Lowering,0x301,07 15 00,,count=21
+2026-08-17T15:10:10.703,1786997410703,371.257,Bandit_test_01,2,10,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:10:13.589,1786997413589,374.143,Bandit_test_01,2,10,CAN,RX,1,EVENT,Loading,0x301,08 15 00,,count=21
+2026-08-17T15:10:13.724,1786997413724,374.278,Bandit_test_01,2,10,CAN,RX,2,EVENT,Dwelling,0x302,0F 10 00,,"count=16 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:10:17.118,1786997417118,377.673,Bandit_test_01,2,10,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:10:19.003,1786997419003,379.557,Bandit_test_01,2,10,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 15 00,,count=21
+2026-08-17T15:10:19.003,1786997419003,379.557,Bandit_test_01,2,10,CAN,RX,1,EVENT,Raising,0x301,09 15 00,,count=21
+2026-08-17T15:10:20.086,1786997420086,380.640,Bandit_test_01,2,10,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 10 00,,"count=16 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:10:21.968,1786997421968,382.523,Bandit_test_01,2,10,CAN,RX,1,EVENT,Loaded,0x301,02 16 00,,count=22 delivery=PELLET
+2026-08-17T15:10:21.969,1786997421969,382.523,Bandit_test_01,2,10,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 10, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=10 role=fed presented=pellet delivered=1
+2026-08-17T15:10:21.969,1786997421969,382.523,Bandit_test_01,2,10,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 10, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=10 role=empty presented=empty delivered=0
+2026-08-17T15:10:29.102,1786997429102,389.656,Bandit_test_01,2,10,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:10:29.536,1786997429536,390.090,Bandit_test_01,2,10,CAN,RX,1,EVENT,Dome Opened,0x301,03 16 00 01,,count=22 pellet_present=1
+2026-08-17T15:10:31.221,1786997431221,391.775,Bandit_test_01,2,10,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 16 00 01,,count=22 dome_open=1
+2026-08-17T15:10:31.221,1786997431221,391.775,Bandit_test_01,2,10,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 10, ""block"": 0, ""rich"": 1, ""lean"": 2, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=10 block=0 rich=1 lean=2 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:10:33.886,1786997433886,394.440,Bandit_test_01,2,10,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:10:35.223,1786997435223,395.777,Bandit_test_01,2,10,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:10:36.235,1786997436235,396.789,Bandit_test_01,2,10,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 11}",trial=11
+2026-08-17T15:10:36.235,1786997436235,396.789,Bandit_test_01,2,10,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:10:36.235,1786997436235,396.789,Bandit_test_01,2,10,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:10:36.235,1786997436235,396.789,Bandit_test_01,2,10,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 11, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=11 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:10:36.336,1786997436336,396.890,Bandit_test_01,2,11,CAN,RX,2,EVENT,Lowering,0x302,07 10 00,,count=16
+2026-08-17T15:10:36.336,1786997436336,396.890,Bandit_test_01,2,11,CAN,RX,1,EVENT,Lowering,0x301,07 16 00,,count=22
+2026-08-17T15:10:39.236,1786997439236,399.790,Bandit_test_01,2,11,CAN,RX,1,EVENT,Dwelling,0x301,0F 16 00,,"count=22 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:10:39.352,1786997439352,399.906,Bandit_test_01,2,11,CAN,RX,2,EVENT,Loading,0x302,08 10 00,,count=16
+2026-08-17T15:10:42.736,1786997442736,403.290,Bandit_test_01,2,11,CAN,RX,1,EVENT,Raising,0x301,09 16 00,,count=22
+2026-08-17T15:10:44.736,1786997444736,405.290,Bandit_test_01,2,11,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 10 00,,count=16
+2026-08-17T15:10:44.736,1786997444736,405.290,Bandit_test_01,2,11,CAN,RX,2,EVENT,Raising,0x302,09 10 00,,count=16
+2026-08-17T15:10:45.740,1786997445740,406.294,Bandit_test_01,2,11,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 16 00,,"count=22 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:10:47.722,1786997447722,408.277,Bandit_test_01,2,11,CAN,RX,2,EVENT,Loaded,0x302,02 11 00,,count=17 delivery=PELLET
+2026-08-17T15:10:47.723,1786997447723,408.277,Bandit_test_01,2,11,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 11, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=11 role=fed presented=pellet delivered=1
+2026-08-17T15:10:47.723,1786997447723,408.277,Bandit_test_01,2,11,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 11, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=11 role=empty presented=empty delivered=0
+2026-08-17T15:10:48.171,1786997448171,408.725,Bandit_test_01,2,11,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:10:48.603,1786997448603,409.157,Bandit_test_01,2,11,CAN,RX,1,EVENT,Dome Opened,0x301,03 16 00 00,,count=22 pellet_present=0
+2026-08-17T15:10:50.353,1786997450353,410.907,Bandit_test_01,2,11,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:10:51.469,1786997451469,412.024,Bandit_test_01,2,11,CAN,RX,1,EVENT,Dome Opened,0x301,03 16 00 00,,count=22 pellet_present=0
+2026-08-17T15:10:53.005,1786997453005,413.559,Bandit_test_01,2,11,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:10:53.904,1786997453904,414.458,Bandit_test_01,2,11,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:10:56.186,1786997456186,416.740,Bandit_test_01,2,11,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:10:56.986,1786997456986,417.540,Bandit_test_01,2,11,CAN,RX,2,EVENT,Dome Opened,0x302,03 11 00 01,,count=17 pellet_present=1
+2026-08-17T15:11:01.538,1786997461538,422.092,Bandit_test_01,2,11,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 10 00 01,,count=16 dome_open=1
+2026-08-17T15:11:01.538,1786997461538,422.092,Bandit_test_01,2,11,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 11, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=11 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:11:02.053,1786997462053,422.607,Bandit_test_01,2,11,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:11:02.486,1786997462486,423.041,Bandit_test_01,2,11,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:03.420,1786997463420,423.974,Bandit_test_01,2,11,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:11:03.571,1786997463571,424.126,Bandit_test_01,2,11,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:11:03.772,1786997463772,424.326,Bandit_test_01,2,11,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:03.772,1786997463772,424.326,Bandit_test_01,2,11,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:04.787,1786997464787,425.341,Bandit_test_01,2,11,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 12}",trial=12
+2026-08-17T15:11:04.787,1786997464787,425.341,Bandit_test_01,2,11,EXP,TX,1,COMMAND,Dispense,0x101,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:11:04.787,1786997464787,425.341,Bandit_test_01,2,11,EXP,TX,2,COMMAND,DispenseNoFeed,0x102,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:11:04.787,1786997464787,425.341,Bandit_test_01,2,11,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 12, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 1, ""empty"": 2, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=12 block=1 rich=2 lean=1 fed=1 empty=2 fed_accepted=1 empty_accepted=1
+2026-08-17T15:11:04.921,1786997464921,425.475,Bandit_test_01,2,12,CAN,RX,1,EVENT,Lowering,0x301,07 16 00,,count=22
+2026-08-17T15:11:04.922,1786997464922,425.476,Bandit_test_01,2,12,CAN,RX,2,EVENT,Lowering,0x302,07 11 00,,count=17
+2026-08-17T15:11:07.771,1786997467771,428.325,Bandit_test_01,2,12,CAN,RX,1,EVENT,Loading,0x301,08 16 00,,count=22
+2026-08-17T15:11:07.903,1786997467903,428.457,Bandit_test_01,2,12,CAN,RX,2,EVENT,Dwelling,0x302,0F 11 00,,"count=17 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:11:11.319,1786997471319,431.873,Bandit_test_01,2,12,CAN,RX,2,EVENT,Raising,0x302,09 11 00,,count=17
+2026-08-17T15:11:11.870,1786997471870,432.424,Bandit_test_01,2,12,CAN,RX,1,EVENT,Pellet OnPlate,0x301,01 16 00,,count=22
+2026-08-17T15:11:11.870,1786997471870,432.424,Bandit_test_01,2,12,CAN,RX,1,EVENT,Raising,0x301,09 16 00,,count=22
+2026-08-17T15:11:14.287,1786997474287,434.841,Bandit_test_01,2,12,CAN,RX,2,EVENT,NoFeedPresented,0x302,0E 11 00,,"count=17 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:11:14.836,1786997474836,435.390,Bandit_test_01,2,12,CAN,RX,1,EVENT,Loaded,0x301,02 17 00,,count=23 delivery=PELLET
+2026-08-17T15:11:14.836,1786997474836,435.390,Bandit_test_01,2,12,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 12, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=12 role=fed presented=pellet delivered=1
+2026-08-17T15:11:14.836,1786997474836,435.390,Bandit_test_01,2,12,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 12, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=12 role=empty presented=empty delivered=0
+2026-08-17T15:11:17.036,1786997477036,437.590,Bandit_test_01,2,12,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:11:19.086,1786997479086,439.640,Bandit_test_01,2,12,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:19.205,1786997479205,439.759,Bandit_test_01,2,12,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:11:19.386,1786997479386,439.940,Bandit_test_01,2,12,CAN,RX,2,EVENT,Dome Opened,0x302,03 11 00 00,,count=17 pellet_present=0
+2026-08-17T15:11:20.686,1786997480686,441.240,Bandit_test_01,2,12,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:11:20.987,1786997480987,441.541,Bandit_test_01,2,12,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:21.303,1786997481303,441.857,Bandit_test_01,2,12,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:11:22.453,1786997482453,443.007,Bandit_test_01,2,12,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 01,,count=23 pellet_present=1
+2026-08-17T15:11:24.920,1786997484920,445.474,Bandit_test_01,2,12,CAN,RX,1,EVENT,Pellet Taken,0x301,0B 17 00 01,,count=23 dome_open=1
+2026-08-17T15:11:24.920,1786997484920,445.474,Bandit_test_01,2,12,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 12, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 1, ""empty"": 2, ""delivered_node"": 1, ""baited_arms"": 1, ""taken_node"": 1, ""outcome"": ""taken"", ""valid"": 1}",trial=12 block=1 rich=2 lean=1 fed=1 empty=2 delivered_node=1 baited_arms=1 taken_node=1 outcome=taken valid=1
+2026-08-17T15:11:25.219,1786997485219,445.773,Bandit_test_01,2,12,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:11:27.553,1786997487553,448.107,Bandit_test_01,2,12,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:28.610,1786997488610,449.164,Bandit_test_01,2,12,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 13}",trial=13
+2026-08-17T15:11:28.610,1786997488610,449.164,Bandit_test_01,2,12,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:11:28.610,1786997488610,449.164,Bandit_test_01,2,12,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:11:28.610,1786997488610,449.164,Bandit_test_01,2,12,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 13, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=13 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:11:28.787,1786997488787,449.341,Bandit_test_01,2,13,CAN,RX,2,EVENT,Lowering,0x302,07 11 00,,count=17
+2026-08-17T15:11:28.787,1786997488787,449.341,Bandit_test_01,2,13,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:11:31.606,1786997491606,452.160,Bandit_test_01,2,13,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:11:31.854,1786997491854,452.408,Bandit_test_01,2,13,CAN,RX,2,EVENT,Loading,0x302,08 11 00,,count=17
+2026-08-17T15:11:35.103,1786997495103,455.658,Bandit_test_01,2,13,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:11:35.670,1786997495670,456.224,Bandit_test_01,2,13,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 11 00,,count=17
+2026-08-17T15:11:35.670,1786997495670,456.225,Bandit_test_01,2,13,CAN,RX,2,EVENT,Raising,0x302,09 11 00,,count=17
+2026-08-17T15:11:38.070,1786997498070,458.624,Bandit_test_01,2,13,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:11:38.653,1786997498653,459.207,Bandit_test_01,2,13,CAN,RX,2,EVENT,Loaded,0x302,02 12 00,,count=18 delivery=PELLET
+2026-08-17T15:11:38.653,1786997498653,459.207,Bandit_test_01,2,13,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 13, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=13 role=fed presented=pellet delivered=1
+2026-08-17T15:11:38.653,1786997498653,459.207,Bandit_test_01,2,13,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 13, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=13 role=empty presented=empty delivered=0
+2026-08-17T15:11:42.523,1786997502523,463.077,Bandit_test_01,2,13,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:11:43.004,1786997503004,463.559,Bandit_test_01,2,13,CAN,RX,2,EVENT,Dome Opened,0x302,03 12 00 01,,count=18 pellet_present=1
+2026-08-17T15:11:49.503,1786997509503,470.057,Bandit_test_01,2,13,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 11 00 01,,count=17 dome_open=1
+2026-08-17T15:11:49.503,1786997509503,470.057,Bandit_test_01,2,13,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 13, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=13 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:11:49.770,1786997509770,470.324,Bandit_test_01,2,13,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:11:50.253,1786997510253,470.807,Bandit_test_01,2,13,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:11:51.270,1786997511270,471.824,Bandit_test_01,2,13,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 14}",trial=14
+2026-08-17T15:11:51.270,1786997511270,471.824,Bandit_test_01,2,13,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:11:51.270,1786997511270,471.824,Bandit_test_01,2,13,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:11:51.270,1786997511270,471.824,Bandit_test_01,2,13,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 14, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=14 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:11:51.387,1786997511387,471.941,Bandit_test_01,2,14,CAN,RX,2,EVENT,Lowering,0x302,07 12 00,,count=18
+2026-08-17T15:11:51.387,1786997511387,471.941,Bandit_test_01,2,14,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:11:54.270,1786997514270,474.824,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:11:54.387,1786997514387,474.941,Bandit_test_01,2,14,CAN,RX,2,EVENT,Loading,0x302,08 12 00,,count=18
+2026-08-17T15:11:57.770,1786997517770,478.325,Bandit_test_01,2,14,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:11:58.629,1786997518629,479.183,Bandit_test_01,2,14,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 12 00,,count=18
+2026-08-17T15:11:58.629,1786997518629,479.183,Bandit_test_01,2,14,CAN,RX,2,EVENT,Raising,0x302,09 12 00,,count=18
+2026-08-17T15:12:00.737,1786997520737,481.291,Bandit_test_01,2,14,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:12:00.888,1786997520888,481.442,Bandit_test_01,2,14,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:01.388,1786997521388,481.942,Bandit_test_01,2,14,CAN,RX,2,EVENT,Loaded,0x302,02 13 00,,count=19 delivery=PELLET
+2026-08-17T15:12:01.388,1786997521388,481.942,Bandit_test_01,2,14,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 14, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=14 role=fed presented=pellet delivered=1
+2026-08-17T15:12:01.388,1786997521388,481.942,Bandit_test_01,2,14,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 14, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=14 role=empty presented=empty delivered=0
+2026-08-17T15:12:02.203,1786997522203,482.757,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:12:04.004,1786997524004,484.558,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:12:05.737,1786997525737,486.291,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:12:07.871,1786997527871,488.425,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:12:08.553,1786997528553,489.108,Bandit_test_01,2,14,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:09.422,1786997529422,489.976,Bandit_test_01,2,14,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:09.853,1786997529853,490.407,Bandit_test_01,2,14,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:11.304,1786997531304,491.858,Bandit_test_01,2,14,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:12.703,1786997532703,493.258,Bandit_test_01,2,14,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:12.820,1786997532820,493.374,Bandit_test_01,2,14,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:13.454,1786997533454,494.008,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:12:14.788,1786997534788,495.342,Bandit_test_01,2,14,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:12:15.454,1786997535454,496.008,Bandit_test_01,2,14,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:15.587,1786997535587,496.141,Bandit_test_01,2,14,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:16.393,1786997536393,496.947,Bandit_test_01,2,14,CAN,RX,2,EVENT,Dome Opened,0x302,03 13 00 01,,count=19 pellet_present=1
+2026-08-17T15:12:19.961,1786997539961,500.515,Bandit_test_01,2,14,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 12 00 01,,count=18 dome_open=1
+2026-08-17T15:12:19.961,1786997539961,500.515,Bandit_test_01,2,14,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 14, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=14 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:12:20.320,1786997540320,500.875,Bandit_test_01,2,14,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:12:21.087,1786997541087,501.641,Bandit_test_01,2,14,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:22.103,1786997542103,502.657,Bandit_test_01,2,14,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 15}",trial=15
+2026-08-17T15:12:22.103,1786997542103,502.657,Bandit_test_01,2,14,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:12:22.103,1786997542103,502.657,Bandit_test_01,2,14,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:12:22.103,1786997542103,502.657,Bandit_test_01,2,14,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 15, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=15 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:12:22.220,1786997542220,502.774,Bandit_test_01,2,15,CAN,RX,2,EVENT,Lowering,0x302,07 13 00,,count=19
+2026-08-17T15:12:22.220,1786997542220,502.774,Bandit_test_01,2,15,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:12:25.104,1786997545104,505.658,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:12:25.254,1786997545254,505.808,Bandit_test_01,2,15,CAN,RX,2,EVENT,Loading,0x302,08 13 00,,count=19
+2026-08-17T15:12:28.605,1786997548605,509.159,Bandit_test_01,2,15,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:12:29.423,1786997549423,509.977,Bandit_test_01,2,15,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 13 00,,count=19
+2026-08-17T15:12:29.423,1786997549423,509.977,Bandit_test_01,2,15,CAN,RX,2,EVENT,Raising,0x302,09 13 00,,count=19
+2026-08-17T15:12:31.571,1786997551571,512.126,Bandit_test_01,2,15,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:12:32.405,1786997552405,512.959,Bandit_test_01,2,15,CAN,RX,2,EVENT,Loaded,0x302,02 14 00,,count=20 delivery=PELLET
+2026-08-17T15:12:32.406,1786997552406,512.960,Bandit_test_01,2,15,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 15, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=15 role=fed presented=pellet delivered=1
+2026-08-17T15:12:32.406,1786997552406,512.960,Bandit_test_01,2,15,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 15, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=15 role=empty presented=empty delivered=0
+2026-08-17T15:12:34.224,1786997554224,514.778,Bandit_test_01,2,15,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:34.504,1786997554504,515.059,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:12:36.471,1786997556471,517.025,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:12:37.755,1786997557755,518.309,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:12:38.922,1786997558922,519.476,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:12:40.072,1786997560072,520.626,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:12:40.740,1786997560740,521.294,Bandit_test_01,2,15,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:12:42.773,1786997562773,523.327,Bandit_test_01,2,15,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:42.956,1786997562956,523.510,Bandit_test_01,2,15,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:12:44.705,1786997564705,525.259,Bandit_test_01,2,15,CAN,RX,2,EVENT,Dome Opened,0x302,03 14 00 01,,count=20 pellet_present=1
+2026-08-17T15:12:45.939,1786997565939,526.494,Bandit_test_01,2,15,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:12:46.254,1786997566254,526.809,Bandit_test_01,2,15,CAN,RX,2,EVENT,Dome Opened,0x302,03 14 00 01,,count=20 pellet_present=1
+2026-08-17T15:12:49.388,1786997569388,529.943,Bandit_test_01,2,15,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 13 00 01,,count=19 dome_open=1
+2026-08-17T15:12:49.389,1786997569389,529.943,Bandit_test_01,2,15,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 15, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=15 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:12:49.888,1786997569888,530.442,Bandit_test_01,2,15,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:12:52.388,1786997572388,532.943,Bandit_test_01,2,15,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:12:53.405,1786997573405,533.959,Bandit_test_01,2,15,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 16}",trial=16
+2026-08-17T15:12:53.405,1786997573405,533.959,Bandit_test_01,2,15,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:12:53.405,1786997573405,533.959,Bandit_test_01,2,15,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:12:53.405,1786997573405,533.959,Bandit_test_01,2,15,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 16, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=16 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:12:53.555,1786997573555,534.109,Bandit_test_01,2,16,CAN,RX,2,EVENT,Lowering,0x302,07 14 00,,count=20
+2026-08-17T15:12:53.555,1786997573555,534.109,Bandit_test_01,2,16,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:12:56.412,1786997576412,536.966,Bandit_test_01,2,16,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:12:56.412,1786997576412,536.967,Bandit_test_01,2,16,CAN,RX,2,EVENT,Loading,0x302,08 14 00,,count=20
+2026-08-17T15:12:59.889,1786997579889,540.443,Bandit_test_01,2,16,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:13:02.871,1786997582871,543.425,Bandit_test_01,2,16,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:13:03.054,1786997583054,543.608,Bandit_test_01,2,16,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 14 00,,count=20
+2026-08-17T15:13:03.054,1786997583054,543.609,Bandit_test_01,2,16,CAN,RX,2,EVENT,Raising,0x302,09 14 00,,count=20
+2026-08-17T15:13:04.105,1786997584105,544.659,Bandit_test_01,2,16,CAN,RX,1,EVENT,MousePresence Detected,0x301,06 04 01,,input=MousePresence active=1
+2026-08-17T15:13:04.289,1786997584289,544.844,Bandit_test_01,2,16,CAN,RX,1,EVENT,Dome Opened,0x301,03 17 00 00,,count=23 pellet_present=0
+2026-08-17T15:13:05.523,1786997585523,546.077,Bandit_test_01,2,16,CAN,RX,1,EVENT,Dome closed,0x301,06 03 00,,input=Dome active=0
+2026-08-17T15:13:06.038,1786997586038,546.592,Bandit_test_01,2,16,CAN,RX,2,EVENT,Loaded,0x302,02 15 00,,count=21 delivery=PELLET
+2026-08-17T15:13:06.039,1786997586039,546.593,Bandit_test_01,2,16,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 16, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=16 role=fed presented=pellet delivered=1
+2026-08-17T15:13:06.039,1786997586039,546.593,Bandit_test_01,2,16,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 16, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=16 role=empty presented=empty delivered=0
+2026-08-17T15:13:06.189,1786997586189,546.743,Bandit_test_01,2,16,CAN,RX,1,EVENT,MousePresence Cleared,0x301,06 04 00,,input=MousePresence active=0
+2026-08-17T15:13:06.377,1786997586377,546.931,Bandit_test_01,2,16,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:13:06.768,1786997586768,547.322,Bandit_test_01,2,16,CAN,RX,2,EVENT,Dome Opened,0x302,03 15 00 01,,count=21 pellet_present=1
+2026-08-17T15:13:18.189,1786997598189,558.743,Bandit_test_01,2,16,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 14 00 01,,count=20 dome_open=1
+2026-08-17T15:13:18.190,1786997598190,558.744,Bandit_test_01,2,16,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 16, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=16 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:13:19.922,1786997599922,560.476,Bandit_test_01,2,16,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:13:20.388,1786997600388,560.942,Bandit_test_01,2,16,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:13:21.404,1786997601404,561.958,Bandit_test_01,2,16,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 17}",trial=17
+2026-08-17T15:13:21.404,1786997601404,561.958,Bandit_test_01,2,16,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:13:21.404,1786997601404,561.958,Bandit_test_01,2,16,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:13:21.404,1786997601404,561.958,Bandit_test_01,2,16,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 17, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=17 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:13:21.538,1786997601538,562.092,Bandit_test_01,2,17,CAN,RX,2,EVENT,Lowering,0x302,07 15 00,,count=21
+2026-08-17T15:13:21.538,1786997601538,562.092,Bandit_test_01,2,17,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:13:24.404,1786997604404,564.958,Bandit_test_01,2,17,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:13:24.537,1786997604537,565.092,Bandit_test_01,2,17,CAN,RX,2,EVENT,Loading,0x302,08 15 00,,count=21
+2026-08-17T15:13:27.904,1786997607904,568.458,Bandit_test_01,2,17,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:13:28.754,1786997608754,569.308,Bandit_test_01,2,17,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 15 00,,count=21
+2026-08-17T15:13:28.754,1786997608754,569.309,Bandit_test_01,2,17,CAN,RX,2,EVENT,Raising,0x302,09 15 00,,count=21
+2026-08-17T15:13:30.871,1786997610871,571.425,Bandit_test_01,2,17,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:13:31.721,1786997611721,572.275,Bandit_test_01,2,17,CAN,RX,2,EVENT,Loaded,0x302,02 16 00,,count=22 delivery=PELLET
+2026-08-17T15:13:31.721,1786997611721,572.275,Bandit_test_01,2,17,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 17, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=17 role=fed presented=pellet delivered=1
+2026-08-17T15:13:31.721,1786997611721,572.275,Bandit_test_01,2,17,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 17, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=17 role=empty presented=empty delivered=0
+2026-08-17T15:13:48.954,1786997628954,589.508,Bandit_test_01,2,17,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:13:49.421,1786997629421,589.975,Bandit_test_01,2,17,CAN,RX,2,EVENT,Dome Opened,0x302,03 16 00 01,,count=22 pellet_present=1
+2026-08-17T15:13:51.688,1786997631688,592.242,Bandit_test_01,2,17,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 15 00 01,,count=21 dome_open=1
+2026-08-17T15:13:51.688,1786997631688,592.242,Bandit_test_01,2,17,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 17, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=17 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:13:52.055,1786997632055,592.609,Bandit_test_01,2,17,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:13:53.171,1786997633171,593.725,Bandit_test_01,2,17,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:13:54.188,1786997634188,594.742,Bandit_test_01,2,17,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 18}",trial=18
+2026-08-17T15:13:54.188,1786997634188,594.742,Bandit_test_01,2,17,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:13:54.188,1786997634188,594.742,Bandit_test_01,2,17,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:13:54.188,1786997634188,594.742,Bandit_test_01,2,17,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 18, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=18 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:13:54.321,1786997634321,594.875,Bandit_test_01,2,18,CAN,RX,2,EVENT,Lowering,0x302,07 16 00,,count=22
+2026-08-17T15:13:54.322,1786997634322,594.876,Bandit_test_01,2,18,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:13:57.188,1786997637188,597.742,Bandit_test_01,2,18,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:13:57.322,1786997637322,597.876,Bandit_test_01,2,18,CAN,RX,2,EVENT,Loading,0x302,08 16 00,,count=22
+2026-08-17T15:14:00.688,1786997640688,601.242,Bandit_test_01,2,18,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:14:01.455,1786997641455,602.009,Bandit_test_01,2,18,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 16 00,,count=22
+2026-08-17T15:14:01.455,1786997641455,602.009,Bandit_test_01,2,18,CAN,RX,2,EVENT,Raising,0x302,09 16 00,,count=22
+2026-08-17T15:14:03.656,1786997643656,604.210,Bandit_test_01,2,18,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:14:04.438,1786997644438,604.992,Bandit_test_01,2,18,CAN,RX,2,EVENT,Loaded,0x302,02 17 00,,count=23 delivery=PELLET
+2026-08-17T15:14:04.438,1786997644438,604.992,Bandit_test_01,2,18,EXP,SYS,2,EXPERIMENT,arm_presented,0x000,,"{""trial"": 18, ""role"": ""fed"", ""presented"": ""pellet"", ""delivered"": 1}",trial=18 role=fed presented=pellet delivered=1
+2026-08-17T15:14:04.438,1786997644438,604.992,Bandit_test_01,2,18,EXP,SYS,1,EXPERIMENT,arm_presented,0x000,,"{""trial"": 18, ""role"": ""empty"", ""presented"": ""empty"", ""delivered"": 0}",trial=18 role=empty presented=empty delivered=0
+2026-08-17T15:15:03.105,1786997703105,663.659,Bandit_test_01,2,18,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:15:03.338,1786997703338,663.893,Bandit_test_01,2,18,CAN,RX,2,EVENT,Dome Opened,0x302,03 17 00 01,,count=23 pellet_present=1
+2026-08-17T15:15:05.239,1786997705239,665.793,Bandit_test_01,2,18,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 16 00 01,,count=22 dome_open=1
+2026-08-17T15:15:05.240,1786997705240,665.794,Bandit_test_01,2,18,EXP,SYS,0,EXPERIMENT,bandit_trial_end,0x000,,"{""trial"": 18, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""delivered_node"": 2, ""baited_arms"": 1, ""taken_node"": 2, ""outcome"": ""taken"", ""valid"": 1}",trial=18 block=1 rich=2 lean=1 fed=2 empty=1 delivered_node=2 baited_arms=1 taken_node=2 outcome=taken valid=1
+2026-08-17T15:15:05.522,1786997705522,666.076,Bandit_test_01,2,18,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:15:06.205,1786997706205,666.759,Bandit_test_01,2,18,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:15:07.206,1786997707206,667.760,Bandit_test_01,2,18,EXP,SYS,0,EXPERIMENT,trial,0x000,,"{""trial"": 19}",trial=19
+2026-08-17T15:15:07.206,1786997707206,667.760,Bandit_test_01,2,18,EXP,TX,2,COMMAND,Dispense,0x102,02,"{""cmd"": ""Dispense"", ""payload_hex"": """"}",load & present pellet — Two-Armed Bandit
+2026-08-17T15:15:07.206,1786997707206,667.760,Bandit_test_01,2,18,EXP,TX,1,COMMAND,DispenseNoFeed,0x101,08 AC 0D,"{""cmd"": ""DispenseNoFeed"", ""payload_hex"": ""ac0d""}","run dispense motion, deliver no pellet — Two-Armed Bandit"
+2026-08-17T15:15:07.206,1786997707206,667.760,Bandit_test_01,2,18,EXP,SYS,0,EXPERIMENT,bandit_trial,0x000,,"{""trial"": 19, ""block"": 1, ""rich"": 2, ""lean"": 1, ""fed"": 2, ""empty"": 1, ""fed_accepted"": 1, ""empty_accepted"": 1}",trial=19 block=1 rich=2 lean=1 fed=2 empty=1 fed_accepted=1 empty_accepted=1
+2026-08-17T15:15:07.389,1786997707389,667.943,Bandit_test_01,2,19,CAN,RX,2,EVENT,Lowering,0x302,07 17 00,,count=23
+2026-08-17T15:15:07.389,1786997707389,667.943,Bandit_test_01,2,19,CAN,RX,1,EVENT,Lowering,0x301,07 17 00,,count=23
+2026-08-17T15:15:07.890,1786997707890,668.444,Bandit_test_01,2,19,EXP,SYS,0,EXPERIMENT,session_end,0x000,,"{""elapsed_s"": 668.442, ""pellets"": 17}",elapsed_s=668.442 pellets=17
+2026-08-17T15:15:07.890,1786997707890,668.444,Bandit_test_01,2,19,EXP,SYS,0,EXPERIMENT,two_armed_bandit_end,0x000,,"{""trials"": 19, ""trials_invalid"": 0, ""pellets"": 17, ""elapsed_s"": 668.442}",trials=19 trials_invalid=0 pellets=17 elapsed_s=668.442
+2026-08-17T15:15:10.205,1786997710205,670.759,Bandit_test_01,2,19,CAN,RX,1,EVENT,Dwelling,0x301,0F 17 00,,"count=23 delivery=EMPTY — holding at drop position, M1 idle"
+2026-08-17T15:15:10.355,1786997710355,670.909,Bandit_test_01,2,19,CAN,RX,2,EVENT,Loading,0x302,08 17 00,,count=23
+2026-08-17T15:15:13.705,1786997713705,674.259,Bandit_test_01,2,19,CAN,RX,1,EVENT,Raising,0x301,09 17 00,,count=23
+2026-08-17T15:15:14.422,1786997714422,674.976,Bandit_test_01,2,19,CAN,RX,2,EVENT,Pellet OnPlate,0x302,01 17 00,,count=23
+2026-08-17T15:15:14.422,1786997714422,674.976,Bandit_test_01,2,19,CAN,RX,2,EVENT,Raising,0x302,09 17 00,,count=23
+2026-08-17T15:15:16.672,1786997716672,677.227,Bandit_test_01,2,19,CAN,RX,1,EVENT,NoFeedPresented,0x301,0E 17 00,,"count=23 delivery=EMPTY — empty plate raised, no pellet delivered"
+2026-08-17T15:15:17.405,1786997717405,677.959,Bandit_test_01,2,19,CAN,RX,2,EVENT,Loaded,0x302,02 18 00,,count=24 delivery=PELLET
+2026-08-17T15:15:18.705,1786997718705,679.260,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:15:18.939,1786997718939,679.493,Bandit_test_01,2,19,CAN,RX,2,EVENT,Dome Opened,0x302,03 18 00 01,,count=24 pellet_present=1
+2026-08-17T15:15:20.972,1786997720972,681.526,Bandit_test_01,2,19,CAN,RX,2,EVENT,Pellet Taken,0x302,0B 17 00 01,,count=23 dome_open=1
+2026-08-17T15:15:21.172,1786997721172,681.726,Bandit_test_01,2,19,CAN,RX,2,EVENT,Dome closed,0x302,06 03 00,,input=Dome active=0
+2026-08-17T15:15:21.855,1786997721855,682.409,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:15:26.640,1786997726640,687.194,Bandit_test_01,2,19,CAN,TX,0,COMMAND,Recover (broadcast),0x100,03,,stop motion & clear fault
+2026-08-17T15:15:28.322,1786997728322,688.876,Bandit_test_01,2,19,CAN,TX,0,COMMAND,Recover (broadcast),0x100,03,,stop motion & clear fault
+2026-08-17T15:15:29.239,1786997729239,689.793,Bandit_test_01,2,19,CAN,TX,0,COMMAND,Recover (broadcast),0x100,03,,stop motion & clear fault
+2026-08-17T15:25:31.251,1786998331251,1291.805,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.252,1786998331252,1291.806,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:25:31.253,1786998331253,1291.807,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.253,1786998331253,1291.807,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:25:31.253,1786998331253,1291.807,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.253,1786998331253,1291.807,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:25:31.253,1786998331253,1291.807,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.253,1786998331253,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:25:31.254,1786998331254,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.254,1786998331254,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:25:31.254,1786998331254,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.254,1786998331254,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
+2026-08-17T15:25:31.254,1786998331254,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Detected,0x302,06 04 01,,input=MousePresence active=1
+2026-08-17T15:25:31.254,1786998331254,1291.808,Bandit_test_01,2,19,CAN,RX,2,EVENT,MousePresence Cleared,0x302,06 04 00,,input=MousePresence active=0
