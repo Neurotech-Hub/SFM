@@ -29,6 +29,22 @@ cp examples/report_design/sections/alternation.py src/sfm_analysis/report/sectio
 `experiment` field is `"alternation"` (the `name` of the experiment
 template). Force it with `--design alternation`.
 
+### Actogram event mapping (no package edit)
+
+After `pip install sfm-analysis`, pellet-take ticks are a bundled
+design — no file copy:
+
+```bash
+sfm-report MySession --design actogram_takes --open
+python -m sfm_analysis.examples.actogram_by_event
+python -m sfm_analysis.examples.actogram_by_event /path/to/MySession.csv
+```
+
+[`designs/actogram_takes.json`](designs/actogram_takes.json) is the same
+file as the one in the wheel. Copy it next to your logs only when you
+want a *different* event (or several): edit `options.event_names` and
+pass the path. Nothing goes into `site-packages`.
+
 Without a matching design, the generic `default.json` still renders —
 you do not have to ship a design on day one.
 

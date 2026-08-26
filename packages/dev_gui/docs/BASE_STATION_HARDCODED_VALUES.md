@@ -191,7 +191,6 @@ The report generator lives in a separate package,
 | 0.25 s | `dedup_window_s` | `report/metrics.py` `dome_bouts` | Collapse `DomeOpened` milestone + InputChanged edge for the same physical open |
 | 600 s floor, adaptive above | `window_s` / `min_window_s` | `report/sections/timeline.py` `session_raster_section` | Raster detail-panel width. Adaptive by default: `max(min_window_s, duration/12)`, so a run caps at ~12 panels instead of growing without bound; `min_window_s` raises the short-run floor (free_feeding: 900 s), `window_s` pins a fixed width regardless of duration |
 | 2 (days) | (threshold, not a named constant) | `report/sections/timeline.py` `actogram_section` | Minimum distinct calendar days of activity before the actogram renders at all |
-| 6:00 / 18:00 | `lights_on` / `lights_off` | `report/designs/*.json` `timeline.actogram` options | Default 12:12 light cycle assumed for actogram night-phase shading |
 | 5 / 15 | `pre` / `post` | `report/designs/two_armed_bandit.json` | Reversal-curve trials before/after a block flip |
 | 5 | `rolling_window` | `report/designs/two_armed_bandit.json` | Block-curve smoothing window (trials) |
 | 8 | `_MIN_TRIALS_FOR_CURVE` | `report/sections/bandit.py` | Skip choice/reversal charts below this many analyzed trials |

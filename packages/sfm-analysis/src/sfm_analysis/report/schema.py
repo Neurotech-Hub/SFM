@@ -27,7 +27,7 @@ import json
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 def _packaged_designs_dir() -> Path:
@@ -145,6 +145,35 @@ def load_report_defs(directory: Optional[Path] = None) -> List[ReportDef]:
     if not root.is_dir():
         return []
     return [load_report_def(p) for p in sorted(root.glob("*.json"))]
+
+
+def load_design(spec: Union[str, Path]) -> ReportDef:
+    """
+    Resolve a design from a bundled name *or* a JSON file on disk.
+
+    ``spec`` may be:
+
+    - a bundled design name (``"two_armed_bandit"``, ``"default"``,
+      ``"actogram_takes"``, …)
+    - a path to a ``.json`` file the user wrote (so a pip install does
+      not have to be patched to change actogram ``event_names``)
+    - ``"name.json"`` as a filename, which loads the bundled design of
+      that stem if no local file exists
+
+    Raises ``ValueError`` if neither a file nor a bundled name matches,
+    rather than silently falling through to auto-resolution.
+    """
+    p = Path(spec).expanduser()
+    if p.is_file():
+        return load_report_def(p)
+    name = p.stem if p.suffix.lower() == ".json" else str(spec)
+    bundled = DEFAULT_REPORTS_DIR / f"{name}.json"
+    if bundled.is_file():
+        return load_report_def(bundled)
+    raise ValueError(
+        f"Unknown report design {spec!r}. Use a bundled name "
+        f"(sfm-report --list-designs) or a path to a .json design file."
+    )
 
 
 def resolve_section(ref: str) -> SectionFn:

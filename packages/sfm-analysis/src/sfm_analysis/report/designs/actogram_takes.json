@@ -1,0 +1,34 @@
+{
+  "name": "actogram_takes",
+  "label": "Generic Behavior Report — actogram from Pellet Taken",
+  "description": "Same sections as default.json, but the actogram ticks pellet takes instead of presence onsets. Opt-in only: pass --design actogram_takes (ships with pip install sfm-analysis). To plot a different CAN EVENT, copy this file next to your logs, edit event_names, and pass the path. Several names become one tick series.",
+  "matches": [],
+  "sections": [
+    { "ref": "timeline.explorer" },
+    { "ref": "timeline.session_raster" },
+    { "ref": "timeline.actogram",
+      "options": {
+        "event_names": ["Pellet Taken"]
+      }
+    },
+    { "ref": "generic.provenance" },
+    { "ref": "generic.data_quality" },
+    { "ref": "generic.pellet_accounting" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.presence" },
+    { "ref": "generic.interaction_funnel" },
+    { "ref": "generic.throughput" },
+    { "ref": "generic.faults" },
+    { "ref": "generic.apparatus_health" }
+  ],
+  "combined_sections": [
+    { "ref": "compare.cohort_table" },
+    { "ref": "compare.learning_curve", "options": { "metric": "take_rate" } },
+    { "ref": "compare.subject_spread", "options": { "metric": "take_rate" } },
+    { "ref": "compare.node_preference" },
+    { "ref": "compare.cumulative_overlay" },
+    { "ref": "compare.quality_matrix" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.faults" }
+  ]
+}

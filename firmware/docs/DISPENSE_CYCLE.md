@@ -193,7 +193,9 @@ still applies, since it is about motion, not the pellet.
 
 ## Events
 
-Node → base on CAN ID `0x300 + nodeId`. Byte 0 is the event code.
+A **CAN event** is a message the node posts on the CAN bus (the shared
+communication wire every node is connected to). Node → base on CAN ID
+`0x300 + nodeId`. Byte 0 is the event code.
 
 
 | Code   | Event             | Extra payload              | Meaning                                                                 |

@@ -65,7 +65,7 @@ doesn't bloat the main log.
 | `session` | the session name | Groups rows into files; combined with `run_id` for run-scoping |
 | `run_id` | increments each time a session is reopened | A single CSV can hold several runs — see trap #1 |
 | `trial` | current trial number, `0` outside a trial | Convenience column; the authoritative trial boundary is the `trial` EXPERIMENT event |
-| `source` | `CAN` \| `EXP` \| `BNC` \| `SYS` | `CAN` = node hardware events, `EXP` = experiment-engine events, `BNC` = photogate/beam-break, `SYS` = base-station lifecycle |
+| `source` | `CAN` \| `EXP` \| `BNC` \| `SYS` | `CAN` = a **CAN event**: a message on the communication bus all nodes share (node hardware). `EXP` = experiment-engine. `BNC` = base-station photogate/beam-break. `SYS` = base-station lifecycle |
 | `direction` | `TX` \| `RX` \| `SYS` \| `LOCAL` | Bus direction for CAN frames; not meaningful for EXP rows |
 | `node_id` | which node (`0` = broadcast / session-scope, not a real node) | |
 | `frame_type` | `EVENT` \| `COMMAND` \| `HEARTBEAT` \| `PELLET_AUDIT` \| ... | What kind of frame this is, independent of `event_name` |
@@ -77,9 +77,14 @@ doesn't bloat the main log.
 
 ## 3. Event vocabulary
 
+**CAN** (Controller Area Network) is the shared communication bus every feeder
+node is wired onto. A **CAN event** is a frame a node posted on that bus —
+`Loaded`, `Pellet Taken`, `Fault`, a sensor edge — as opposed to an
+experiment-engine (`EXP`) row the base station invented.
+
 ### CAN events (`source == "CAN"`, `protocol.CanEvent`)
 
-One node-hardware event per row. `event_name` is the *display* name
+One node-hardware event per row, received on the CAN bus. `event_name` is the *display* name
 (`protocol.CAN_EVENT_DISPLAY_NAME`), not the enum member name — use
 `LogRow.can_event` when you need the underlying enum back (see the dome
 trap below).
@@ -282,6 +287,35 @@ event, in order. Feed straight to a step chart.
 `date` (a `datetime.date`, rig-local calendar day), `times` (hours-since-
 midnight, sorted) — see [§7](#7-time-timezone-and-time-of-day) for why this
 needs no UTC offset.
+
+`activity_by_day(run, event_names=...)` selects which CAN EVENT display
+names count as ticks (default: `("MousePresence Detected",)`). The
+printed actogram (`timeline.actogram`) passes the same knob through from
+design JSON `options.event_names`. Multiple names are pooled into one
+series. Days with zero matching events are omitted, not drawn as a blank
+row. The section title names those events (`Actogram — Pellet Taken`),
+as does the figure's own SVG `<desc>`.
+
+The actogram draws no light/dark shading: the rig doesn't record the
+facility's light schedule, so shading it would render a fixed
+clock-time assumption as though it were measured data. Time of day is
+on the axis — apply your own light cycle to it, or use
+`zeitgeber_time(row, lights_on=...)` ([§7](#7-time-timezone-and-time-of-day)),
+where the schedule is an explicit input you supply.
+
+A pip-installed user does not edit the package:
+
+```bash
+python -m sfm_analysis.examples.actogram_by_event
+python -m sfm_analysis.examples.actogram_by_event /path/to/MySession.csv
+sfm-report MySession --design actogram_takes --open
+```
+
+`actogram_takes` ships in the wheel and is opt-in only (it is not
+auto-selected). To plot a different event, copy
+[`examples/report_design/designs/actogram_takes.json`](../examples/report_design/designs/actogram_takes.json)
+next to your logs, edit `event_names`, and pass the path to
+`--design`. See the README section *Customize the actogram*.
 
 ## 6. Tidy-table columns
 

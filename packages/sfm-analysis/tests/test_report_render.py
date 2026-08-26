@@ -1,6 +1,7 @@
 """Tests for sfm_analysis.report.render and the report/__init__.py public API."""
 
 import re
+from pathlib import Path
 
 from report_fixtures import bandit_run, write_csv, write_session
 
@@ -146,3 +147,27 @@ class TestBuildSessionReport:
         content = out.read_text(encoding="utf-8")
         assert "Meal-Bout Analysis" in content
         assert "Two-Armed Bandit" not in content
+
+    def test_bundled_actogram_takes_overrides_auto_resolution(self, tmp_path):
+        rows = bandit_run(n_trials=2, session="BundledTakesTest")
+        csv_path = write_session(tmp_path, rows, session="BundledTakesTest")
+        out = build_session_report(
+            csv_path, out_path=tmp_path / "takes.html", design="actogram_takes",
+        )
+        content = out.read_text(encoding="utf-8")
+        assert "actogram from Pellet Taken" in content
+        assert "Win-Stay / Lose-Shift" not in content
+
+    def test_design_json_path_overrides_auto_resolution(self, tmp_path):
+        rows = bandit_run(n_trials=2, session="PathDesignTest")
+        csv_path = write_session(tmp_path, rows, session="PathDesignTest")
+        design = (
+            Path(__file__).resolve().parent.parent
+            / "examples" / "report_design" / "designs" / "actogram_takes.json"
+        )
+        out = build_session_report(
+            csv_path, out_path=tmp_path / "takes.html", design=str(design),
+        )
+        content = out.read_text(encoding="utf-8")
+        assert "actogram from Pellet Taken" in content
+        assert "Win-Stay / Lose-Shift" not in content

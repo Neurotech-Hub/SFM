@@ -3,7 +3,8 @@
 import re
 import xml.etree.ElementTree as ET
 
-from report_fixtures import bandit_run, input_changed_row, write_session
+from report_fixtures import bandit_run, can_event_row, input_changed_row, write_session
+from sfm_analysis.protocol import CanEvent
 
 from sfm_analysis.report.loader import load_rows
 from sfm_analysis.report.metrics import compute_run_metrics
@@ -132,6 +133,17 @@ class TestActogram:
         assert result.empty is False
         # 4 lane labels rendered by charts.raster's own lane-label pass.
         assert result.html.count('text-anchor="end"') == 4
+        assert result.title == "Actogram — MousePresence Detected"
+
+    def test_heading_names_the_plotted_event(self, tmp_path):
+        """A printed page must say which CAN EVENT the ticks are, not
+        just 'Actogram'. The section heading carries it, and the SVG's
+        own <desc> restates it for anyone reading the figure alone."""
+        ctx = _multi_day_ctx(tmp_path, n_days=3)
+        result = actogram_section(ctx)
+        assert result.title.startswith("Actogram — ")
+        assert "MousePresence Detected" in result.title
+        assert "Each tick is a MousePresence Detected event" in result.html
 
     def test_all_svgs_parse(self, tmp_path):
         ctx = _multi_day_ctx(tmp_path, n_days=3)
@@ -141,11 +153,26 @@ class TestActogram:
         for s in svgs:
             ET.fromstring(s)
 
-    def test_lights_on_off_options_change_the_caption(self, tmp_path):
+    def test_no_light_dark_shading(self, tmp_path):
+        """The rig never records the facility's light schedule, so the
+        actogram must not draw a light/dark cycle: shading from a fixed
+        clock-time assumption would read as measured data. Time of day is
+        on the axis; a reader applies their own light cycle to it."""
+        ctx = _multi_day_ctx(tmp_path, n_days=3)
+        result = actogram_section(ctx)
+        assert "actogram-night" not in result.html
+        assert "lights off" not in result.html.lower()
+        assert "<rect" not in result.html
+
+    def test_stale_lights_options_are_ignored_not_rendered(self, tmp_path):
+        """A design JSON written before the shading was removed must not
+        resurrect it (or fail) — the options are simply unread now."""
         ctx = _multi_day_ctx(tmp_path, n_days=3, opts={"lights_on": 7.0, "lights_off": 19.0})
         result = actogram_section(ctx)
-        assert "19:00" in result.html
-        assert "07:00" in result.html
+        assert result.empty is False
+        assert "actogram-night" not in result.html
+        assert "19:00" not in result.html
+        assert "07:00" not in result.html
 
     def test_no_page_break_before(self, tmp_path):
         # Follows directly after session_raster's own page break; it
@@ -159,3 +186,64 @@ class TestActogram:
         result = actogram_section(ctx)
         # +1 for the SVG's own <title> (charts.svg's title= argument).
         assert result.html.count("<title>") == 4 * 2 + 1
+        assert "MousePresence Detected" in result.html
+
+    def test_event_names_option_plots_a_different_proxy(self, tmp_path):
+        day_ms = 24 * 3600 * 1000
+        t0 = 1_700_000_000_000
+        rows = [
+            input_changed_row(t0 + day * day_ms, 1, 4, True, "MousePresence Detected")
+            for day in range(4)
+        ] + [
+            can_event_row(t0 + day * day_ms + 3600 * 1000, 1, CanEvent.PelletTaken, bytes([1, 0, 1]))
+            for day in range(4)
+        ]
+        path = write_session(tmp_path, rows, session="MD")
+        loaded, _, _ = load_rows(path)
+        runs = split_runs(loaded, [], path)
+        metrics = [compute_run_metrics(r) for r in runs]
+        presence = SectionContext(runs=runs, metrics=metrics, combined=False,
+                                  align="relative", opts={})
+        takes = SectionContext(runs=runs, metrics=metrics, combined=False,
+                               align="relative",
+                               opts={"event_names": ["Pellet Taken"]})
+        presence_html = actogram_section(presence).html
+        takes_result = actogram_section(takes)
+        takes_html = takes_result.html
+        assert takes_result.title == "Actogram — Pellet Taken"
+        assert "MousePresence Detected" in presence_html
+        assert "Pellet Taken" in takes_html
+        assert "MousePresence Detected" not in takes_html
+        # 4 days × 1 take each, plus the SVG title — not the 4 presence ticks.
+        assert takes_html.count("<title>") == 4 + 1
+        assert presence_html.count("<title>") == 4 + 1
+
+    def test_event_names_union_pools_several_events_as_one_series(self, tmp_path):
+        day_ms = 24 * 3600 * 1000
+        t0 = 1_700_000_000_000
+        rows = [
+            can_event_row(t0 + day * day_ms, 1, CanEvent.PelletTaken, bytes([1, 0, 1]))
+            for day in range(3)
+        ] + [
+            can_event_row(t0 + day * day_ms + 1800 * 1000, 1, CanEvent.DomeOpened, bytes([1, 0, 1]))
+            for day in range(3)
+        ]
+        path = write_session(tmp_path, rows, session="MD")
+        loaded, _, _ = load_rows(path)
+        runs = split_runs(loaded, [], path)
+        metrics = [compute_run_metrics(r) for r in runs]
+        ctx = SectionContext(
+            runs=runs, metrics=metrics, combined=False, align="relative",
+            opts={"event_names": ["Pellet Taken", "Dome Opened"]},
+        )
+        result = actogram_section(ctx)
+        assert result.empty is False
+        assert result.title == "Actogram — Pellet Taken, Dome Opened"
+        assert "Pellet Taken, Dome Opened" in result.html
+        # Both event types pooled into one tick series, not two.
+        assert result.html.count("<title>") == 3 * 2 + 1
+
+    def test_event_names_with_no_matching_events_is_empty(self, tmp_path):
+        ctx = _multi_day_ctx(tmp_path, n_days=4, opts={"event_names": ["Pellet Taken"]})
+        result = actogram_section(ctx)
+        assert result.empty is True
