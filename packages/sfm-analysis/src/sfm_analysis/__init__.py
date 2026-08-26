@@ -1,11 +1,11 @@
 """sfm_analysis — cross-platform analysis and reporting for VFM/SFM feeder logs.
 
-Reads the session CSVs written by the VFM base station (``tools/dev_gui`` in
+Reads the session CSVs written by the VFM base station (``packages/dev_gui`` in
 the parent repo, https://github.com/Neurotech-Hub/VFM) and turns them into
 printable HTML behavior reports, with no dependency on the Raspberry Pi
 base-station GUI or any hardware library. Install with ``pip install
 sfm-analysis`` on Windows, macOS, or Linux and run ``sfm-report`` — see
-README.md for the full CLI and, in a later release, the Python analysis API.
+README.md for the full CLI and the Python analysis API.
 
 This package is stdlib-only by design: no jinja2, no pandas, no matplotlib.
 Reports are self-contained HTML with inline SVG, printable via Ctrl+P.

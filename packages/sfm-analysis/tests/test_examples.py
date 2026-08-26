@@ -43,3 +43,11 @@ def test_takes_after_fault():
     assert result.returncode == 0, result.stderr
     assert "1 fault interval(s)" in result.stdout
     assert "1 pellet take(s) within 30s after a fault started" in result.stdout
+
+
+def test_exp_events_by_name():
+    result = _run("exp_events_by_name.py")
+    assert result.returncode == 0, result.stderr
+    assert "141 EXP row(s), 20 distinct name(s)" in result.stdout
+    assert "19  bandit_trial" in result.stdout
+    assert "bandit_trial_end: 17 (valid=17)" in result.stdout

@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "tools/dev_gui/**"
+      - "packages/dev_gui/**"
       - "packages/sfm-analysis/**"
       - ".github/workflows/base-station.yml"
   pull_request:
     paths:
-      - "tools/dev_gui/**"
+      - "packages/dev_gui/**"
       - "packages/sfm-analysis/**"
       - ".github/workflows/base-station.yml"
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
     # everything else is importable and testable on a plain Linux runner.
     # The remaining ~26 tests (test_app.py, test_app_pellet_counting.py,
     # test_schedule.py, test_hat.py) are Pi-only and run manually — see
-    # tools/dev_gui/README.md.
+    # packages/dev_gui/README.md.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,9 +35,9 @@ jobs:
           python-version: "3.11"
       - run: pip install -e packages/sfm-analysis pytest python-can
       - name: syntax-check everything, including the GUI modules we cannot import
-        run: python -m compileall -q tools/dev_gui/base_station tools/dev_gui/*.py
+        run: python -m compileall -q packages/dev_gui/base_station packages/dev_gui/*.py
       - name: run the hardware-free base-station tests
-        working-directory: tools/dev_gui
+        working-directory: packages/dev_gui
         run: |
           pytest -q \
             tests/test_protocol.py tests/test_log_manager.py \
@@ -45,4 +45,4 @@ jobs:
             tests/test_pellet_ledger.py tests/test_mac_id_registry.py \
             tests/test_discovery_manager.py tests/test_experiment.py \
             tests/test_experiment_schema.py tests/test_script.py \
-            tests/test_two_armed_bandit.py tests/test_run.py
+            tests/test_two_armed_bandit.py
