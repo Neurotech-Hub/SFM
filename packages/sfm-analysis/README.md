@@ -183,10 +183,7 @@ tool. Absent entirely for shorter runs.
 It deliberately draws **no light/dark shading**. The rig doesn't record
 the facility's light schedule, so any shading would be a fixed
 clock-time assumption rendered as though it were measured data. Time of
-day is on the axis; apply your own light cycle to it. (For zeitgeber
-time in your own analysis, `report.timezones.zeitgeber_time(row,
-lights_on=...)` takes the schedule explicitly, where it's your stated
-input rather than a silent report-wide default.)
+day is on the axis; apply your own light cycle to it if you need one.
 
 The section heading and figure caption both name the plotted event
 (`Actogram — MousePresence Detected` by default) so a printed page is

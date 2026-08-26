@@ -299,9 +299,7 @@ as does the figure's own SVG `<desc>`.
 The actogram draws no light/dark shading: the rig doesn't record the
 facility's light schedule, so shading it would render a fixed
 clock-time assumption as though it were measured data. Time of day is
-on the axis — apply your own light cycle to it, or use
-`zeitgeber_time(row, lights_on=...)` ([§7](#7-time-timezone-and-time-of-day)),
-where the schedule is an explicit input you supply.
+on the axis — apply your own light cycle to it if you need one.
 
 A pip-installed user does not edit the package:
 
@@ -361,7 +359,7 @@ questions:
 | `timestamp_ms` | epoch milliseconds | Correct for ordering; needs `utc_offset_s` to mean anything as wall-clock |
 | `timestamp_iso` (`row.iso`) | rig-local wall-clock string | Already correct local time, with **no offset needed** — see below |
 
-`report.timezones` gives you four functions, all reading `row.iso`
+`report.timezones` gives you three functions, all reading `row.iso`
 directly rather than reconstructing from epoch ms — because
 `datetime.fromtimestamp()`/`.astimezone()` with no arguments implicitly use
 *your own machine's* timezone, which is wrong the moment analyst and rig
@@ -370,10 +368,7 @@ are in different zones:
 - **`time_of_day(row)`** → hours since local midnight (`0.0`–`24.0`). No
   offset needed: `timestamp_iso` was already written in rig-local time.
 - **`local_date(row)`** → the calendar date this row falls on, rig-local.
-- **`zeitgeber_time(row, lights_on=6.0)`** → hours relative to lights-on
-  (ZT0 = lights-on). Also needs no offset — your facility's light schedule
-  is itself set in local wall-clock time.
-- **`wall_clock(row, run)`** → the *only* one of the four that needs
+- **`wall_clock(row, run)`** → the *only* one of the three that needs
   `run.utc_offset_s`. Returns a timezone-**aware** `datetime` when the
   offset is known, a naive one otherwise — the naive case is not a
   failure, the value is still correct rig-local time, it's just unsafe to
