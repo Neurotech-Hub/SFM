@@ -18,7 +18,7 @@ analysis doesn't have to happen on the Pi. The base station's own
 pip install sfm-analysis
 ```
 
-Or, before the first PyPI release (or to track `main`):
+To track `main` instead of a released version:
 
 ```bash
 pip install "git+https://github.com/Neurotech-Hub/VFM.git#subdirectory=packages/sfm-analysis"
