@@ -7,7 +7,7 @@ from report_fixtures import exp_row, row, write_session
 from sfm_analysis.report.loader import load_rows
 from sfm_analysis.report.session import split_runs
 from sfm_analysis.report.timezones import (
-    local_date, time_of_day, wall_clock, zeitgeber_time,
+    local_date, time_of_day, wall_clock,
 )
 
 
@@ -54,30 +54,6 @@ class TestLocalDate:
         lr = run.rows[0]
 
         assert local_date(lr) == datetime.fromisoformat(lr.iso).date()
-
-
-class TestZeitgeberTime:
-    def test_zt0_at_lights_on(self, tmp_path):
-        rows = [row(ts_ms=1_700_000_000_000 + i * 3_600_000) for i in range(24)]
-        path = write_session(tmp_path, rows, session="S")
-        loaded, _, _ = load_rows(path)
-        run = split_runs(loaded, [], path)[0]
-        for lr in run.rows:
-            tod = time_of_day(lr)
-            zt = zeitgeber_time(lr, lights_on=tod)
-            assert zt == 0.0
-
-    def test_wraps_around_midnight(self):
-        # A row whose time_of_day is 1.0 and lights_on=23.0 should give
-        # zt=2.0 (1.0 - 23.0 = -22.0, wrapped mod 24 -> 2.0).
-        class _FakeRow:
-            iso = "2026-01-01T01:00:00"
-        assert zeitgeber_time(_FakeRow(), lights_on=23.0) == 2.0
-
-    def test_default_lights_on_is_6am(self):
-        class _FakeRow:
-            iso = "2026-01-01T06:00:00"
-        assert zeitgeber_time(_FakeRow()) == 0.0
 
 
 class TestWallClock:

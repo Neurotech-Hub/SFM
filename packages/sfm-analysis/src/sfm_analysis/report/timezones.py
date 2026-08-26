@@ -55,21 +55,6 @@ def local_date(row: "LogRow"):
     return datetime.fromisoformat(row.iso).date()
 
 
-def zeitgeber_time(row: "LogRow", *, lights_on: float = 6.0) -> float:
-    """
-    Zeitgeber time in hours (``0.0`` to just under ``24.0``, wrapped),
-    relative to ``lights_on`` — ZT0 is lights-on, ZT12 is nominally
-    lights-off under a standard 12:12 light/dark cycle.
-
-    ``lights_on`` is hours since local midnight (default ``6.0`` =
-    06:00); pass your facility's actual light-cycle start time. Light
-    schedules are set in local wall-clock time by the people running the
-    facility, so — same reasoning as ``time_of_day`` — no UTC offset is
-    needed here either.
-    """
-    return (time_of_day(row) - lights_on) % 24.0
-
-
 def wall_clock(row: "LogRow", run: "RunData") -> datetime:
     """
     A ``datetime`` for this row: timezone-*aware* if ``run.utc_offset_s``
