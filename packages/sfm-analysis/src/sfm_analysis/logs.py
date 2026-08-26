@@ -1,17 +1,14 @@
 """logs.py — the canonical VFM session-log CSV schemas.
 
-The single definition of both CSV schemas the VFM base station writes,
-shared with every reader in this package so a schema change can't
-silently drift between a writer and a reader in two different
-distributions:
+The single definition of both CSV schemas this package may encounter,
+shared with every reader so a schema change can't silently drift:
 
   - ``CSV_HEADER``: the 15-column unified session-log schema, written by
-    ``base_station.log_manager.LogManager`` (which binds it as a class
-    attribute) and read by ``sfm_analysis.report.loader``.
-  - ``EXP6_HEADER``: the 6-column headless-experiment CSV schema, written
-    by ``base_station.experiment.context.ExperimentControl`` (same
-    binding pattern) and also read by ``sfm_analysis.report.loader`` for
-    schema-sniffing.
+    ``base_station.log_manager.LogManager`` and read by
+    ``sfm_analysis.report.loader``. This is what the GUI writes today.
+  - ``EXP6_HEADER``: a legacy 6-column experiment CSV from older
+    standalone experiment runs. The loader still sniffs it so those
+    files are skipped with a warning instead of crashing.
 
 The report test suite's ``report_fixtures.py`` keys every synthetic row
 off ``CSV_HEADER`` precisely so a drift breaks the report tests loudly

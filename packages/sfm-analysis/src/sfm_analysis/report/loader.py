@@ -38,8 +38,8 @@ class LogSchema(str, Enum):
     UNIFIED = "unified"    # sfm_analysis.logs.CSV_HEADER — the only schema with fields_json
     LEGACY9 = "legacy9"    # timestamp_iso,timestamp_ms,direction,node_id,frame_type,
                             # event_name,raw_id_hex,raw_data_hex,details
-    EXP6 = "exp6"           # sfm_analysis.logs.EXP6_HEADER — the headless
-                            # ExperimentControl CSV (base_station.experiment.context)
+    EXP6 = "exp6"           # sfm_analysis.logs.EXP6_HEADER — legacy 6-column
+                            # experiment CSV (no longer written; sniffed so old files skip)
     UNKNOWN = "unknown"
 
 

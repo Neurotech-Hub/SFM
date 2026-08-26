@@ -154,7 +154,7 @@ def legacy9_file(tmp_path: Path, name: str = "legacy") -> Path:
 
 
 def exp6_file(tmp_path: Path, name: str = "experiment_free_feeding") -> Path:
-    """A file matching the headless ExperimentControl 6-column schema."""
+    """A file matching the legacy 6-column experiment CSV schema."""
     header = ["timestamp_iso", "timestamp_ms", "elapsed_s", "name", "node_id", "fields"]
     path = tmp_path / f"{name}.csv"
     with open(path, "w", newline="", encoding="utf-8") as f:

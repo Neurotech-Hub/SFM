@@ -7,7 +7,7 @@ libraries. Pure standard library: no jinja2, no pandas, no matplotlib. A
 report is one self-contained HTML file with inline SVG charts, printable
 via Ctrl+P.
 
-This package is carved out of the VFM repository's `tools/dev_gui/`
+This package is carved out of the VFM repository's `packages/dev_gui/`
 (the Raspberry Pi base station that records the logs) precisely so that
 analysis doesn't have to happen on the Pi. The base station's own
 `run_report.py` is a thin wrapper around the CLI documented below.
@@ -125,6 +125,16 @@ functions registered under `report/sections/`. This mirrors the VFM
 experiment engine's own JSON-schema/Python split (`base_station/experiment/`
 in the parent repo — `matches: []` in a design plays the same role as
 `build(**kwargs)` in an experiment template).
+
+```
+src/sfm_analysis/report/
+├── designs/<name>.json     # "matches": ["<experiment>"] + ordered refs
+├── analyses/<name>.py      # numbers (no HTML)
+└── sections/<name>.py      # HTML; SECTIONS = {"func": ...}
+```
+
+Copy-from starter: [`examples/report_design/`](examples/report_design/).
+Full walkthrough: [docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md#9-turning-an-analysis-into-a-report-section).
 
 The design is picked automatically from the session's `experiment` field
 (the fields_json on its `session_start` row), falling back to
@@ -304,6 +314,7 @@ scratch:
 | [`dome_openings_during_presence.py`](examples/analysis/dome_openings_during_presence.py) | Windows where the dome was open while the mouse was present |
 | [`retrieval_latency_by_node.py`](examples/analysis/retrieval_latency_by_node.py) | Per-node summary stats, stdlib-only and pandas paths side by side |
 | [`takes_after_fault.py`](examples/analysis/takes_after_fault.py) | Pellet takes within a window after each fault interval started |
+| [`exp_events_by_name.py`](examples/analysis/exp_events_by_name.py) | Inventory a session's experiment-engine (`source=EXP`) events — the starting point for analysing a custom template's own log rows |
 
 Every one of them runs standalone against the bundled demo session, no
 rig or `--log-dir` needed:
@@ -316,6 +327,12 @@ They're also executed in CI (`tests/test_examples.py`), with their
 output pinned against the demo session's known ground truth — a change
 that breaks a documented recipe fails the build instead of being found
 by the next person who copies one.
+
+To ship a **custom report design** for your own experiment (JSON design +
+Python analysis + HTML section), copy the three-file starter under
+[`examples/report_design/`](examples/report_design/) into
+`src/sfm_analysis/report/{designs,analyses,sections}/`. File layout and a
+worked walkthrough: [docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md#9-turning-an-analysis-into-a-report-section).
 
 ## Testing your own analysis code
 
@@ -360,10 +377,12 @@ pytest
 
 ## Design notes worth knowing
 
-- **Self-contained is a hard invariant.** No `<script>`, no `http(s)://`
-  reference — the whole report must render and print with the network
-  unplugged (`report/render.py`'s module docstring; enforced by
-  `tests/test_report_render.py`).
+- **Self-contained is a hard invariant.** No `http(s)://` reference, no
+  `<script src=>`, nothing that needs the network to render or print
+  (`report/render.py`'s module docstring; enforced by
+  `tests/test_report_render.py`). The interactive timeline is the one
+  exception to "no script": at most one inline `<script>` in the whole
+  document. `--no-explorer` drops it for a guaranteed script-free file.
 - **Every chart binds color + dash pattern + marker glyph + hatch texture
   to the same ordinal "key"** (`report/style.py`), so a series never
   depends on hue alone — this matters most exactly when a report is
@@ -375,7 +394,7 @@ pytest
 ## Firmware/SDK version skew
 
 `sfm_analysis.protocol` is a Python mirror of the VFM firmware's
-`src/services/ServiceTypes.h` and `src/services/CanService.h` (parent
+`firmware/src/services/ServiceTypes.h` and `firmware/src/services/CanService.h` (parent
 repo). Because this package now versions and ships independently of the
 firmware, it's possible for a base station running old firmware to be
 paired with a newer `sfm-analysis`, or vice versa. There's no version

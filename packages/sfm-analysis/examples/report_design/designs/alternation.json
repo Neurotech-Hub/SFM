@@ -1,0 +1,23 @@
+{
+  "name": "alternation",
+  "label": "Alternation — Behavior Report",
+  "description": "Starter design for the alternation example template. Generic sections plus a switch-count table from alternation_advance rows.",
+  "matches": ["alternation"],
+  "sections": [
+    { "ref": "timeline.explorer" },
+    { "ref": "timeline.session_raster" },
+    { "ref": "generic.provenance" },
+    { "ref": "generic.data_quality" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.throughput" },
+    { "ref": "generic.faults" },
+    { "ref": "generic.apparatus_health" },
+    { "ref": "alternation.switch_table" }
+  ],
+  "combined_sections": [
+    { "ref": "compare.cohort_table" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "generic.faults" },
+    { "ref": "alternation.switch_table" }
+  ]
+}

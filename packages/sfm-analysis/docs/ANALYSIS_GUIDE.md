@@ -23,6 +23,8 @@ building something the cookbook doesn't cover.
 7. [Time, timezone, and time-of-day](#7-time-timezone-and-time-of-day)
 8. [Designing your own analysis: a worked example](#8-designing-your-own-analysis-a-worked-example)
 9. [Turning an analysis into a report section](#9-turning-an-analysis-into-a-report-section)
+   - [File layout](#file-layout)
+   - [Complete example (custom experiment → custom design)](#complete-example-custom-experiment--custom-design)
 
 ## 1. Which layer to work at
 
@@ -59,7 +61,7 @@ doesn't bloat the main log.
 |---|---|---|
 | `timestamp_iso` | rig-local wall-clock string, e.g. `2025-06-01T14:32:07.123` | Written with `datetime.fromtimestamp()` **on the rig**, so it's already correct local time — see [§7](#7-time-timezone-and-time-of-day) |
 | `timestamp_ms` | epoch milliseconds | Used to recompute `.t` on load; don't trust it for wall-clock display without knowing the rig's real-world offset |
-| `elapsed_s` | seconds since the row's *originating process* started | **Never read this directly** — it resets across a reopened session and means something different for the GUI vs. a headless script. Use `RunData` rows' `.t` instead (see trap #2 below) |
+| `elapsed_s` | seconds since the row's *originating process* started | **Never read this directly** — it resets across a reopened session. Use `RunData` rows' `.t` instead (see trap #2 below) |
 | `session` | the session name | Groups rows into files; combined with `run_id` for run-scoping |
 | `run_id` | increments each time a session is reopened | A single CSV can hold several runs — see trap #1 |
 | `trial` | current trial number, `0` outside a trial | Convenience column; the authoritative trial boundary is the `trial` EXPERIMENT event |
@@ -158,6 +160,10 @@ from sfm_analysis.analysis import load_session
 s = load_session("EXP-Test-02")
 names = sorted({row["event_name"] for row in s.events_table(source="EXP")})
 ```
+
+[`examples/analysis/exp_events_by_name.py`](../examples/analysis/exp_events_by_name.py)
+runs that inventory against the bundled demo session (and is pinned in CI).
+Copy it as the first script you write against a new custom template.
 
 `report.metrics.APPARATUS_HEALTH_EVENTS` is the curated subset the report's
 "Apparatus Health" section surfaces — a good starting list of the
@@ -405,6 +411,105 @@ becomes a **section**: a plain function `(ctx: SectionContext) ->
 Optional[SectionResult]` (`report.schema`), registered in some
 `report/sections/<module>.py`'s `SECTIONS` dict, referenced by
 `"module.function"` in a design JSON.
+
+### File layout
+
+Same split as an experiment template (JSON declares *what*, Python holds
+*behavior*), with one extra file because one experiment often has several
+related figures:
+
+```
+packages/sfm-analysis/src/sfm_analysis/report/
+├── designs/
+│   └── <name>.json       # "matches": ["<experiment>"] + ordered section refs
+├── analyses/
+│   └── <name>.py         # numbers: functions / dataclasses, no HTML
+└── sections/
+    └── <name>.py         # HTML; SECTIONS = {"func": fn, ...}
+```
+
+`resolve_design(experiment)` picks a design by `name` or `matches`, else
+`default.json`. `resolve_section("module.func")` imports
+`sections.<module>` and returns `SECTIONS["func"]`. Copy-from starter for
+the `alternation` experiment example:
+[`examples/report_design/`](../examples/report_design/).
+
+### Complete example (custom experiment → custom design)
+
+Pair this with `packages/dev_gui/examples/templates/alternation.py`, which
+logs `alternation_advance` (`from_node`, `to_node`) on every switch. After
+copying the three files below into the tree above, `sfm-report` on an
+alternation session renders a switch table at the end of the generic
+sections.
+
+`designs/alternation.json` (abridged — the starter file includes timeline
++ generic sections too):
+
+```json
+{
+  "name": "alternation",
+  "matches": ["alternation"],
+  "sections": [
+    { "ref": "generic.provenance" },
+    { "ref": "generic.retrieval_latency" },
+    { "ref": "alternation.switch_table" }
+  ],
+  "combined_sections": [
+    { "ref": "compare.cohort_table" },
+    { "ref": "alternation.switch_table" }
+  ]
+}
+```
+
+`analyses/alternation.py`:
+
+```python
+from collections import Counter
+from typing import Dict, List, Tuple
+from ..session import RunData
+
+def switches(run: RunData) -> List[Tuple[int, int, float]]:
+    out = []
+    for row in run.exp("alternation_advance"):
+        src, dst = row.fields.get("from_node"), row.fields.get("to_node")
+        if src is not None and dst is not None:
+            out.append((int(src), int(dst), row.t))
+    return out
+
+def switch_counts(run: RunData) -> Dict[Tuple[int, int], int]:
+    return Counter((a, b) for a, b, _ in switches(run))
+```
+
+`sections/alternation.py`:
+
+```python
+from typing import Optional
+from ..analyses.alternation import switch_counts, switches
+from ..charts import escape_text
+from ..schema import SectionContext, SectionResult
+
+def switch_table_section(ctx: SectionContext) -> Optional[SectionResult]:
+    parts = []
+    for run, m in zip(ctx.runs, ctx.metrics):
+        rows = switches(run)
+        if not rows:
+            continue
+        counts = switch_counts(run)
+        body = "".join(
+            f"<tr><td>{a} → {b}</td><td>{n}</td></tr>"
+            for (a, b), n in sorted(counts.items())
+        )
+        parts.append(f"<table><tr><th>From → to</th><th>Count</th></tr>{body}</table>")
+    if not parts:
+        return SectionResult(section_id="alternation.switch_table",
+                             title="Alternation switches", html="", empty=True)
+    return SectionResult(section_id="alternation.switch_table",
+                         title="Alternation switches", html="".join(parts))
+
+SECTIONS = {"switch_table": switch_table_section}
+```
+
+Minimal section shape, if you are not pairing with a new experiment:
 
 ```python
 def my_section(ctx: SectionContext) -> Optional[SectionResult]:

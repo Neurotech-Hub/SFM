@@ -1,0 +1,37 @@
+{
+  "name": "alternation",
+  "label": "Alternation (example)",
+  "template": "alternation",
+  "description": "Starter template: round-robin reload. After each take, wait, then dispense the next node in the session roster.",
+  "parameters": [
+    {
+      "key": "nodes",
+      "label": "Active nodes",
+      "type": "nodes",
+      "help": "Nodes this experiment runs on, in visit order"
+    },
+    {
+      "key": "delay_s",
+      "label": "Reload delay (s)",
+      "type": "float",
+      "default": 2.0,
+      "min": 0,
+      "max": 3600,
+      "help": "Wait this long after PelletTaken before dispensing the next node"
+    },
+    {
+      "key": "minutes",
+      "label": "Duration (min)",
+      "type": "float",
+      "default": 0,
+      "help": "0 = no limit"
+    },
+    {
+      "key": "max_pellets",
+      "label": "Max pellets",
+      "type": "int",
+      "default": 0,
+      "help": "0 = no cap"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "name": "bnc_paced",
+  "label": "BNC-paced FR1 (example)",
+  "template": "bnc_paced",
+  "description": "Starter @exp.script template: wait for a BNC rising edge, dispense one node, wait for the take, optional ITI, repeat.",
+  "parameters": [
+    {
+      "key": "nodes",
+      "label": "Active nodes",
+      "type": "nodes",
+      "help": "The first checked node is the one that dispenses"
+    },
+    {
+      "key": "bnc_channel",
+      "label": "BNC IN channel",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 1,
+      "help": "0 = BNC IN 1, 1 = BNC IN 2"
+    },
+    {
+      "key": "iti_s",
+      "label": "ITI after take (s)",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 3600,
+      "help": "Fixed wait after PelletTaken before the next BNC arm"
+    },
+    {
+      "key": "minutes",
+      "label": "Duration (min)",
+      "type": "float",
+      "default": 0,
+      "help": "0 = no limit"
+    },
+    {
+      "key": "max_pellets",
+      "label": "Max pellets",
+      "type": "int",
+      "default": 0,
+      "help": "0 = no cap"
+    }
+  ]
+}

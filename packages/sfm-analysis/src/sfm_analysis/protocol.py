@@ -1,7 +1,7 @@
 """
 protocol.py — VFM CAN protocol constants and frame helpers.
 
-Python mirror of src/services/ServiceTypes.h and src/services/CanService.h.
+Python mirror of firmware/src/services/ServiceTypes.h and firmware/src/services/CanService.h.
 All CAN ID arithmetic and payload encoding/decoding lives here so every other
 module imports a single source of truth.
 """
@@ -162,7 +162,7 @@ class ServiceStatus(IntEnum):
     """
     Fault codes carried in heartbeat byte 5 / Fault event extra.
 
-    Mirror of src/services/ServiceTypes.h ServiceStatus. Must match exactly —
+    Mirror of firmware/src/services/ServiceTypes.h ServiceStatus. Must match exactly —
     these are wire values, not just labels (see commit 4861a97, which dropped
     the firmware's ``Timeout`` member without updating this mirror; every code
     >= 2 decoded one fault low until this was fixed).
