@@ -341,9 +341,14 @@ class TestServiceStatusMatchesFirmware:
     def test_values_match_firmware_header(self):
         import re
 
-        header = (
-            Path(__file__).resolve().parents[3]
-            / "src" / "services" / "ServiceTypes.h"
+        header = None
+        for parent in Path(__file__).resolve().parents:
+            candidate = parent / "firmware" / "src" / "services" / "ServiceTypes.h"
+            if candidate.is_file():
+                header = candidate
+                break
+        assert header is not None, (
+            "firmware/src/services/ServiceTypes.h not found above this test file"
         )
         text = header.read_text(encoding="utf-8")
         m = re.search(r"enum class ServiceStatus[^{]*\{([^}]*)\}", text)

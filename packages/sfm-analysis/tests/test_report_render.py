@@ -2,7 +2,7 @@
 
 import re
 
-from report_fixtures import bandit_run, write_session
+from report_fixtures import bandit_run, write_csv, write_session
 
 from sfm_analysis.report import build_session_report
 from sfm_analysis.report.loader import load_rows
@@ -14,8 +14,11 @@ from sfm_analysis.report.session import split_runs
 
 
 def _runs(tmp_path, session="Weird&Session<Name>"):
+    # Session names in the CSV can contain HTML metacharacters (that's
+    # what the escaping tests cover). The filename must not: <>:"/\|?*
+    # are illegal on Windows.
     rows = bandit_run(n_trials=3, session=session)
-    path = write_session(tmp_path, rows, session=session)
+    path = write_csv(tmp_path / "session.csv", rows)
     loaded, _, _ = load_rows(path)
     return split_runs(loaded, [], path)
 
