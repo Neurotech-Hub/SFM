@@ -1,9 +1,11 @@
 # Writing Custom Experiment Templates (Python API)
 
 This is the guide for authoring your own experiments for the SFM dev GUI. An
-**experiment** automates the pellet-dispensing nodes over CAN: it decides *when*
-to dispense, *which* node(s), and *how* to react to what the nodes and the BNC
-sync inputs do.
+**experiment** automates the pellet-dispensing nodes over **CAN** (Controller
+Area Network) — the shared communication bus every node is connected to. It
+decides *when* to dispense, *which* node(s), and *how* to react to **CAN
+events** (messages a node posted on that bus: Loaded, Pellet Taken, Fault, …)
+and to the BNC sync inputs.
 
 You write experiments in Python. There is **no base class to inherit** — a
 template is just a module with a `build(...)` factory that returns a configured

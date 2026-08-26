@@ -201,7 +201,6 @@ figcaption {{
 .chart .gridline {{ stroke: var(--gridline); stroke-width: 1; }}
 .chart .value-label {{ fill: var(--ink-primary); font-size: 10px; }}
 .chart .node-divider {{ stroke: var(--axis); stroke-width: 1; stroke-dasharray: 2,2; }}
-.chart .actogram-night {{ fill: var(--gridline); }}
 
 .legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11px; color: var(--ink-secondary); margin: 0 0 8px; }}
 .legend-item {{ display: inline-flex; align-items: center; gap: 5px; }}

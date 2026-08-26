@@ -5,6 +5,7 @@ on every OS."""
 
 import subprocess
 import sys
+from pathlib import Path
 
 from report_fixtures import bandit_run, legacy9_file, write_session
 
@@ -34,6 +35,8 @@ class TestListCommands:
         result = _run(["--list-designs"])
         assert result.returncode == 0
         assert "default" in result.stdout
+        assert "actogram_takes" in result.stdout
+        assert "opt-in only" in result.stdout
 
     def test_check_names(self, tmp_path):
         write_session(tmp_path, bandit_run(n_trials=1, session="cohortA_M014_d3"), session="cohortA_M014_d3")
@@ -175,11 +178,37 @@ class TestGenerateReport:
         result = _run(["A", "--align", "event:trial", "--log-dir", str(tmp_path), "--out", str(out)])
         assert result.returncode == 0, result.stderr
 
-    def test_legacy_schema_only_exits_2(self, tmp_path):
-        legacy9_file(tmp_path, name="legacy")
-        result = _run(["legacy", "--log-dir", str(tmp_path)])
+    def test_unknown_design_exits_2(self, tmp_path):
+        write_session(tmp_path, bandit_run(n_trials=1, session="A"), session="A")
+        result = _run(["A", "--design", "not_a_real_design", "--log-dir", str(tmp_path)])
         assert result.returncode == 2
-        assert "unsupported schema" in result.stderr
+        assert "Unknown report design" in result.stderr
+
+    def test_design_bundled_actogram_takes(self, tmp_path):
+        write_session(tmp_path, bandit_run(n_trials=1, session="A"), session="A")
+        out = tmp_path / "out.html"
+        result = _run(
+            ["A", "--design", "actogram_takes", "--log-dir", str(tmp_path), "--out", str(out)],
+        )
+        assert result.returncode == 0, result.stderr
+        content = out.read_text(encoding="utf-8")
+        assert "actogram from Pellet Taken" in content
+        assert "Win-Stay / Lose-Shift" not in content
+
+    def test_design_json_path(self, tmp_path):
+        write_session(tmp_path, bandit_run(n_trials=1, session="A"), session="A")
+        design = (
+            Path(__file__).resolve().parent.parent
+            / "examples" / "report_design" / "designs" / "actogram_takes.json"
+        )
+        out = tmp_path / "out.html"
+        result = _run(
+            ["A", "--design", str(design), "--log-dir", str(tmp_path), "--out", str(out)],
+        )
+        assert result.returncode == 0, result.stderr
+        content = out.read_text(encoding="utf-8")
+        assert "actogram from Pellet Taken" in content
+        assert "Win-Stay / Lose-Shift" not in content
 
     def test_legacy_mixed_with_good_file_still_succeeds(self, tmp_path):
         legacy9_file(tmp_path, name="legacy")

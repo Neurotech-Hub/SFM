@@ -31,7 +31,7 @@ from typing import Iterable, List, Optional
 from ..logs import heartbeat_path_for
 from .loader import load_heartbeats, load_rows
 from .render import render_report_html
-from .schema import load_report_def, resolve_design
+from .schema import load_design, resolve_design
 from .session import RunData, split_runs
 
 __all__ = [
@@ -67,11 +67,7 @@ def load_runs(csv_path: Path, run_id: Optional[int] = None) -> List[RunData]:
 
 def _resolve_design_for(runs: List[RunData], design: Optional[str]):
     if design:
-        # An explicit --design name is looked up directly by filename stem.
-        from .schema import DEFAULT_REPORTS_DIR
-        path = DEFAULT_REPORTS_DIR / f"{design}.json"
-        if path.exists():
-            return load_report_def(path)
+        return load_design(design)
     experiments = {r.experiment for r in runs}
     experiment = next(iter(experiments)) if len(experiments) == 1 else "unknown"
     return resolve_design(experiment)

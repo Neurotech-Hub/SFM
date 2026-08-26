@@ -37,6 +37,9 @@ sfm-report --list
 # One session, opened in your browser when done:
 sfm-report EXP-Test-02 --open
 
+# Same report, but the actogram ticks pellet takes instead of presence:
+sfm-report EXP-Test-02 --design actogram_takes --open
+
 # Every session for a cohort, combined into one comparative report:
 sfm-report "cohortA_*" --combine -o /tmp/cohortA.html
 ```
@@ -60,7 +63,7 @@ sfm-report --help
   --demo            Render the bundled demo session (no rig or log dir needed)
   --since, --until  Filter by date (YYYY-MM-DD)
   --run             Only this run_id (a file can hold several)
-  --design          Force a report design instead of resolving by experiment
+  --design          Force a report design: bundled name, or path to a .json file
   --align           Combined-report time alignment: relative | wall | trial | event:<name>
   --out, -o         Output file (single report) or directory (multiple)
   --no-explorer     Skip the embedded interactive timeline (guaranteed script-free, leaner output)
@@ -172,11 +175,91 @@ panels go print-only: hidden on screen since the embedded explorer
 covers the same ground with real zoom, still present in the printed PDF.
 
 `timeline.actogram` — one row per calendar day, time-of-day on the
-x-axis, night-phase shaded (`lights_on`/`lights_off` options, default
-06:00/18:00) — renders automatically whenever a run spans 2 or more
-distinct days; it's the figure that matters for a multi-day experiment,
-where session_raster's panels (even adaptively sized) stop being the
-right tool. Absent entirely for shorter runs.
+x-axis — renders automatically whenever a run spans 2 or more distinct
+days; it's the figure that matters for a multi-day experiment, where
+session_raster's panels (even adaptively sized) stop being the right
+tool. Absent entirely for shorter runs.
+
+It deliberately draws **no light/dark shading**. The rig doesn't record
+the facility's light schedule, so any shading would be a fixed
+clock-time assumption rendered as though it were measured data. Time of
+day is on the axis; apply your own light cycle to it. (For zeitgeber
+time in your own analysis, `report.timezones.zeitgeber_time(row,
+lights_on=...)` takes the schedule explicitly, where it's your stated
+input rather than a silent report-wide default.)
+
+The section heading and figure caption both name the plotted event
+(`Actogram — MousePresence Detected` by default) so a printed page is
+unambiguous about what each tick is. Ticks default to presence onsets.
+You can remap them **without editing the installed package** — see
+[Customize the actogram](#customize-the-actogram) below.
+
+## Customize the actogram
+
+After `pip install sfm-analysis` on a laptop, two knobs change which CAN
+events become actogram ticks. Names must match `event_name` on
+`frame_type == "EVENT"` rows — the same strings as the GUI log
+(`Pellet Taken`, `Dome Opened`, `Loaded`, `Fault: Jam`, …). Several
+names overlay as **one** series (union of timestamps), not separate
+colours. Nothing in `site-packages` needs to be edited.
+
+### HTML report (no file copy)
+
+`actogram_takes` ships in the wheel — presence stays the default; this
+name is opt-in only (`sfm-report --list-designs`):
+
+```bash
+sfm-report MySession --design actogram_takes --open
+```
+
+### Python (any session CSV)
+
+```python
+from sfm_analysis.analysis import load_session
+from sfm_analysis.report.metrics import activity_by_day
+
+s = load_session("MySession")          # name, glob, or path to the CSV
+days = activity_by_day(s.run(), event_names=("Pellet Taken",))
+for day in days:
+    print(day.date, len(day.times), day.times[:3])
+```
+
+Compare presence vs takes vs dome+takes against the bundled demo, or
+pass your own CSV. This is the same recipe after a pip install (no git
+checkout):
+
+```bash
+python -m sfm_analysis.examples.actogram_by_event
+python -m sfm_analysis.examples.actogram_by_event /path/to/MySession.csv
+```
+
+### A different event, or several
+
+Copy the shipped design next to your logs and edit `event_names`, then
+pass the **path** (so you still do not patch the install):
+
+```json
+{ "ref": "timeline.actogram",
+  "options": { "event_names": ["Dome Opened", "Pellet Taken"] } }
+```
+
+```bash
+sfm-report MySession --design ./my_actogram.json --open
+```
+
+A starting file lives at
+[`examples/report_design/designs/actogram_takes.json`](examples/report_design/designs/actogram_takes.json)
+(identical to the bundled design). Or from Python:
+
+```python
+from pathlib import Path
+from sfm_analysis.report import build_session_report
+
+build_session_report(
+    Path("MySession.csv"),
+    design="actogram_takes",   # bundled name, or a path to your .json
+)
+```
 
 ## Python API
 
@@ -315,6 +398,7 @@ scratch:
 | [`retrieval_latency_by_node.py`](examples/analysis/retrieval_latency_by_node.py) | Per-node summary stats, stdlib-only and pandas paths side by side |
 | [`takes_after_fault.py`](examples/analysis/takes_after_fault.py) | Pellet takes within a window after each fault interval started |
 | [`exp_events_by_name.py`](examples/analysis/exp_events_by_name.py) | Inventory a session's experiment-engine (`source=EXP`) events — the starting point for analysing a custom template's own log rows |
+| [`actogram_by_event.py`](examples/analysis/actogram_by_event.py) | Remap actogram ticks (presence vs pellet takes vs dome+takes). After pip install: `python -m sfm_analysis.examples.actogram_by_event` |
 
 Every one of them runs standalone against the bundled demo session, no
 rig or `--log-dir` needed:

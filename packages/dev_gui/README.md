@@ -1,7 +1,11 @@
 # SFM Developer GUI
 
 Python desktop application (DearPyGui) for the **Spatial Foraging Module (SFM)** —
-a base station plus multiple **VFM** nodes — over the CAN bus on a Raspberry Pi 5.
+a base station plus multiple **VFM** nodes on a Raspberry Pi 5. They share one
+**CAN** bus (Controller Area Network): the communication wire all nodes are
+connected to. A **CAN event** is a frame a node posted on that bus (Loaded,
+Pellet Taken, Fault, sensor edge, …), as opposed to an experiment-engine
+(`EXP`) row the GUI invented.
 
 ![SFM Developer GUI](docs/GUI.png)
 
@@ -376,6 +380,11 @@ The base station keeps a dictionary of discovered modules in
   rediscovers and rebuilds the dictionary from scratch.
 
 ## CAN frame reference
+
+**CAN** is the shared communication bus every feeder node is connected to.
+Commands go base → node; a **CAN event** is the opposite direction — a node
+telling the bus (and therefore the base station) that something just happened
+on that module.
 
 | Direction      | CAN ID           | Content                        |
 |---------------|------------------|-------------------------------|

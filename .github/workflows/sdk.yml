@@ -65,7 +65,7 @@ jobs:
       - run: pip install build twine
       - run: python -m build
       - run: twine check dist/*
-      - name: the 5 design JSONs and the demo CSVs must actually be inside the wheel
+      - name: the design JSONs and the demo CSVs must actually be inside the wheel
         run: |
           python - <<'PY'
           import glob, zipfile
@@ -73,7 +73,8 @@ jobs:
           names = zipfile.ZipFile(whl).namelist()
           jsons = [n for n in names
                    if n.startswith("sfm_analysis/report/designs/") and n.endswith(".json")]
-          assert len(jsons) == 5, (whl, jsons)
+          assert len(jsons) == 6, (whl, jsons)
+          assert any(n.endswith("actogram_takes.json") for n in jsons), jsons
           demo_csvs = [n for n in names
                        if n.startswith("sfm_analysis/report/demo/") and n.endswith(".csv")]
           assert len(demo_csvs) == 2, (whl, demo_csvs)

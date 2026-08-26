@@ -1,9 +1,10 @@
 """Tests for sfm_analysis.report.schema."""
 
+from pathlib import Path
 
 from sfm_analysis.report.schema import (
-    DEFAULT_REPORTS_DIR, SectionContext, SectionSpec, load_report_defs,
-    resolve_design, resolve_section, run_section,
+    DEFAULT_REPORTS_DIR, SectionContext, SectionSpec, load_design,
+    load_report_defs, resolve_design, resolve_section, run_section,
 )
 
 
@@ -18,11 +19,12 @@ class TestPackagedDesigns:
     def test_packaged_designs_dir_is_a_real_directory(self):
         assert DEFAULT_REPORTS_DIR.is_dir()
 
-    def test_all_five_shipped_designs_are_present(self):
+    def test_all_shipped_designs_are_present(self):
         stems = {p.stem for p in DEFAULT_REPORTS_DIR.glob("*.json")}
         assert stems == {
             "default", "free_feeding", "fixed_and_random",
             "probability_delivery", "two_armed_bandit",
+            "actogram_takes",
         }
 
 
@@ -53,6 +55,65 @@ class TestResolveDesign:
     def test_missing_reports_dir_does_not_raise(self, tmp_path):
         d = resolve_design("anything", directory=tmp_path / "nope")
         assert d.name == "default"
+
+
+class TestLoadDesign:
+    def test_bundled_name(self):
+        d = load_design("default")
+        assert d.name == "default"
+
+    def test_bundled_name_with_json_suffix(self):
+        d = load_design("two_armed_bandit.json")
+        assert d.name == "two_armed_bandit"
+
+    def test_bundled_actogram_takes(self):
+        """pip users remap the actogram without a local JSON file."""
+        d = load_design("actogram_takes")
+        assert d.name == "actogram_takes"
+        actogram = next(s for s in d.sections if s.ref == "timeline.actogram")
+        assert actogram.options["event_names"] == ["Pellet Taken"]
+
+    def test_actogram_takes_is_default_with_take_ticks(self):
+        default = load_design("default")
+        takes = load_design("actogram_takes")
+        assert [s.ref for s in default.sections] == [s.ref for s in takes.sections]
+        assert [s.ref for s in default.combined_sections] == [
+            s.ref for s in takes.combined_sections
+        ]
+
+    def test_actogram_takes_is_not_auto_selected(self):
+        d = resolve_design("two_armed_bandit")
+        assert d.name == "two_armed_bandit"
+        d = resolve_design("unknown_experiment_xyz")
+        assert d.name == "default"
+
+    def test_example_json_matches_bundled(self):
+        bundled = (DEFAULT_REPORTS_DIR / "actogram_takes.json").read_text(
+            encoding="utf-8",
+        )
+        example = (
+            Path(__file__).resolve().parent.parent
+            / "examples" / "report_design" / "designs" / "actogram_takes.json"
+        )
+        assert example.read_text(encoding="utf-8") == bundled
+
+    def test_local_json_path(self, tmp_path):
+        src = (
+            Path(__file__).resolve().parent.parent
+            / "examples" / "report_design" / "designs" / "actogram_takes.json"
+        )
+        assert src.is_file(), "example design missing from source tree"
+        copied = tmp_path / "actogram_takes.json"
+        copied.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        d = load_design(copied)
+        assert d.name == "actogram_takes"
+        actogram = next(s for s in d.sections if s.ref == "timeline.actogram")
+        assert actogram.options["event_names"] == ["Pellet Taken"]
+
+    def test_unknown_name_raises(self):
+        import pytest
+        with pytest.raises(ValueError, match="Unknown report design"):
+            load_design("not_a_real_design")
 
 
 class TestRunSection:

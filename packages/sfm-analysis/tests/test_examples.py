@@ -51,3 +51,24 @@ def test_exp_events_by_name():
     assert "141 EXP row(s), 20 distinct name(s)" in result.stdout
     assert "19  bandit_trial" in result.stdout
     assert "bandit_trial_end: 17 (valid=17)" in result.stdout
+
+
+def test_actogram_by_event():
+    result = _run("actogram_by_event.py")
+    assert result.returncode == 0, result.stderr
+    assert "actogram event mapping" in result.stdout
+    assert "MousePresence Detected:" in result.stdout
+    assert "Pellet Taken:" in result.stdout
+    assert "Dome Opened, Pellet Taken:" in result.stdout
+    assert "sfm-report MySession --design actogram_takes --open" in result.stdout
+
+
+def test_actogram_by_event_as_installed_module():
+    """The pip-install path: no source-tree examples/ directory required."""
+    result = subprocess.run(
+        [sys.executable, "-m", "sfm_analysis.examples.actogram_by_event"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "actogram event mapping" in result.stdout
+    assert "sfm-report MySession --design actogram_takes --open" in result.stdout

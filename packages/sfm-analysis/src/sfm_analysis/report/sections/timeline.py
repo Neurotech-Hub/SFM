@@ -17,12 +17,13 @@ views can never show different data for the same session.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Sequence, Tuple
 
 from .. import charts
 from ..charts import Frame, Mark, escape_text
 from ..explorer import build_explorer_payload
 from ..explorer_render import EXPLORER_CSS, EXPLORER_JS, explorer_bootstrap_js, explorer_widget_html
+from ..metrics import DEFAULT_ACTIVITY_EVENTS, activity_by_day
 from ..timeline_data import (
     EVENT_GLYPH as _EVENT_GLYPH,
     SESSION_MARK_STYLES as _SESSION_MARK_STYLES,
@@ -148,7 +149,11 @@ def _fmt_duration(seconds: float) -> str:
     return f"{s}s"
 
 
-def _actogram_panel(days, *, lights_on: float, lights_off: float) -> str:
+def _actogram_panel(
+    days,
+    *,
+    event_label: str,
+) -> str:
     lanes = [d.date.strftime("%b %d") for d in days]
     frame = Frame(h=max(140, 40 + len(lanes) * 16))
     x = charts.linear(0.0, 24.0, frame.px0, frame.px1)
@@ -156,17 +161,10 @@ def _actogram_panel(days, *, lights_on: float, lights_off: float) -> str:
     lane_h = min(14, lane_gap * 0.8)
 
     body = []
-    # Night shading first, so activity ticks draw on top of it. Two spans
-    # per lane unless the whole day (or none of it) is dark, since the
-    # dark period may wrap around both edges of the [0, 24) axis.
-    for li in range(len(lanes)):
-        ly = frame.py0 + li * lane_gap + (lane_gap - lane_h) / 2
-        for a, b in ((0.0, lights_on), (lights_off, 24.0)):
-            if b <= a:
-                continue
-            x0, x1 = x(a), x(b)
-            body.append(f'<rect class="actogram-night" x="{x0:.1f}" y="{ly:.1f}" '
-                        f'width="{x1 - x0:.1f}" height="{lane_h:.1f}"/>')
+    # No light/dark shading: the rig does not record the facility's light
+    # schedule, so any shading here would be a fixed clock-time assumption
+    # drawn as if it were measured data. Time of day is on the axis; a
+    # reader who knows their own light cycle can apply it themselves.
 
     body.append(f'<line class="axis-line" x1="{frame.px0:.1f}" y1="{frame.py1:.1f}" '
                f'x2="{frame.px1:.1f}" y2="{frame.py1:.1f}"/>')
@@ -176,12 +174,37 @@ def _actogram_panel(days, *, lights_on: float, lights_off: float) -> str:
         body.append(f'<text x="{px:.1f}" y="{frame.py1 + 14:.1f}" text-anchor="middle">{hour}:00</text>')
 
     marks = [
-        Mark(lane=li, t=t, glyph="tick", key=0, title=f"{lanes[li]} {int(t):02d}:{int((t % 1) * 60):02d}")
+        Mark(
+            lane=li, t=t, glyph="tick", key=0,
+            title=f"{event_label} · {lanes[li]} {int(t):02d}:{int((t % 1) * 60):02d}",
+        )
         for li, day in enumerate(days) for t in day.times
     ]
     body.append(charts.raster(frame, x, lanes, marks, lane_h=lane_h))
 
-    return charts.svg(frame, "".join(body), title="actogram")
+    return charts.svg(
+        frame, "".join(body),
+        title=f"actogram — {event_label}",
+        desc=(
+            f"Each tick is a {event_label} event from the session log. "
+            "One row per calendar day; x-axis is rig-local time of day (0–24 h)."
+        ),
+    )
+
+
+def _actogram_event_names(opts: dict) -> Tuple[str, ...]:
+    """CAN EVENT display names that count as actogram ticks.
+
+    Default is presence onsets (``DEFAULT_ACTIVITY_EVENTS``). Design JSON
+    may pass ``event_names`` as a string or a list — several names are
+    pooled into one series (union of ticks), not separate colours.
+    """
+    raw = opts.get("event_names", DEFAULT_ACTIVITY_EVENTS)
+    if isinstance(raw, str):
+        names: Sequence[str] = (raw,)
+    else:
+        names = tuple(str(n) for n in raw if str(n).strip())
+    return tuple(names) if names else DEFAULT_ACTIVITY_EVENTS
 
 
 def actogram_section(ctx: SectionContext) -> Optional[SectionResult]:
@@ -194,37 +217,36 @@ def actogram_section(ctx: SectionContext) -> Optional[SectionResult]:
     Empty (nothing rendered) for any run with fewer than 2 distinct days
     of activity — a single-day run gets nothing an actogram would add
     over the session raster above it.
+
+    ``event_names`` (design-JSON option) selects which CAN EVENT rows are
+    plotted; omit it to keep the presence-onset default. Multiple names
+    become one tick series. The section heading names those events so a
+    printed page is unambiguous about what the ticks are.
     """
-    lights_on = float(ctx.opts.get("lights_on", 6.0))
-    lights_off = float(ctx.opts.get("lights_off", 18.0))
+    event_names = _actogram_event_names(ctx.opts)
+    event_label = ", ".join(event_names)
+    title = f"Actogram — {event_label}"
     figs = []
 
-    for run, m in zip(ctx.runs, ctx.metrics):
-        days = m.activity_by_day
+    for run in ctx.runs:
+        days = activity_by_day(run, event_names=event_names)
         if len(days) < 2:
             continue
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
-        panel = _actogram_panel(days, lights_on=lights_on, lights_off=lights_off)
+        panel = _actogram_panel(days, event_label=event_label)
         figs.append(
-            f'{heading}<figure><figcaption>Activity by day '
-            f'({len(days)} days; shaded = lights off, {_fmt_clock(lights_off)}–{_fmt_clock(lights_on)}).'
+            f'{heading}<figure><figcaption>{len(days)} days.'
             f'</figcaption>{panel}</figure>'
         )
 
     if not figs:
-        return SectionResult(section_id="timeline.actogram", title="Actogram", html="", empty=True)
+        return SectionResult(section_id="timeline.actogram", title=title, html="", empty=True)
 
     return SectionResult(
         section_id="timeline.actogram",
-        title="Actogram",
+        title=title,
         html="".join(figs),
     )
-
-
-def _fmt_clock(hour: float) -> str:
-    h = int(hour) % 24
-    m = int(round((hour % 1) * 60))
-    return f"{h:02d}:{m:02d}"
 
 
 def explorer_section(ctx: SectionContext) -> Optional[SectionResult]:

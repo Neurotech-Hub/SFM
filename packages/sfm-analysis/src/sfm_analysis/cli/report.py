@@ -22,6 +22,9 @@ Examples::
     # One session, opened in the default browser when done:
     sfm-report EXP-Test-02 --open
 
+    # Plot pellet takes on the actogram (ships with the package; no file copy):
+    sfm-report EXP-Test-02 --design actogram_takes --open
+
     # Every session matching a glob, combined into one report:
     sfm-report "cohortA_*" --combine -o /tmp/cohort.html
 
@@ -65,7 +68,12 @@ def _print_designs() -> None:
         return
     print("Available report designs:")
     for d in defs:
-        matches = ", ".join(d.matches) if d.matches else "(fallback for any experiment)"
+        if d.matches:
+            matches = ", ".join(d.matches)
+        elif d.name == "default":
+            matches = "(fallback for any experiment)"
+        else:
+            matches = "(opt-in only; pass --design)"
         print(f"  {d.name:22s} {d.label}")
         print(f"  {'':22s} matches: {matches}")
 
@@ -170,7 +178,10 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
                         help="Only sessions modified on/before this date")
     parser.add_argument("--run", type=int, default=None, dest="run_id",
                         help="Only this run_id (default: all runs in the file)")
-    parser.add_argument("--design", default=None, help="Force a report design by name (default: auto by experiment)")
+    parser.add_argument(
+        "--design", default=None,
+        help="Force a report design: bundled name (see --list-designs) or path to a .json file",
+    )
     parser.add_argument("--align", default="relative",
                         help="Combined-report time alignment: relative | wall | trial | event:<name> "
                              "(default: relative)")

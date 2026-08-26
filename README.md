@@ -23,7 +23,7 @@ Report generation itself is cross-platform — it doesn't need a Raspberry Pi or
 
 ## About
 
-VFM is a firmware library for the Spatial Foraging Platform node. It provides non-blocking, service-oriented stepper-driven pellet dispensing, CAN bus communication with a base-station command/event/heartbeat protocol.
+VFM is a firmware library for the Spatial Foraging Platform node. It provides non-blocking, service-oriented stepper-driven pellet dispensing, and talks to the base station over **CAN** (Controller Area Network) — the shared communication bus every node is wired onto. A **CAN event** is a message a node posted on that bus (Loaded, Pellet Taken, Fault, …).
 
 The Arduino library is the `firmware/` folder (not the repo root). Copy or symlink `firmware/` into `Arduino/libraries/VFM`, or zip that folder and add it via *Sketch → Include Library → Add .ZIP Library…*.
 
