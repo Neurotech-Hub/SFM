@@ -59,7 +59,7 @@ twine upload dist/* \
 - Ignore `This environment is not supported for trusted publishing` — that
 only applies to GitHub Actions, not a local Twine run.
 
-Success prints a URL like `https://pypi.org/project/sfm-analysis/0.1.1/`.
+Success prints a URL like `https://pypi.org/project/sfm-analysis/0.1.2/`.
 
 ## 4. Check the install
 

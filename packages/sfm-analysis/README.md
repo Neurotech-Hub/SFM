@@ -375,6 +375,8 @@ you work at:
 4. **A bout still open when the run ends is `censored`, not zero-length.**
    `Bout.dur` is `None` for a censored bout on purpose. Filter deliberately
    rather than letting a `None` silently become a `0` in an average.
+   Bout, censored, cycle, ready, and the other analysis nouns are defined in
+   [ANALYSIS_GUIDE — Vocabulary](docs/ANALYSIS_GUIDE.md#vocabulary).
 5. **Two different "pellets presented" counts exist, on purpose.**
    `PelletAccounting.presented` counts rows actually seen in the log;
    `.presented_total` (what you almost always want) uses the base-station
