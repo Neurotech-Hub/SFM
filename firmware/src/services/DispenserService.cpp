@@ -1,6 +1,6 @@
 #include "DispenserService.h"
 
-namespace vfm {
+namespace sfm {
 
 // ---------------------------------------------------------------------------
 // AccelStepper HALF4WIRE: (A1, A3, A2, A4) = Orange, Pink, Yellow, Blue
@@ -593,4 +593,4 @@ bool DispenserService::phaseTimedOut(uint32_t timeoutMs) const {
     return (millis() - motionStartMs_) >= timeoutMs;
 }
 
-} // namespace vfm
+} // namespace sfm

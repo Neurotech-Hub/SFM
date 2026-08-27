@@ -28,10 +28,10 @@
 //   c       start 5 s calibration (same as button)
 //   h       help
 
-#include <VFM.h>
+#include <SFM.h>
 #include <math.h>
 
-using namespace vfm;
+using namespace sfm;
 
 static constexpr uint32_t kSampleMs      = 200;
 static constexpr uint32_t kCalSampleMs   = 25;
@@ -289,7 +289,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM Mouse Presence Test ====="));
+    Serial.println(F("\n===== SFM Mouse Presence Test ====="));
     Serial.println(F("PIN_PRESENCE=GPIO5  BTN=GPIO11  LED9=GPIO9"));
     Serial.println(F("presence = raw > thr"));
     Serial.println(F("Cal: thr = mean + factor*std_dev (5 s, pad CLEAR)"));

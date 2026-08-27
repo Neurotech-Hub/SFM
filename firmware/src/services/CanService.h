@@ -4,9 +4,9 @@
 #include <functional>
 #include "driver/twai.h"
 #include "ServiceTypes.h"
-#include "../hardware/VFMPins.h"
+#include "../hardware/SFMPins.h"
 
-namespace vfm {
+namespace sfm {
 
 // Heartbeat interval when no explicit SetConfig has been applied (milliseconds).
 // Runtime-configurable via CanCmd::SetConfig / ConfigType::HeartbeatInterval
@@ -112,4 +112,4 @@ private:
     void dispatchRx(const twai_message_t &msg);
 };
 
-} // namespace vfm
+} // namespace sfm

@@ -1,6 +1,6 @@
 # Dispense cycle
 
-How a VFM node delivers a pellet, how it knows the pellet was taken, and what it reports along the way.
+How a SFM node delivers a pellet, how it knows the pellet was taken, and what it reports along the way.
 This is the reference for the sensing model and the event vocabulary; tunable timings live in
 [HARDCODED_VALUES.md](HARDCODED_VALUES.md). Pin / motor and sensor wiring: [WIRING.md](WIRING.md).
 
@@ -145,7 +145,7 @@ trial and the animal can't use sound alone to find the baited one.
 **The raise is triggered by another node, not by a timer.** A node in `Dwelling` watches the bus and raises the
 instant it sees a `Raising` event (`0x09`) from any other node. Every node's TWAI filter is
 `TWAI_FILTER_CONFIG_ACCEPT_ALL`, so peer event frames already arrive in each node's RX queue; `CanService`
-surfaces them via `onPeerEvent`, and `VFM` forwards a peer `Raising` to `DispenserService::notifyPeerRaise()`.
+surfaces them via `onPeerEvent`, and `SFM` forwards a peer `Raising` to `DispenserService::notifyPeerRaise()`.
 End to end the empty plate starts rising about one CAN frame time (~0.5 ms at 250 kbps) after the fed one.
 
 This replaced a commanded dwell, which could not do the job: a fed cycle's hold lasts however long M1 takes to

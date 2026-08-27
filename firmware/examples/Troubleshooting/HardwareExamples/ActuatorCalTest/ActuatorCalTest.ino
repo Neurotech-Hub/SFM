@@ -34,10 +34,10 @@
 //   + / -       speed ±50 steps/s
 //   h / help    this help
 
-#include <VFM.h>
+#include <SFM.h>
 #include <AccelStepper.h>
 
-using namespace vfm;
+using namespace sfm;
 
 // --- Match library defaults ---
 static constexpr float    kDefaultSpeed = kDefaultMotorSpeed; // 500
@@ -267,7 +267,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM ActuatorCalTest (M2) ====="));
+    Serial.println(F("\n===== SFM ActuatorCalTest (M2) ====="));
     Serial.println(F("M2 = actuator GPIO40-43  |  load sensor = loading home"));
     Serial.print(F("Load sensor pin=GPIO")); Serial.println(kLoadPositionPin);
     Serial.print(F("Speed=")); Serial.print(kDefaultSpeed, 0);

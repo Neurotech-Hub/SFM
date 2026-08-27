@@ -14,7 +14,7 @@ naturally groups several analyses for the same experiment.
 
 Naming note: ``templates/`` is already taken by
 ``base_station/experiment/templates/`` (the Python behavior for each
-experiment, in the parent VFM repo). Report JSON specs therefore live in
+experiment, in the parent SFM repo). Report JSON specs therefore live in
 this package's ``designs/`` (the noun "design"), not "templates" — and not
 "reports", since that's the name of the *output* directory a report is
 written into (see build_session_report below).
@@ -181,7 +181,7 @@ def resolve_section(ref: str) -> SectionFn:
     Resolve "module.func" to a section callable.
 
     Dynamically imports ``sfm_analysis.report.sections.<module>`` and
-    returns its ``SECTIONS[func]`` entry — mirroring the VFM base
+    returns its ``SECTIONS[func]`` entry — mirroring the SFM base
     station's experiment.schema.resolve_builder dynamic import, with a
     per-module dict instead of a single factory since one module holds
     several related sections.

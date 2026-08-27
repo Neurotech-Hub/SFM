@@ -1,12 +1,12 @@
 """
-cli/report.py — generate an HTML behavior report from VFM session logs.
+cli/report.py — generate an HTML behavior report from SFM session logs.
 
 Point it at a session name (or a shell glob, or an explicit .csv path) and
 it writes a single self-contained, printable HTML file next to the source
 CSV (or wherever ``--out`` says). Pass more than one target with
 ``--combine`` for a comparative report across sessions.
 
-Installed as the ``sfm-report`` console script. The VFM base station's own
+Installed as the ``sfm-report`` console script. The SFM base station's own
 ``run_report.py`` is a thin wrapper around this module that additionally
 injects the base station's own (writable-probing) log-directory resolver
 — see that file's docstring for why the two resolvers are kept separate.
@@ -149,7 +149,7 @@ def _prompt_picker(log_dir: Path) -> tuple:
 def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable[[], Path]] = None) -> int:
     """
     Entry point. ``default_log_dir`` is injectable so a caller can supply
-    its own resolver instead of the SDK's read-only one — the VFM base
+    its own resolver instead of the SDK's read-only one — the SFM base
     station's run_report.py shim does this to keep using its writable-
     probing directory resolver (base_station.storage.default_log_dir),
     so that default log-dir resolution on the base station is unchanged
@@ -159,7 +159,7 @@ def main(argv: Optional[List[str]] = None, *, default_log_dir: Optional[Callable
 
     parser = argparse.ArgumentParser(
         prog="sfm-report",
-        description="Generate an HTML behavior report from VFM session logs.",
+        description="Generate an HTML behavior report from SFM session logs.",
     )
     parser.add_argument("target", nargs="*",
                         help="Session name, shell glob, or path to a .csv (repeatable)")

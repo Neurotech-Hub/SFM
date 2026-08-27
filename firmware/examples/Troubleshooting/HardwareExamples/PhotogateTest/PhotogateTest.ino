@@ -1,4 +1,4 @@
-// PhotogateTest – hardware bring-up test for VFM photogates.
+// PhotogateTest – hardware bring-up test for SFM photogates.
 //
 // Polarity (matches DispenserService):
 //   Pellet (GPIO46):       TRIGGERED = pin LOW  (beam break)
@@ -13,9 +13,9 @@
 //   m  – toggle continuous raw monitor (200 ms)
 //   h  – help
 
-#include <VFM.h>
+#include <SFM.h>
 
-using namespace vfm;
+using namespace sfm;
 
 static constexpr uint32_t kDebounceMs = 100;
 static constexpr uint32_t kBannerMs   = 5000;
@@ -104,7 +104,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM PhotogateTest ====="));
+    Serial.println(F("\n===== SFM PhotogateTest ====="));
     Serial.println(F("Pellet=GPIO46  Load position=GPIO45  Dome=GPIO44"));
     Serial.println(F("Dome idle=LOW, open=HIGH (active HIGH)"));
     printHelp();

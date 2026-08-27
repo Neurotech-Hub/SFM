@@ -3,9 +3,9 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "ServiceTypes.h"
-#include "../hardware/VFMPins.h"
+#include "../hardware/SFMPins.h"
 
-namespace vfm {
+namespace sfm {
 
 // NVS keys (namespace kNvsNamespace)
 constexpr char kNvsKeyPresenceThr[]    = "presThr";
@@ -132,4 +132,4 @@ private:
     void     loadFromNvs();
 };
 
-} // namespace vfm
+} // namespace sfm

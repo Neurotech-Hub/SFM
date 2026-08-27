@@ -1,6 +1,6 @@
 # Wiring map
 
-Firmware pin names → physical job. Source of truth: `[src/hardware/VFMPins.h](../src/hardware/VFMPins.h)`.
+Firmware pin names → physical job. Source of truth: `[src/hardware/SFMPins.h](../src/hardware/SFMPins.h)`.
 Cycle behaviour for the sensors: [DISPENSE_CYCLE.md](DISPENSE_CYCLE.md).
 
 ## Symbol → job

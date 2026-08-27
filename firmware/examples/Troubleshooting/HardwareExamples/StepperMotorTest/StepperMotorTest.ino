@@ -1,4 +1,4 @@
-// StepperMotorTest – hardware bring-up test for VFM 28BYJ-48 steppers.
+// StepperMotorTest – hardware bring-up test for SFM 28BYJ-48 steppers.
 //
 // Motor 1 (M1) – Pellet feeder   : GPIO 35(Orange) 36(Yellow) 37(Pink) 38(Blue)
 // Motor 2 (M2) – Actuator        : GPIO 40(Orange) 41(Yellow) 42(Pink) 43(Blue)
@@ -21,10 +21,10 @@
 //   p  – print step counters and speed
 //   h  – help
 
-#include <VFM.h>
+#include <SFM.h>
 #include <AccelStepper.h>
 
-using namespace vfm;
+using namespace sfm;
 
 static constexpr long     kJogSteps      = 500;
 static constexpr long     kContBurstSteps = 500;
@@ -160,7 +160,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM StepperMotorTest ====="));
+    Serial.println(F("\n===== SFM StepperMotorTest ====="));
     Serial.println(F("M1 = feeder (GPIO35-38)  |  M2 = actuator (GPIO40-43)"));
     Serial.println(F("Red wire -> +5 V on both motors"));
     Serial.print(F("Default speed: ")); Serial.print(kDefaultSpeed, 0);

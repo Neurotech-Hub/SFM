@@ -1,7 +1,7 @@
 #include "NodeIdentity.h"
 #include "esp_mac.h"
 
-namespace vfm {
+namespace sfm {
 
 NodeIdentity::NodeIdentity(CanService &can)
     : can_(can),
@@ -198,4 +198,4 @@ void NodeIdentity::onDiscoveryFrame(uint32_t frameId, const uint8_t *payload, ui
     // ANNOUNCE, ACK, REJOIN originate from nodes, not the base; ignore them.
 }
 
-} // namespace vfm
+} // namespace sfm

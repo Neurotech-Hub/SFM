@@ -5,7 +5,7 @@ fixture *builders* — see conftest.py's own docstring) — import directly:
 ``from report_fixtures import row, write_session``.
 
 Every row is keyed by the *real* ``sfm_analysis.logs.CSV_HEADER`` rather
-than a hand-copied list. That constant is also what the VFM base
+than a hand-copied list. That constant is also what the SFM base
 station's LogManager binds as its own CSV_HEADER (see log_manager.py in
 the parent repo), so a schema change on either side breaks these tests
 loudly instead of silently drifting out of sync.

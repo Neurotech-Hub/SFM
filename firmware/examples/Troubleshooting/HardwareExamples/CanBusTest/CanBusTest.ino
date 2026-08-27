@@ -1,6 +1,6 @@
 // CanBusTest – two-device CAN bus communication test.
 //
-// Flash this same sketch onto both VFM modules, then assign different IDs.
+// Flash this same sketch onto both SFM modules, then assign different IDs.
 //
 // Two-device wiring (daisy chain via RJ45):
 //   Device-A OUT -> Device-B IN
@@ -26,13 +26,13 @@
 //   c        print AEI / AEO chain pin levels
 //   h        help
 
-#include <VFM.h>
+#include <SFM.h>
 #include <driver/twai.h>
 
 static constexpr uint32_t kAutoPingMs = 2000;
 static constexpr uint32_t kStatsMs    = 5000;
 
-vfm::CanService can;
+sfm::CanService can;
 
 uint8_t  nodeId      = 0;
 uint8_t  peerId      = 0;
@@ -67,9 +67,9 @@ void printHelp() {
 
 void printChain() {
     Serial.print(F("[CHAIN] AEI (GPIO14)="));
-    Serial.print(digitalRead(vfm::PIN_AEI) == HIGH ? F("HIGH") : F("LOW"));
+    Serial.print(digitalRead(sfm::PIN_AEI) == HIGH ? F("HIGH") : F("LOW"));
     Serial.print(F("  AEO (GPIO47)="));
-    Serial.println(digitalRead(vfm::PIN_AEO) == HIGH ? F("HIGH") : F("LOW"));
+    Serial.println(digitalRead(sfm::PIN_AEO) == HIGH ? F("HIGH") : F("LOW"));
 }
 
 void printBusStats() {
@@ -106,9 +106,9 @@ void sendPing(uint8_t target) {
         return;
     }
     twai_message_t msg = {};
-    msg.identifier       = vfm::CAN_CMD_BASE + target;
+    msg.identifier       = sfm::CAN_CMD_BASE + target;
     msg.data_length_code = 1;
-    msg.data[0]          = static_cast<uint8_t>(vfm::CanCmd::Ping);
+    msg.data[0]          = static_cast<uint8_t>(sfm::CanCmd::Ping);
 
     if (twai_transmit(&msg, pdMS_TO_TICKS(100)) == ESP_OK) {
         txPingCount++;
@@ -129,7 +129,7 @@ void assignNodeId(uint8_t id) {
 
     // Drive AEO HIGH to enable the downstream node's AEI.
     // (Has no effect if this device is the last in the chain.)
-    digitalWrite(vfm::PIN_AEO, HIGH);
+    digitalWrite(sfm::PIN_AEO, HIGH);
 
     autoPing = (peerId > 0);
 
@@ -163,24 +163,24 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM CanBusTest ====="));
+    Serial.println(F("\n===== SFM CanBusTest ====="));
     Serial.println(F("250 kbps TWAI  |  TX=GPIO33  RX=GPIO13"));
     Serial.println(F("Auto-termination: hardware-controlled via OUT RJ45 port"));
     Serial.println(F("  OUT connected -> 120 ohm OFF  |  OUT open -> 120 ohm ON"));
     printHelp();
 
-    pinMode(vfm::PIN_AEI, INPUT_PULLDOWN);
-    pinMode(vfm::PIN_AEO, OUTPUT);
-    digitalWrite(vfm::PIN_AEO, LOW);
+    pinMode(sfm::PIN_AEI, INPUT_PULLDOWN);
+    pinMode(sfm::PIN_AEO, OUTPUT);
+    digitalWrite(sfm::PIN_AEO, LOW);
 
-    can.onCommand([](vfm::CanCmd cmd, const uint8_t *, uint8_t) {
-        if (cmd != vfm::CanCmd::Ping) return;
+    can.onCommand([](sfm::CanCmd cmd, const uint8_t *, uint8_t) {
+        if (cmd != sfm::CanCmd::Ping) return;
         rxPingCount++;
         Serial.println(F("[CAN] RX Ping -> TX Pong"));
-        can.sendEvent(vfm::CanEvent::Pong);
+        can.sendEvent(sfm::CanEvent::Pong);
     });
 
-    if (can.begin(0) != vfm::ServiceStatus::Ok) {
+    if (can.begin(0) != sfm::ServiceStatus::Ok) {
         Serial.println(F("ERROR: CAN driver failed to start"));
         Serial.println(F("  Check TX/RX wiring and transceiver power"));
     } else {

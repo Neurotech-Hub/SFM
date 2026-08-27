@@ -10,7 +10,7 @@ Package identity:
 | ------------ | ------------------------------------------------------------------------------------- |
 | PyPI name    | `sfm-analysis`                                                                        |
 | Import       | `sfm_analysis`                                                                        |
-| Source       | `packages/sfm-analysis/` in [Neurotech-Hub/VFM](https://github.com/Neurotech-Hub/VFM) |
+| Source       | `packages/sfm-analysis/` in [Neurotech-Hub/SFM](https://github.com/Neurotech-Hub/SFM) |
 | Project page | [https://pypi.org/project/sfm-analysis/](https://pypi.org/project/sfm-analysis/)      |
 
 
@@ -93,7 +93,7 @@ Almost always the wrong token or the wrong site.
 ## Tracking `main` without PyPI
 
 ```bash
-pip install "git+https://github.com/Neurotech-Hub/VFM.git#subdirectory=packages/sfm-analysis"
+pip install "git+https://github.com/Neurotech-Hub/SFM.git#subdirectory=packages/sfm-analysis"
 ```
 
 The base-station GUI keeps using the local editable install

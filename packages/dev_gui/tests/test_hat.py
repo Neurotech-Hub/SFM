@@ -4,7 +4,7 @@ test_hat.py — Interactive hardware validation for the SFM base station CAN HAT
 
 This is NOT a pytest suite (despite the filename, chosen to match the plan) —
 it is a manual, interactive checklist you run directly on the Raspberry Pi
-with the HAT (and ideally at least one VFM node) connected:
+with the HAT (and ideally at least one SFM node) connected:
 
     cd packages/dev_gui
     python tests/test_hat.py
@@ -118,8 +118,8 @@ def check_can_loopback(interface: str) -> None:
 
 
 def check_can_node_discovery(interface: str) -> None:
-    _section("Live node discovery (power at least one VFM node)")
-    if not _prompt_yes("Is at least one VFM node powered and connected to the CAN bus?"):
+    _section("Live node discovery (power at least one SFM node)")
+    if not _prompt_yes("Is at least one SFM node powered and connected to the CAN bus?"):
         _record("Node discovery frames observed", False)
         return
     print(f"  Run `candump {interface}` in another terminal now and watch for discovery frames.")

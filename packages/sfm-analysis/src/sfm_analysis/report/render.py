@@ -160,7 +160,7 @@ def render_report_html(
   <p class="note">Sessions: {_html.escape(session_list)} · Design: {_html.escape(design.label)}</p>
   {_kpi_band(runs, metrics)}
   {"".join(section_html_parts)}
-  <footer>Generated {generated_at} by run_report.py &mdash; VFM behavior report tool.
+  <footer>Generated {generated_at} by run_report.py &mdash; SFM behavior report tool.
   Print with Ctrl+P / Cmd+P.</footer>
 </div>
 {script_block}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-node_simulator.py — Simulates N VFM nodes on a SocketCAN interface.
+node_simulator.py — Simulates N SFM nodes on a SocketCAN interface.
 
 Run alongside the GUI on vcan0 for hardware-free development and testing.
 
@@ -204,7 +204,7 @@ class SimNode:
 # ---------------------------------------------------------------------------
 
 class NodeSimulator:
-    """Runs N simulated VFM nodes on a SocketCAN interface."""
+    """Runs N simulated SFM nodes on a SocketCAN interface."""
 
     # Dispense sequence timings (seconds after command received)
     LOWERING_DELAY = 1.0
@@ -746,7 +746,7 @@ class NodeSimulator:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="VFM Node Simulator — fake VFM nodes on a SocketCAN interface",
+        description="SFM Node Simulator — fake SFM nodes on a SocketCAN interface",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--interface", "-i", default="vcan0",
@@ -769,7 +769,7 @@ def main() -> None:
         skip_discovery=args.skip_discovery,
     )
 
-    print(f"VFM Node Simulator — {args.nodes} node(s) on {args.interface}")
+    print(f"SFM Node Simulator — {args.nodes} node(s) on {args.interface}")
     print("Press Ctrl+C to stop.\n")
     try:
         sim.start()

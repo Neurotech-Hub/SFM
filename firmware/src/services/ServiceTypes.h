@@ -2,13 +2,13 @@
 
 #include <Arduino.h>
 
-namespace vfm {
+namespace sfm {
 
 // ---------------------------------------------------------------------------
 // Persistent storage (NVS) — one namespace shared by every service that
 // stores a value. Keys live next to the service that owns them.
 // ---------------------------------------------------------------------------
-constexpr char kNvsNamespace[] = "vfm";
+constexpr char kNvsNamespace[] = "sfm";
 
 // ---------------------------------------------------------------------------
 // Debounce applied to every sensor input before any logic or reporting acts on
@@ -153,4 +153,4 @@ enum class DiscoveryState : uint8_t {
     Enabled,    // Identity resolved – AEO driven HIGH, normal operation
 };
 
-} // namespace vfm
+} // namespace sfm
