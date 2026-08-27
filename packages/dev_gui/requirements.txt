@@ -4,8 +4,5 @@ python-can>=4.4
 RPi.GPIO>=0.7
 gpiod>=2.1
 
-# The report/analysis SDK. Installed editable from this checkout so that a
-# change under packages/ is live immediately -- the same single-checkout
-# dev loop this repo has always had. Switch to a pinned `sfm-analysis>=X.Y`
-# once the package is published to PyPI.
--e ../sfm-analysis
+# Follow the published PyPI package on this base-station host.
+sfm-analysis>=0.1.2

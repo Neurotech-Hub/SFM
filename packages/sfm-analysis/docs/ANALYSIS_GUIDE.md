@@ -1,19 +1,20 @@
 # Analysis Guide
 
-A reference for designing your own analysis on top of `sfm_analysis`: what's
-actually in a log, what every derived field means (including its `None`
-semantics), and a worked example that goes from a question to a tested
-answer.
+A reference for designing your own analysis on top of `sfm_analysis`: the
+nouns this package uses (bout, cycle, ready, censored, …), what's actually
+in a log, what every derived field means (including its `None` semantics),
+and a worked example that goes from a question to a tested answer.
 
 This is the **reference** half of the documentation. The
 [README](../README.md) is the **task-oriented** half — install, the CLI,
 quick-start snippets, and a one-liner cookbook. Read that first if you just
 want to run a report or answer a question that's already in the cookbook;
-come here when you need to know exactly what a field means, or you're
-building something the cookbook doesn't cover.
+come here when you need to know what a term means, exactly what a field
+means, or you're building something the cookbook doesn't cover.
 
 ## Contents
 
+- [Vocabulary](#vocabulary)
 1. [Which layer to work at](#1-which-layer-to-work-at)
 2. [The log files](#2-the-log-files)
 3. [Event vocabulary](#3-event-vocabulary)
@@ -25,6 +26,193 @@ building something the cookbook doesn't cover.
 9. [Turning an analysis into a report section](#9-turning-an-analysis-into-a-report-section)
    - [File layout](#file-layout)
    - [Complete example (custom experiment → custom design)](#complete-example-custom-experiment--custom-design)
+
+## Vocabulary
+
+The rest of this guide names objects (`Bout`, `Cycle`, `ready_t`, …) as if
+they were already obvious. They are not. This section is the map from the
+physical feeder to those objects, so you can pick the right one before
+writing code. Field-by-field `None` semantics live in
+[§5](#5-derived-metrics-reference); the sensing model the firmware actually
+runs is [firmware/docs/DISPENSE_CYCLE.md](../../../firmware/docs/DISPENSE_CYCLE.md).
+
+### The apparatus
+
+- **Node** — one feeder on the CAN bus. `node_id` is which one. `0` is
+  broadcast / session-scope, not a real feeder — skip it when averaging
+  per-animal numbers. Configured nodes for a run are `run.nodes`
+  (`session.split_runs`).
+- **Plate** — the pellet platform. A latching pellet sensor reports
+  occupancy from the moment a pellet lands until it leaves. The node will
+  not stack a second pellet on an occupied plate (`FeedSkipped`).
+- **Dome** — the spring-returned lid over the plate. Every access is a
+  clean lift-and-release, so one physical opening is one bout. Logged as
+  `Dome Opened` / `Dome closed` (see the `"Dome Opened"` trap in
+  [§3](#3-event-vocabulary) before pairing those names yourself).
+- **Presence pad** — a capacitive pad on the node, independent of the
+  pellet sensor. Firmware thresholds it (`raw > threshold`) with a 100 ms
+  debounce, so one approach produces one trigger and one clear. Logged as
+  `MousePresence Detected` / `MousePresence Cleared`. This is what
+  `metrics.presence_bouts` pairs.
+- **BNC** — a photogate / TTL input on the *base station*, not a node
+  sensor. Rows have `source == "BNC"`. Some experiment templates wait on a
+  rising edge to start a trial.
+
+### Units of recording
+
+- **Session** — one named CSV (`session` column). The file you pass to
+  `load_session`.
+- **Run** — one open/stop of that session. Reopening the same session name
+  appends to the same file and increments `run_id`. A count or interval
+  that crosses a run boundary is meaningless.
+  `session.split_runs` is the one function that groups rows this way;
+  always work from its `RunData`, not the raw `LogRow` list. See also
+  [README — Five things to know, #1](../README.md#five-things-to-know-before-trusting-a-number).
+- **Trial** — an experiment-template boundary (choice, block, …), not a
+  dispense. The CSV `trial` column is a convenience copy; the
+  authoritative marker is the `trial` EXP event. Use `trials_table()` for
+  those markers, or `report.analyses.*` for template-specific structure.
+
+`.t` on a `RunData` row is run-relative seconds, recomputed from
+`timestamp_ms` by `split_runs`. That is the clock for every latency and
+duration below. Never read the raw CSV `elapsed_s` column — it resets
+when a session is reopened ([README trap #2](../README.md#five-things-to-know-before-trusting-a-number)).
+
+### Units of behavior
+
+A **dispense cycle** is apparatus-driven. A **bout** is animal-driven (or
+a fault interval). Both are intervals on the same `.t` axis; they are
+not the same object.
+
+- **Dispense cycle** (`metrics.Cycle`, produced by `metrics.build_cycles`)
+  — one attempt to present a pellet (or an empty plate) and wait for an
+  outcome. Opens on a `Dispense` / `DispenseNoFeed` command that actually
+  ran; closes on `Pellet Taken`, the next dispense command for that node,
+  or run end. A broadcast command (`node_id == 0`) opens one pending
+  cycle per node in `run.nodes`.
+- **Ready** (`ready_t`) — the pellet (or empty plate) is at the top and
+  available. Set by `Loaded` (real pellet) or `NoFeedPresented` (no-feed
+  cycle). This is the zero point for approach, dome, and retrieval
+  latency. A cycle with `ready_t is None` never presented — dispense
+  failed or was still in progress when the run ended. Do not treat it as
+  latency 0.
+- **Take** (`taken_t`) — the pellet left the plate (`Pellet Taken`). The
+  cycle's outcome, not a bout.
+- **No-feed cycle** (`fed is False`) — the node ran the same motion with
+  the feed wheel off, so the plate rises empty. Used so a choice task can
+  move every arm without the sound of the wheel giving the baited one
+  away. There is nothing to take; `taken_t` stays `None`.
+- **Bout** (`metrics.Bout`, produced by `metrics.bouts`) — one continuous
+  episode from a paired open/close edge, per node, in time order.
+  `t0` is the open, `t1` is the close, `dur = t1 - t0`. Presence bouts
+  (`Detected`/`Cleared`), dome bouts (`Opened`/`closed`), and fault
+  intervals all share this shape; `bouts_table()` unifies them under
+  `kind` (`"presence"` | `"dome"` | `"fault"`).
+- **Censored** — still open when the run ended, so the outcome was never
+  observed. `Bout.dur` / a missing `taken_t` is `None` on purpose, never
+  `0`. Filter censored rows out of an average; do not fill them.
+  [README trap #4](../README.md#five-things-to-know-before-trusting-a-number).
+
+The diagram below is the first complete cycle of the bundled demo session
+(`Bandit_test_01`, run 2, node 1) — the same file `sfm-report --demo`
+uses. The cycle is the apparatus interval; the two bouts are the animal
+on top of it. The take happens while the dome is still up; presence
+clears a second later.
+
+```
+t (s)     20.0              30.2         37.8   39.9          47.1   48.3
+          |                 |            |      |             |      |
+cycle     [==== dispense ===][======= pellet available =======] take
+          cmd_t             ready_t                       taken_t = end_t
+presence                                 [======= at feeder =========]
+                                         Detected                    Cleared
+dome                                            [===== lid lifted ===]
+                                                Opened          closed
+```
+
+That same cycle as a `cycles_table()` row (phase timestamps omitted):
+
+```python
+{
+  "session": "Bandit_test_01", "run_id": 2, "node": 1, "index": 0,
+  "fed": True,
+  "cmd_t": 20.017, "ready_t": 30.235,
+  "first_presence_t": 37.802, "first_dome_t": 39.918, "taken_t": 47.069,
+  "end_t": 47.069, "censored": False,
+  "cycle_duration": 10.218,          # ready_t - cmd_t
+  "approach_latency": 7.567,         # first_presence_t - ready_t
+  "dome_latency": 9.683,             # first_dome_t - ready_t
+  "handling_time": 7.151,            # taken_t - first_dome_t
+  "retrieval_latency": 16.834,       # taken_t - ready_t
+}
+```
+
+And the overlapping presence bout from `bouts_table()`:
+
+```python
+{
+  "session": "Bandit_test_01", "run_id": 2, "kind": "presence", "node": 1,
+  "t0": 37.802, "t1": 48.268, "dur": 10.466,
+  "censored": False, "code": None, "inferred_close": None,
+}
+```
+
+Print them yourself with `load_session(str(DEMO_SESSION_PATH))` then
+`s.cycles_table()` / `s.bouts_table()` — same grounding rule as
+[§8](#8-designing-your-own-analysis-a-worked-example).
+
+### Derived numbers
+
+All four latencies are `None` unless every timestamp they need is present
+**and** in causal order (a take that precedes ready, e.g. from a stray
+sensor bounce, yields `None` rather than a negative number).
+
+| Name | = | Zero point | Question it answers |
+|---|---|---|---|
+| `cycle_duration` | `ready_t - cmd_t` | command | How long did the apparatus take to present? |
+| `approach_latency` | `first_presence_t - ready_t` | ready | How long until the mouse arrived? |
+| `dome_latency` | `first_dome_t - ready_t` | ready | How long until the lid lifted? |
+| `handling_time` | `taken_t - first_dome_t` | first dome | How long from lid-up until the pellet left? |
+| `retrieval_latency` | `taken_t - ready_t` | ready | How long from available until taken? |
+
+- **Funnel** (`metrics.InteractionFunnel`) — per-node conversion counts
+  built from cycles that reached ready: presented → approached (presence
+  while ready) → dome opened → taken, plus `approach_without_dome` /
+  `dome_without_take`. Use it for "what fraction of presentations got a
+  take", not for durations.
+- **Take rate** (`PelletAccounting.take_rate`) —
+  `taken_total / presented_total`, `None` if nothing was presented.
+- **Ledger vs seen counts** — `presented` / `taken` count rows *actually
+  in this log*. `presented_total` / `taken_total` use the base-station
+  ledger's gap-corrected total when available, so they also count pellets
+  whose own event frame never arrived. Prefer `*_total`.
+  [README trap #5](../README.md#five-things-to-know-before-trusting-a-number).
+- **Actogram** (`metrics.activity_by_day` / `timeline.actogram`) — one row
+  per rig-local calendar day, ticks at time-of-day of chosen CAN events
+  (default: presence onsets). Renders only when a run spans 2+ distinct
+  days. No light/dark shading: the rig does not record the facility's
+  light schedule.
+- **`BoutIssues`** (`orphan_closes`, `duplicate_opens`, `censored`) —
+  unpaired edges `metrics.bouts` refused to silently drop. A nonzero
+  value is a data-quality signal, not an internal counter. Surface it
+  before trusting bout durations.
+
+### Which object answers the question
+
+| Question | Table / object | Field |
+|---|---|---|
+| How long was the mouse at the feeder? | `bouts_table()`, `kind=="presence"` | `dur` |
+| How long was the dome open? | `bouts_table()`, `kind=="dome"` | `dur` |
+| How fast did the mouse retrieve the pellet? | `cycles_table()` | `retrieval_latency` |
+| How long from pellet-available to first approach? | `cycles_table()` | `approach_latency` |
+| How long from lid-up until the pellet left? | `cycles_table()` | `handling_time` |
+| Did it approach but never open the dome? | `cycles_table()` | `approached_without_dome` |
+| Was this cycle still open when the run ended? | `cycles_table()` | `censored` |
+| How long was a node in a fault? | `bouts_table()`, `kind=="fault"` | `dur` |
+| How many pellets were presented (best count)? | `metrics.pellets` | `presented_total` |
+| What fraction of presentations were taken? | `metrics.pellets` | `take_rate` |
+| When in the day did activity happen? | `metrics.activity_by_day` | `times` |
+| What experiment-engine events did this template log? | `events_table(source="EXP")` | `event_name` |
 
 ## 1. Which layer to work at
 
@@ -61,9 +249,9 @@ doesn't bloat the main log.
 |---|---|---|
 | `timestamp_iso` | rig-local wall-clock string, e.g. `2025-06-01T14:32:07.123` | Written with `datetime.fromtimestamp()` **on the rig**, so it's already correct local time — see [§7](#7-time-timezone-and-time-of-day) |
 | `timestamp_ms` | epoch milliseconds | Used to recompute `.t` on load; don't trust it for wall-clock display without knowing the rig's real-world offset |
-| `elapsed_s` | seconds since the row's *originating process* started | **Never read this directly** — it resets across a reopened session. Use `RunData` rows' `.t` instead (see trap #2 below) |
+| `elapsed_s` | seconds since the row's *originating process* started | **Never read this directly** — it resets across a reopened session. Use `RunData` rows' `.t` instead ([Vocabulary](#vocabulary); [README trap #2](../README.md#five-things-to-know-before-trusting-a-number)) |
 | `session` | the session name | Groups rows into files; combined with `run_id` for run-scoping |
-| `run_id` | increments each time a session is reopened | A single CSV can hold several runs — see trap #1 |
+| `run_id` | increments each time a session is reopened | A single CSV can hold several runs — [session vs run](#units-of-recording); [README trap #1](../README.md#five-things-to-know-before-trusting-a-number) |
 | `trial` | current trial number, `0` outside a trial | Convenience column; the authoritative trial boundary is the `trial` EXPERIMENT event |
 | `source` | `CAN` \| `EXP` \| `BNC` \| `SYS` | `CAN` = a **CAN event**: a message on the communication bus all nodes share (node hardware). `EXP` = experiment-engine. `BNC` = base-station photogate/beam-break. `SYS` = base-station lifecycle |
 | `direction` | `TX` \| `RX` \| `SYS` \| `LOCAL` | Bus direction for CAN frames; not meaningful for EXP rows |
@@ -200,8 +388,9 @@ since a silent `None → 0` is the easiest way to quietly corrupt an average.
 
 ### `Cycle` (`metrics.cycles`) — one dispense-and-retrieve cycle
 
-The central object: every timing metric in the report is a difference
-between two `Cycle` timestamps.
+What a cycle *is* (and how it differs from a bout) is in
+[Vocabulary](#vocabulary). Every timing metric in the report is a
+difference between two `Cycle` timestamps.
 
 | Field | Type | `None` means |
 |---|---|---|
@@ -214,7 +403,7 @@ between two `Cycle` timestamps.
 | `first_dome_t` | `float?` | dome never opened while this cycle was open |
 | `taken_t` | `float?` | pellet never taken (censored, or a no-feed cycle) |
 | `end_t` | `float` | when this cycle closed — by `Pellet Taken`, the next dispense command, or run end |
-| `censored` | `bool` | `True` = still open when the run ended, no outcome observed — see trap #4 |
+| `censored` | `bool` | `True` = still open when the run ended, no outcome observed — [Vocabulary](#vocabulary); [README trap #4](../README.md#five-things-to-know-before-trusting-a-number) |
 
 Derived properties (all `None` unless every timestamp they need is present
 **and** in causal order — a `taken_t` that precedes `ready_t`, e.g. from a
@@ -232,8 +421,10 @@ stray sensor bounce, yields `None` rather than a negative latency):
 
 ### `Bout` + `BoutIssues` (`metrics.presence`, `metrics.dome`)
 
-`Bout`: `node`, `t0`, `t1` (`None` if censored — still open at run end),
-`censored: bool`, `.dur` property (`None` when `t1` is `None`, never `0`).
+A bout is one continuous episode from a paired open/close edge — see
+[Vocabulary](#vocabulary). Fields: `node`, `t0`, `t1` (`None` if censored
+— still open at run end), `censored: bool`, `.dur` property (`None` when
+`t1` is `None`, never `0`).
 
 `BoutIssues`: `orphan_closes` (a close with no matching open), `duplicate_opens`
 (an open while already open), `censored` (count still-open at run end) — a
@@ -250,7 +441,9 @@ the node's next successful `Loaded` instead), `.dur` property.
 
 ### `PelletAccounting` (`metrics.pellets`, per node)
 
-Two independent pairs of counts exist **on purpose** (trap #5):
+Two independent pairs of counts exist **on purpose**
+([Vocabulary — ledger vs seen](#derived-numbers);
+[README trap #5](../README.md#five-things-to-know-before-trusting-a-number)):
 
 | Field | Meaning |
 |---|---|
@@ -355,7 +548,7 @@ questions:
 | Value | Meaning | Trap |
 |---|---|---|
 | `RunData` rows' `.t` | run-relative seconds, recomputed from `timestamp_ms` by `split_runs` | **This is what you want for any timing/latency math.** |
-| `elapsed_s` (raw CSV column) | seconds since the *originating process* started | Resets across a reopened session — never read directly (trap #2) |
+| `elapsed_s` (raw CSV column) | seconds since the *originating process* started | Resets across a reopened session — never read directly ([Vocabulary](#vocabulary); [README trap #2](../README.md#five-things-to-know-before-trusting-a-number)) |
 | `timestamp_ms` | epoch milliseconds | Correct for ordering; needs `utc_offset_s` to mean anything as wall-clock |
 | `timestamp_iso` (`row.iso`) | rig-local wall-clock string | Already correct local time, with **no offset needed** — see below |
 

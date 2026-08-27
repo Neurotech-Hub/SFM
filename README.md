@@ -35,7 +35,7 @@ The Arduino library is the `firmware/` folder (not the repo root). Copy or symli
 | [packages/dev_gui/deploy/README.md](packages/dev_gui/deploy/README.md) | One-time Raspberry Pi CAN HAT setup (`can0`) before running against real hardware |
 | [packages/dev_gui/base_station/experiment/README.md](packages/dev_gui/base_station/experiment/README.md) | How to author custom experiment templates (Python API + JSON params) |
 | [packages/sfm-analysis/README.md](packages/sfm-analysis/README.md) | Cross-platform session analysis and report generation — install, CLI, report design/section architecture, Python API |
-| [packages/sfm-analysis/docs/ANALYSIS_GUIDE.md](packages/sfm-analysis/docs/ANALYSIS_GUIDE.md) | Analysis reference: every log column, event name, derived metric field, and tidy-table column, plus a worked example |
+| [packages/sfm-analysis/docs/ANALYSIS_GUIDE.md](packages/sfm-analysis/docs/ANALYSIS_GUIDE.md) | Analysis reference: domain vocabulary (bout, cycle, ready, …), every log column, event name, derived metric field, and tidy-table column, plus a worked example |
 | [packages/sfm-analysis/docs/PYPI.md](packages/sfm-analysis/docs/PYPI.md) | Publishing `sfm-analysis` to PyPI (`pip install sfm-analysis`) |
 | [firmware/docs/WIRING.md](firmware/docs/WIRING.md) | Firmware pin names → physical jobs (motors, sensors, CAN, LEDs, discovery) |
 | [firmware/docs/DISPENSE_CYCLE.md](firmware/docs/DISPENSE_CYCLE.md) | How a node loads, raises, and reports pellet take / faults during a dispense |
