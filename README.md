@@ -3,6 +3,27 @@
 Spatial Foraging Platform: node firmware, base-station developer GUI, and
 session analysis. Each application lives in its own directory.
 
+# Project structure
+
+```
+VFM/
+├── firmware/                 # Arduino library (ESP32-S3 node)
+│   ├── src/                  # VFM.h / services / pin definitions
+│   ├── examples/             # Node sketch + hardware bring-up sketches
+│   ├── docs/                 # Wiring, dispense cycle, firmware tunables
+│   └── library.properties
+├── packages/
+│   ├── dev_gui/              # Raspberry Pi developer GUI + CAN tooling
+│   │   ├── experiments/      # JSON schemas for built-in experiments
+│   │   ├── examples/templates/  # Copy-from custom experiment starters
+│   │   └── base_station/experiment/  # Engine + templates (see its README)
+│   └── sfm-analysis/         # Cross-platform session analysis / report SDK
+│       ├── docs/ANALYSIS_GUIDE.md
+│       ├── docs/PYPI.md      # To publish a new sfm-analysis version (Developer only)
+│       └── examples/         # Analysis recipes + a custom report-design starter
+└── README.md
+```
+
 ## Launch the GUI
 
 ```
