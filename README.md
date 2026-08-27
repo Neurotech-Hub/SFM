@@ -1,4 +1,4 @@
-# VFM
+# SFM
 
 Spatial Foraging Platform: node firmware, base-station developer GUI, and
 session analysis. Each application lives in its own directory.
@@ -6,9 +6,9 @@ session analysis. Each application lives in its own directory.
 # Project structure
 
 ```
-VFM/
+SFM/
 ├── firmware/                 # Arduino library (ESP32-S3 node)
-│   ├── src/                  # VFM.h / services / pin definitions
+│   ├── src/                  # SFM.h / services / pin definitions
 │   ├── examples/             # Node sketch + hardware bring-up sketches
 │   ├── docs/                 # Wiring, dispense cycle, firmware tunables
 │   └── library.properties
@@ -27,14 +27,14 @@ VFM/
 ## Launch the GUI
 
 ```
-cd Project/VFM/packages/dev_gui
+cd Project/SFM/packages/dev_gui
 python run.py
 ```
 
 ## Generate a behavior report
 
 ```
-cd Project/VFM/packages/dev_gui
+cd Project/SFM/packages/dev_gui
 python run_report.py
 ```
 
@@ -44,9 +44,9 @@ Report generation itself is cross-platform — it doesn't need a Raspberry Pi or
 
 ## About
 
-VFM is a firmware library for the Spatial Foraging Platform node. It provides non-blocking, service-oriented stepper-driven pellet dispensing, and talks to the base station over **CAN** (Controller Area Network) — the shared communication bus every node is wired onto. A **CAN event** is a message a node posted on that bus (Loaded, Pellet Taken, Fault, …).
+SFM is a firmware library for the Spatial Foraging Platform node. It provides non-blocking, service-oriented stepper-driven pellet dispensing, and talks to the base station over **CAN** (Controller Area Network) — the shared communication bus every node is wired onto. A **CAN event** is a message a node posted on that bus (Loaded, Pellet Taken, Fault, …).
 
-The Arduino library is the `firmware/` folder (not the repo root). Copy or symlink `firmware/` into `Arduino/libraries/VFM`, or zip that folder and add it via *Sketch → Include Library → Add .ZIP Library…*.
+The Arduino library is the `firmware/` folder (not the repo root). Copy or symlink `firmware/` into `Arduino/libraries/SFM`, or zip that folder and add it via *Sketch → Include Library → Add .ZIP Library…*.
 
 ## Documentation
 
@@ -66,9 +66,9 @@ The Arduino library is the `firmware/` folder (not the repo root). Copy or symli
 ## Project structure
 
 ```
-VFM/
+SFM/
 ├── firmware/                 # Arduino library (ESP32-S3 node)
-│   ├── src/                  # VFM.h / services / pin definitions
+│   ├── src/                  # SFM.h / services / pin definitions
 │   ├── examples/             # Node sketch + hardware bring-up sketches
 │   ├── docs/                 # Wiring, dispense cycle, firmware tunables
 │   └── library.properties

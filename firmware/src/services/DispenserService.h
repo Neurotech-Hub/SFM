@@ -3,9 +3,9 @@
 #include <Arduino.h>
 #include <AccelStepper.h>
 #include "ServiceTypes.h"
-#include "../hardware/VFMPins.h"
+#include "../hardware/SFMPins.h"
 
-namespace vfm {
+namespace sfm {
 
 // ---------------------------------------------------------------------------
 // Tunable defaults (override before begin() via setters)
@@ -186,4 +186,4 @@ private:
     void beginOccupiedDispense();
 };
 
-} // namespace vfm
+} // namespace sfm

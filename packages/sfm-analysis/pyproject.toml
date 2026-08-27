@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sfm-analysis"
 version = "0.1.2"
-description = "Analysis and printable HTML behavior reports for SFM/VFM feeder session logs"
+description = "Analysis and printable HTML behavior reports for SFM feeder session logs"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -40,9 +40,9 @@ dev = ["pytest>=7.0"]
 all = ["sfm-analysis[pandas]"]
 
 [project.urls]
-Homepage = "https://github.com/Neurotech-Hub/VFM"
-Source = "https://github.com/Neurotech-Hub/VFM/tree/main/packages/sfm-analysis"
-Issues = "https://github.com/Neurotech-Hub/VFM/issues"
+Homepage = "https://github.com/Neurotech-Hub/SFM"
+Source = "https://github.com/Neurotech-Hub/SFM/tree/main/packages/sfm-analysis"
+Issues = "https://github.com/Neurotech-Hub/SFM/issues"
 
 [project.scripts]
 sfm-report = "sfm_analysis.cli.report:cli_main"

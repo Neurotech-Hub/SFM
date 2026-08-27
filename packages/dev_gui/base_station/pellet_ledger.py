@@ -22,7 +22,7 @@ event. A dropped ``Loaded`` frame is corrected by the next frame that carries
 the counter — the following ``DomeOpened``, ``PelletTaken``, or simply the next
 heartbeat — and the gap is reported so it lands in the log instead of vanishing.
 
-Which counter each frame carries (see ``VFM::sendDispenseEvent``):
+Which counter each frame carries (see ``SFM::sendDispenseEvent``):
 
 * ``PelletTaken`` carries ``takenCount_``; only it advances the taken counter.
 * Every other count-carrying event carries ``pelletCount_`` (pellets presented);

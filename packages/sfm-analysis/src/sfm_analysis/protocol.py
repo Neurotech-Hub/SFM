@@ -1,5 +1,5 @@
 """
-protocol.py — VFM CAN protocol constants and frame helpers.
+protocol.py — SFM CAN protocol constants and frame helpers.
 
 Python mirror of firmware/src/services/ServiceTypes.h and firmware/src/services/CanService.h.
 All CAN ID arithmetic and payload encoding/decoding lives here so every other
@@ -48,7 +48,7 @@ CAN_CMD_PURPOSE = {
 
 # Duration (ms) the status LED holds solid ON on a sync flash, for camera
 # alignment at session start. Clamp mirrors kMinSyncFlashMs/kMaxSyncFlashMs
-# in VFM.h.
+# in SFM.h.
 DEFAULT_SYNC_FLASH_MS = 500
 SYNC_FLASH_MIN_MS = 50
 SYNC_FLASH_MAX_MS = 5000

@@ -1,7 +1,7 @@
 #include "PresenceService.h"
 #include <math.h>
 
-namespace vfm {
+namespace sfm {
 
 // ---------------------------------------------------------------------------
 ServiceStatus PresenceService::begin() {
@@ -181,7 +181,7 @@ void PresenceService::finishCalibration() {
     // Single NVS transaction (not 3 separate begin/end round trips) — each
     // commit is a flash erase/write and can stall for a while if NVS needs
     // to compact a page, so cut that time to a third right before the
-    // non-blocking confirm blink in VFM::handlePresenceEvents().
+    // non-blocking confirm blink in SFM::handlePresenceEvents().
     prefs_.begin(kNvsNamespace, false);
     prefs_.putFloat(kNvsKeyPresenceMean, mean);
     prefs_.putFloat(kNvsKeyPresenceStd, stdDev);
@@ -227,4 +227,4 @@ void PresenceService::loadFromNvs() {
     prefs_.end();
 }
 
-} // namespace vfm
+} // namespace sfm

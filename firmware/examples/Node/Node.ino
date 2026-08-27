@@ -1,7 +1,7 @@
-// Node – Full VFM node sketch.
+// Node – Full SFM node sketch.
 //
 // Bring-up checklist:
-//   1. Flash to an ESP32-S3-MINI-1 with the VFM hardware attached.
+//   1. Flash to an ESP32-S3-MINI-1 with the SFM hardware attached.
 //   2. Open Serial Monitor at 115200 baud.
 //   3. On first boot the node has no ID; it will print "WaitAEI" until the
 //      base station (or the test bench) drives GPIO14 HIGH.
@@ -24,9 +24,9 @@
 //   Events    node->base : 0x300 + nodeId  on OnPlate/Loaded/DomeOpened/PelletTaken/Fault
 //   Discovery node<->base: 0x080-0x083
 
-#include <VFM.h>
+#include <SFM.h>
 
-vfm::VFM gVfm;
+sfm::SFM gSfm;
 
 // ---------------------------------------------------------------------------
 // Serial command helpers
@@ -45,70 +45,70 @@ static void printHelp() {
     Serial.println(F("  clr        clear NVS node ID (forces first-boot next reset)"));
 }
 
-static const char *discStr(vfm::DiscoveryState s) {
+static const char *discStr(sfm::DiscoveryState s) {
     switch (s) {
-        case vfm::DiscoveryState::WaitAEI:    return "WaitAEI";
-        case vfm::DiscoveryState::CheckNVS:   return "CheckNVS";
-        case vfm::DiscoveryState::Announce:   return "Announce";
-        case vfm::DiscoveryState::WaitAssign: return "WaitAssign";
-        case vfm::DiscoveryState::Rejoin:     return "Rejoin";
-        case vfm::DiscoveryState::Enabled:    return "Enabled";
+        case sfm::DiscoveryState::WaitAEI:    return "WaitAEI";
+        case sfm::DiscoveryState::CheckNVS:   return "CheckNVS";
+        case sfm::DiscoveryState::Announce:   return "Announce";
+        case sfm::DiscoveryState::WaitAssign: return "WaitAssign";
+        case sfm::DiscoveryState::Rejoin:     return "Rejoin";
+        case sfm::DiscoveryState::Enabled:    return "Enabled";
     }
     return "?";
 }
 
-static const char *stateStr(vfm::DispenseState s) {
+static const char *stateStr(sfm::DispenseState s) {
     switch (s) {
-        case vfm::DispenseState::Idle:        return "Idle";
-        case vfm::DispenseState::Seeking:  return "Seeking";
-        case vfm::DispenseState::Lowering:    return "Lowering";
-        case vfm::DispenseState::Loading:  return "Loading";
-        case vfm::DispenseState::Raising:     return "Raising";
-        case vfm::DispenseState::Loaded:   return "Loaded";
-        case vfm::DispenseState::Dwelling:    return "Dwelling";
-        case vfm::DispenseState::Fault:       return "Fault";
+        case sfm::DispenseState::Idle:        return "Idle";
+        case sfm::DispenseState::Seeking:  return "Seeking";
+        case sfm::DispenseState::Lowering:    return "Lowering";
+        case sfm::DispenseState::Loading:  return "Loading";
+        case sfm::DispenseState::Raising:     return "Raising";
+        case sfm::DispenseState::Loaded:   return "Loaded";
+        case sfm::DispenseState::Dwelling:    return "Dwelling";
+        case sfm::DispenseState::Fault:       return "Fault";
     }
     return "?";
 }
 
 static void printStatus() {
-    Serial.print(F("[VFM] nodeId="));   Serial.print(gVfm.identity().nodeId());
-    Serial.print(F(" discovery="));     Serial.print(discStr(gVfm.identity().discoveryState()));
-    Serial.print(F(" dispense="));      Serial.print(stateStr(gVfm.dispenser().state()));
-    Serial.print(F(" pellets="));       Serial.print(gVfm.dispenser().pelletCount());
-    Serial.print(F(" presence="));      Serial.print(gVfm.mousePresent());
-    Serial.print(F(" pellet="));        Serial.print(gVfm.dispenser().pelletOnPlate());
-    Serial.print(F(" load_position=")); Serial.print(gVfm.dispenser().atLoadPosition());
-    Serial.print(F(" dome_open="));      Serial.println(gVfm.dispenser().domeOpen());
+    Serial.print(F("[SFM] nodeId="));   Serial.print(gSfm.identity().nodeId());
+    Serial.print(F(" discovery="));     Serial.print(discStr(gSfm.identity().discoveryState()));
+    Serial.print(F(" dispense="));      Serial.print(stateStr(gSfm.dispenser().state()));
+    Serial.print(F(" pellets="));       Serial.print(gSfm.dispenser().pelletCount());
+    Serial.print(F(" presence="));      Serial.print(gSfm.mousePresent());
+    Serial.print(F(" pellet="));        Serial.print(gSfm.dispenser().pelletOnPlate());
+    Serial.print(F(" load_position=")); Serial.print(gSfm.dispenser().atLoadPosition());
+    Serial.print(F(" dome_open="));      Serial.println(gSfm.dispenser().domeOpen());
 }
 
 static void printPresence() {
     Serial.print(F("[PRESENCE] raw="));
-    Serial.print(gVfm.presenceRaw());
+    Serial.print(gSfm.presenceRaw());
     Serial.print(F("  thr="));
-    Serial.print(gVfm.presenceThreshold());
+    Serial.print(gSfm.presenceThreshold());
     Serial.print(F("  factor="));
-    Serial.print(gVfm.presence().factor(), 2);
-    if (gVfm.presence().hasCalStats()) {
+    Serial.print(gSfm.presence().factor(), 2);
+    if (gSfm.presence().hasCalStats()) {
         Serial.print(F("  mean="));
-        Serial.print(gVfm.presence().calMean(), 1);
+        Serial.print(gSfm.presence().calMean(), 1);
         Serial.print(F("  σ="));
-        Serial.print(gVfm.presence().calStdDev(), 1);
+        Serial.print(gSfm.presence().calStdDev(), 1);
     }
     Serial.print(F("  -> "));
-    Serial.println(gVfm.mousePresent() ? F("PRESENT") : F("clear"));
+    Serial.println(gSfm.mousePresent() ? F("PRESENT") : F("clear"));
 }
 
 // Report the outcome of a calibration started by serial or by the button.
 static void reportPresenceEvents() {
-    switch (gVfm.takePresenceEvent()) {
-        case vfm::PresenceEvent::CalibrationStarted:
+    switch (gSfm.takePresenceEvent()) {
+        case sfm::PresenceEvent::CalibrationStarted:
             Serial.print(F("[PRESENCE] CAL START - keep pad CLEAR for 5 s (LED9 solid)  factor="));
-            Serial.println(gVfm.presence().factor(), 2);
+            Serial.println(gSfm.presence().factor(), 2);
             break;
 
-        case vfm::PresenceEvent::CalibrationDone: {
-            const vfm::PresenceCalibration &c = gVfm.presence().lastCalibration();
+        case sfm::PresenceEvent::CalibrationDone: {
+            const sfm::PresenceCalibration &c = gSfm.presence().lastCalibration();
             Serial.print(F("[PRESENCE] CAL DONE  samples=")); Serial.print(c.samples);
             Serial.print(F("  mean=")); Serial.print(c.mean, 1);
             Serial.print(F("  std_dev=")); Serial.print(c.stdDev, 1);
@@ -119,7 +119,7 @@ static void reportPresenceEvents() {
             break;
         }
 
-        case vfm::PresenceEvent::CalibrationFailed:
+        case sfm::PresenceEvent::CalibrationFailed:
             Serial.println(F("[PRESENCE] CAL FAILED - not enough samples; threshold unchanged"));
             break;
 
@@ -138,28 +138,28 @@ static void handleSerialLine(const char *line) {
     if (strncmp(line, "id ", 3) == 0) {
         uint8_t id = (uint8_t)atoi(line + 3);
         if (id > 0) {
-            gVfm.identity().assignId(id);
+            gSfm.identity().assignId(id);
             Serial.print(F("Node ID set to ")); Serial.println(id);
         }
     } else if (strcmp(line, "d") == 0) {
-        if (gVfm.dispenser().dispense()) Serial.println(F("Dispense started."));
-        else { Serial.print(F("Cannot dispense - ")); Serial.println(stateStr(gVfm.dispenser().state())); }
+        if (gSfm.dispenser().dispense()) Serial.println(F("Dispense started."));
+        else { Serial.print(F("Cannot dispense - ")); Serial.println(stateStr(gSfm.dispenser().state())); }
     } else if (strcmp(line, "a") == 0) {
-        gVfm.dispenser().recover();
+        gSfm.dispenser().recover();
         Serial.println(F("Recovered."));
     } else if (strcmp(line, "s") == 0) {
         printStatus();
     } else if (strcmp(line, "cal") == 0) {
-        if (!gVfm.startPresenceCalibration()) {
+        if (!gSfm.startPresenceCalibration()) {
             Serial.println(F("[PRESENCE] Calibration already running"));
         }
     } else if (strcmp(line, "thr") == 0) {
         printPresence();
     } else if (strcmp(line, "factor") == 0) {
         Serial.print(F("[PRESENCE] factor="));
-        Serial.println(gVfm.presence().factor(), 2);
+        Serial.println(gSfm.presence().factor(), 2);
         Serial.println(F("Usage: factor <n>  (e.g. factor 3 or factor 2.5)"));
-        if (!gVfm.presence().hasCalStats()) {
+        if (!gSfm.presence().hasCalStats()) {
             Serial.println(F("No cal stats yet – run 'cal' or press button first to re-apply."));
         }
     } else if (strncmp(line, "factor ", 7) == 0) {
@@ -168,10 +168,10 @@ static void handleSerialLine(const char *line) {
         float f = strtof(p, &end);
         if (end == p || f <= 0.0f) {
             Serial.println(F("Invalid factor. Usage: factor <n>"));
-        } else if (!gVfm.presence().setFactor(f)) {
+        } else if (!gSfm.presence().setFactor(f)) {
             Serial.println(F("Invalid factor."));
         } else {
-            if (gVfm.presence().hasCalStats()) {
+            if (gSfm.presence().hasCalStats()) {
                 Serial.println(F("[PRESENCE] Factor saved; threshold re-applied from last cal."));
             } else {
                 Serial.println(F("[PRESENCE] Factor saved; run 'cal' to apply (no cal stats yet)."));
@@ -179,11 +179,11 @@ static void handleSerialLine(const char *line) {
             printPresence();
         }
     } else if (strcmp(line, "thrclr") == 0) {
-        gVfm.presence().clearStoredThreshold();
+        gSfm.presence().clearStoredThreshold();
         Serial.println(F("Saved presence cal cleared; using compile-time defaults."));
         printPresence();
     } else if (strcmp(line, "clr") == 0) {
-        gVfm.identity().clearId();
+        gSfm.identity().clearId();
         Serial.println(F("NVS id cleared. Node waits for AEI / discovery to ANNOUNCE."));
     } else if (strcmp(line, "h") == 0 || strcmp(line, "help") == 0) {
         printHelp();
@@ -196,24 +196,24 @@ static void handleSerialLine(const char *line) {
 void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
-    Serial.println(F("\n===== VFM Node ====="));
+    Serial.println(F("\n===== SFM Node ====="));
 
-    if (!gVfm.begin()) {
+    if (!gSfm.begin()) {
         Serial.println(F("WARNING: one or more services failed to initialise"));
     }
 
     // Print MAC UUID
-    const uint8_t *m = gVfm.identity().mac();
+    const uint8_t *m = gSfm.identity().mac();
     Serial.printf("MAC UUID: %02X:%02X:%02X:%02X:%02X:%02X\n",
                   m[0], m[1], m[2], m[3], m[4], m[5]);
-    Serial.printf("Saved nodeId: %d\n", gVfm.identity().nodeId());
+    Serial.printf("Saved nodeId: %d\n", gSfm.identity().nodeId());
     printPresence();
     Serial.println(F("BTN: click = presence calibration, 3 s hold = clear node ID"));
     Serial.println(F("Type 'h' for help."));
 }
 
 void loop() {
-    gVfm.update();
+    gSfm.update();
     reportPresenceEvents();
 
     // Non-blocking serial line reader

@@ -222,7 +222,7 @@ answer most real questions with the least code.
 
 | Layer | Type | Gets you | Module |
 |---|---|---|---|
-| CSV | text | The recorded truth. Every row VFM logged. | `report/demo/*.csv`, or your own session file |
+| CSV | text | The recorded truth. Every row SFM logged. | `report/demo/*.csv`, or your own session file |
 | `LogRow` | dataclass | One row, typed: `fields_json` decoded to `.fields`, hex decoded to `.raw_data`, `.t` filled in | `report.loader` |
 | `RunData` | dataclass | Rows scoped to one `(session, run_id)`, correctly time-ordered, `.t` recomputed from `timestamp_ms` | `report.session` |
 | `RunMetrics` | dataclass bundle | Reconstructed cycles, bouts, faults, pellet accounting — the numbers, computed once | `report.metrics` |

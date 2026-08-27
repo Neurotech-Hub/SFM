@@ -1,12 +1,12 @@
-#include "VFM.h"
+#include "SFM.h"
 
 
 
-namespace vfm {
+namespace sfm {
 
 
 
-VFM::VFM()
+SFM::SFM()
 
     : can_(),
 
@@ -26,7 +26,7 @@ VFM::VFM()
 
 // ---------------------------------------------------------------------------
 
-bool VFM::begin() {
+bool SFM::begin() {
 
     bool ok = true;
 
@@ -288,7 +288,7 @@ bool VFM::begin() {
 
 // ---------------------------------------------------------------------------
 
-void VFM::update() {
+void SFM::update() {
 
     can_.update();       // pump RX first so callbacks (discovery, commands) fire
 
@@ -373,7 +373,7 @@ void VFM::update() {
 
 
 
-void VFM::handleDispenserEvents() {
+void SFM::handleDispenserEvents() {
 
     DispenseEvent ev = dispenser_.takeEvent();
 
@@ -490,7 +490,7 @@ void VFM::handleDispenserEvents() {
 // OnPlate and Loaded milestones are sent by handleDispenserEvents().
 // ---------------------------------------------------------------------------
 
-void VFM::handleDispensePhaseEvents() {
+void SFM::handleDispensePhaseEvents() {
 
     if (!identity_.isEnabled() || can_.nodeId() == 0) return;
 
@@ -526,7 +526,7 @@ void VFM::handleDispensePhaseEvents() {
 }
 
 
-void VFM::sendPhaseEvent(CanEvent ev) {
+void SFM::sendPhaseEvent(CanEvent ev) {
 
     uint8_t extra[2];
     uint32_t count = dispenser_.pelletCount();
@@ -542,7 +542,7 @@ void VFM::sendPhaseEvent(CanEvent ev) {
 // path used by the GUI event log and circular input indicators.
 // ---------------------------------------------------------------------------
 
-void VFM::handleInputEvents() {
+void SFM::handleInputEvents() {
 
     // Do not publish operational events until this node has a valid CAN ID.
     if (!identity_.isEnabled() || can_.nodeId() == 0) return;
@@ -577,7 +577,7 @@ void VFM::handleInputEvents() {
 // bench sees one pattern for "stored something".
 // ---------------------------------------------------------------------------
 
-void VFM::handlePresenceEvents() {
+void SFM::handlePresenceEvents() {
 
     PresenceEvent ev = presence_.takeEvent();
     if (ev != PresenceEvent::None) {
@@ -588,7 +588,7 @@ void VFM::handlePresenceEvents() {
                 break;
 
             case PresenceEvent::CalibrationDone:
-                // Non-blocking blink (see calConfirmActive_ in VFM.h) instead
+                // Non-blocking blink (see calConfirmActive_ in SFM.h) instead
                 // of LedService::flashConfirm() — that call blocks on delay()
                 // for ~600ms, which stalled can_.update() and delayed the
                 // PresenceCalResult publish below by the same amount.
@@ -638,7 +638,7 @@ void VFM::handlePresenceEvents() {
 }
 
 
-PresenceEvent VFM::takePresenceEvent() {
+PresenceEvent SFM::takePresenceEvent() {
 
     PresenceEvent ev = pendingPresenceEvent_;
     pendingPresenceEvent_ = PresenceEvent::None;
@@ -646,7 +646,7 @@ PresenceEvent VFM::takePresenceEvent() {
 }
 
 
-void VFM::sendInputChanged(InputId input, bool active) {
+void SFM::sendInputChanged(InputId input, bool active) {
 
     uint8_t payload[2] = {
         static_cast<uint8_t>(input),
@@ -691,7 +691,7 @@ static HeartbeatPayload buildHeartbeat(const DispenserService &d, bool presence)
 
 
 
-void VFM::sendHeartbeatIfDue() {
+void SFM::sendHeartbeatIfDue() {
 
     if (!can_.heartbeatDue()) return;
 
@@ -701,7 +701,7 @@ void VFM::sendHeartbeatIfDue() {
 
 
 
-void VFM::sendHeartbeatNow() {
+void SFM::sendHeartbeatNow() {
 
     can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_.present()));
 
@@ -709,7 +709,7 @@ void VFM::sendHeartbeatNow() {
 
 
 
-void VFM::blinkStatusLedForPing() {
+void SFM::blinkStatusLedForPing() {
 
     // Don't interrupt a solid fault indication with a blink.
     if (dispenser_.state() == DispenseState::Fault) return;
@@ -722,7 +722,7 @@ void VFM::blinkStatusLedForPing() {
 
 
 
-void VFM::updatePingBlink() {
+void SFM::updatePingBlink() {
 
     if (!pingBlinkActive_) return;
 
@@ -737,7 +737,7 @@ void VFM::updatePingBlink() {
 
 
 
-void VFM::syncFlash(uint16_t durationMs) {
+void SFM::syncFlash(uint16_t durationMs) {
 
     // Don't interrupt a solid fault indication — it already holds the LED
     // solid ON for a different reason, and the flash would be invisible.
@@ -760,7 +760,7 @@ void VFM::syncFlash(uint16_t durationMs) {
 
 
 
-void VFM::updateSyncFlash() {
+void SFM::updateSyncFlash() {
 
     if (!syncFlashActive_) return;
 
@@ -774,7 +774,7 @@ void VFM::updateSyncFlash() {
 
 
 
-void VFM::updateCalConfirmBlink() {
+void SFM::updateCalConfirmBlink() {
 
     if (!calConfirmActive_) return;
 
@@ -798,7 +798,7 @@ void VFM::updateCalConfirmBlink() {
 // calibration capture, and its post-calibration confirm blink, all of which
 // keep it until they are done.
 
-void VFM::updateSensorLeds() {
+void SFM::updateSensorLeds() {
 
     leds_.setLed10(dispenser_.pelletOnPlate());
 
@@ -832,7 +832,7 @@ void VFM::updateSensorLeds() {
 
 // ---------------------------------------------------------------------------
 
-void VFM::updateButton() {
+void SFM::updateButton() {
 
     bool pressed = (digitalRead(PIN_BTN) == LOW);
 
@@ -913,13 +913,13 @@ void VFM::updateButton() {
 
 // ~600 ms total and only fires on a deliberate 3-second button hold.
 
-void VFM::flashLedsClear() {
+void SFM::flashLedsClear() {
     // Shared confirm pattern lives in LedService (also used by MousePresenceTest).
     leds_.flashConfirm();
 }
 
 
 
-} // namespace vfm
+} // namespace sfm
 
 

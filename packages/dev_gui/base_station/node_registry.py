@@ -39,7 +39,7 @@ def offline_timeout_for_heartbeat(hb_interval_s: float) -> float:
 
 @dataclass
 class NodeState:
-    """Live state for one VFM node."""
+    """Live state for one SFM node."""
 
     node_id: int
     label: str                              # user-editable (GUI-only)

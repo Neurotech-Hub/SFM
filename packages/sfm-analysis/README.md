@@ -1,13 +1,13 @@
 # sfm-analysis
 
 Cross-platform analysis and printable HTML behavior reports for
-[VFM](https://github.com/Neurotech-Hub/VFM) / SFM feeder session logs.
+[SFM](https://github.com/Neurotech-Hub/SFM) feeder session logs.
 Runs on Windows, macOS, and Linux — no Raspberry Pi, no hardware
 libraries. Pure standard library: no jinja2, no pandas, no matplotlib. A
 report is one self-contained HTML file with inline SVG charts, printable
 via Ctrl+P.
 
-This package is carved out of the VFM repository's `packages/dev_gui/`
+This package is carved out of the SFM repository's `packages/dev_gui/`
 (the Raspberry Pi base station that records the logs) precisely so that
 analysis doesn't have to happen on the Pi. The base station's own
 `run_report.py` is a thin wrapper around the CLI documented below.
@@ -21,7 +21,7 @@ pip install sfm-analysis
 To track `main` instead of a released version:
 
 ```bash
-pip install "git+https://github.com/Neurotech-Hub/VFM.git#subdirectory=packages/sfm-analysis"
+pip install "git+https://github.com/Neurotech-Hub/SFM.git#subdirectory=packages/sfm-analysis"
 ```
 
 ## Quick start
@@ -124,7 +124,7 @@ network to render or print.
 
 A report **design** (`report/designs/<name>.json`) declares which
 **sections** to render and in what order; sections are plain Python
-functions registered under `report/sections/`. This mirrors the VFM
+functions registered under `report/sections/`. This mirrors the SFM
 experiment engine's own JSON-schema/Python split (`base_station/experiment/`
 in the parent repo — `matches: []` in a design plays the same role as
 `build(**kwargs)` in an experiment template).
@@ -476,7 +476,7 @@ pytest
 
 ## Firmware/SDK version skew
 
-`sfm_analysis.protocol` is a Python mirror of the VFM firmware's
+`sfm_analysis.protocol` is a Python mirror of the SFM firmware's
 `firmware/src/services/ServiceTypes.h` and `firmware/src/services/CanService.h` (parent
 repo). Because this package now versions and ships independently of the
 firmware, it's possible for a base station running old firmware to be

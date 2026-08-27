@@ -99,7 +99,7 @@ sudo ip link set can0 type can bitrate 250000 loopback off
 sudo ip link set can0 up
 ```
 
-With at least one VFM node powered and connected, `candump can0` should show
+With at least one SFM node powered and connected, `candump can0` should show
 `080` (ANNOUNCE) or `083` (REJOIN) discovery frames, followed by `2xx`
 heartbeat frames at 1 Hz once the node is assigned an ID.
 

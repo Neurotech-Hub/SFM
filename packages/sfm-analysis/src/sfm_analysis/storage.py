@@ -1,4 +1,4 @@
-"""storage.py — find VFM session logs, cross-platform, read-only.
+"""storage.py — find SFM session logs, cross-platform, read-only.
 
 Resolution order:
 
@@ -10,7 +10,7 @@ Resolution order:
   3. ``~/sfm_logs``               — fallback, returned whether or not it
                                      exists
 
-This is deliberately a *reader's* resolver: unlike the VFM base station's
+This is deliberately a *reader's* resolver: unlike the SFM base station's
 own writer-side resolver (``base_station.storage.default_log_dir`` in the
 parent repo, which creates directories and writes a probe file to test
 writability), this function never touches the filesystem. Reading

@@ -5,7 +5,7 @@ Living note of firmware constants that may need changing after bench or field tw
 
 GUI / experiment / report defaults: [BASE_STATION_HARDCODED_VALUES.md](../../packages/dev_gui/docs/BASE_STATION_HARDCODED_VALUES.md).
 
-Pins (`VFMPins.h`) and CAN ID opcodes (`ServiceTypes.h`) are omitted unless they carry timing or motion meaning.
+Pins (`SFMPins.h`) and CAN ID opcodes (`ServiceTypes.h`) are omitted unless they carry timing or motion meaning.
 For what these timers guard and where they sit in the cycle, see [DISPENSE_CYCLE.md](DISPENSE_CYCLE.md).
 
 ---
@@ -164,16 +164,16 @@ the reading did not change, the decision boundary did.
 
 
 
-## UI / LED / button (`VFM`)
+## UI / LED / button (`SFM`)
 
 
 | Value          | Where                                 | Notes                                                                              |
 | -------------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
-| 3 s            | `VFM` ctor → `btnHoldMs_(3000)`       | Hold to arm NVS clear (`VFM.h` in-class default `1000` is overridden by ctor)      |
-| 50 ms          | `kBtnClickMinMs` (`VFM.h`)            | Minimum press for a click to count as "recalibrate presence"; shorter = bounce     |
-| 100 ms         | `VFM.cpp` LED9 blink while hold armed | Rapid blink warning                                                                |
+| 3 s            | `SFM` ctor → `btnHoldMs_(3000)`       | Hold to arm NVS clear (`SFM.h` in-class default `1000` is overridden by ctor)      |
+| 50 ms          | `kBtnClickMinMs` (`SFM.h`)            | Minimum press for a click to count as "recalibrate presence"; shorter = bounce     |
+| 100 ms         | `SFM.cpp` LED9 blink while hold armed | Rapid blink warning                                                                |
 | 1.5 s / 150 ms | `kPingBlinkMs` / `kPingBlinkPeriodMs` | Status LED “which node” blink on Ping                                              |
-| 500 ms (50–5000 ms clamp) | `kDefaultSyncFlashMs` / `kMinSyncFlashMs` / `kMaxSyncFlashMs` (`VFM.h`) | Status LED solid-ON hold on `CanCmd::SyncFlash` (camera sync at session start)     |
+| 500 ms (50–5000 ms clamp) | `kDefaultSyncFlashMs` / `kMinSyncFlashMs` / `kMaxSyncFlashMs` (`SFM.h`) | Status LED solid-ON hold on `CanCmd::SyncFlash` (camera sync at session start)     |
 | 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                               |
 | 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                       |
 | —              | LED9 during presence calibration      | Solid ON for the whole capture; yields back to the dome mirror when done            |

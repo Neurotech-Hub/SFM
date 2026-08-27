@@ -1,4 +1,4 @@
-"""logs.py — the canonical VFM session-log CSV schemas.
+"""logs.py — the canonical SFM session-log CSV schemas.
 
 The single definition of both CSV schemas this package may encounter,
 shared with every reader so a schema change can't silently drift:
