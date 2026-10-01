@@ -43,8 +43,8 @@ def _duration_ctx(tmp_path, duration_s, opts=None, t0_ms=1_700_000_000_000):
 def _multi_day_ctx(tmp_path, n_days=4, opts=None):
     day_ms = 24 * 3600 * 1000
     rows = [
-        input_changed_row(1_700_000_000_000 + day * day_ms + hour * 3600 * 1000,
-                           1, 4, True, "MousePresence Detected")
+        can_event_row(1_700_000_000_000 + day * day_ms + hour * 3600 * 1000,
+                      1, CanEvent.DomeOpened, bytes([1, 0, 1]))
         for day in range(n_days) for hour in (8, 20)
     ]
     path = write_session(tmp_path, rows, session="MD")
@@ -133,7 +133,9 @@ class TestActogram:
         assert result.empty is False
         # 4 lane labels rendered by charts.raster's own lane-label pass.
         assert result.html.count('text-anchor="end"') == 4
-        assert result.title == "Actogram — MousePresence Detected"
+        assert result.title == "Actogram — dome opened"
+        assert "Ticks:" in result.html
+        assert "dome opened" in result.html
 
     def test_heading_names_the_plotted_event(self, tmp_path):
         """A printed page must say which CAN EVENT the ticks are, not
@@ -142,14 +144,15 @@ class TestActogram:
         ctx = _multi_day_ctx(tmp_path, n_days=3)
         result = actogram_section(ctx)
         assert result.title.startswith("Actogram — ")
-        assert "MousePresence Detected" in result.title
-        assert "Each tick is a MousePresence Detected event" in result.html
+        assert "dome opened" in result.title
+        assert "Each tick is a dome opened event" in result.html
 
     def test_all_svgs_parse(self, tmp_path):
         ctx = _multi_day_ctx(tmp_path, n_days=3)
         result = actogram_section(ctx)
         svgs = re.findall(r"<svg.*?</svg>", result.html, re.DOTALL)
-        assert len(svgs) == 1
+        # The panel, plus the tick glyph in the legend above it.
+        assert len(svgs) == 2
         for s in svgs:
             ET.fromstring(s)
 
@@ -186,13 +189,13 @@ class TestActogram:
         result = actogram_section(ctx)
         # +1 for the SVG's own <title> (charts.svg's title= argument).
         assert result.html.count("<title>") == 4 * 2 + 1
-        assert "MousePresence Detected" in result.html
+        assert "dome opened" in result.html
 
     def test_event_names_option_plots_a_different_proxy(self, tmp_path):
         day_ms = 24 * 3600 * 1000
         t0 = 1_700_000_000_000
         rows = [
-            input_changed_row(t0 + day * day_ms, 1, 4, True, "MousePresence Detected")
+            can_event_row(t0 + day * day_ms, 1, CanEvent.DomeOpened, bytes([1, 0, 1]))
             for day in range(4)
         ] + [
             can_event_row(t0 + day * day_ms + 3600 * 1000, 1, CanEvent.PelletTaken, bytes([1, 0, 1]))
@@ -202,21 +205,21 @@ class TestActogram:
         loaded, _, _ = load_rows(path)
         runs = split_runs(loaded, [], path)
         metrics = [compute_run_metrics(r) for r in runs]
-        presence = SectionContext(runs=runs, metrics=metrics, combined=False,
-                                  align="relative", opts={})
+        default = SectionContext(runs=runs, metrics=metrics, combined=False,
+                                 align="relative", opts={})
         takes = SectionContext(runs=runs, metrics=metrics, combined=False,
                                align="relative",
                                opts={"event_names": ["Pellet Taken"]})
-        presence_html = actogram_section(presence).html
+        default_html = actogram_section(default).html
         takes_result = actogram_section(takes)
         takes_html = takes_result.html
-        assert takes_result.title == "Actogram — Pellet Taken"
-        assert "MousePresence Detected" in presence_html
-        assert "Pellet Taken" in takes_html
-        assert "MousePresence Detected" not in takes_html
-        # 4 days × 1 take each, plus the SVG title — not the 4 presence ticks.
+        assert takes_result.title == "Actogram — pellet taken"
+        assert "dome opened" in default_html
+        assert "pellet taken" in takes_html
+        assert "dome opened" not in takes_html
+        # 4 days × 1 event each, plus the SVG title.
         assert takes_html.count("<title>") == 4 + 1
-        assert presence_html.count("<title>") == 4 + 1
+        assert default_html.count("<title>") == 4 + 1
 
     def test_event_names_union_pools_several_events_as_one_series(self, tmp_path):
         day_ms = 24 * 3600 * 1000
@@ -238,8 +241,8 @@ class TestActogram:
         )
         result = actogram_section(ctx)
         assert result.empty is False
-        assert result.title == "Actogram — Pellet Taken, Dome Opened"
-        assert "Pellet Taken, Dome Opened" in result.html
+        assert result.title == "Actogram — pellet taken, dome opened"
+        assert "pellet taken, dome opened" in result.html
         # Both event types pooled into one tick series, not two.
         assert result.html.count("<title>") == 3 * 2 + 1
 

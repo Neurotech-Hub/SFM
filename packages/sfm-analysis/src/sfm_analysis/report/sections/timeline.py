@@ -1,11 +1,10 @@
 """sections/timeline.py — the session raster: the centerpiece of the report.
 
 One lane group per node (presence / dome / dispense-cycle / discrete
-events), plus a session-scope lane for trial boundaries and script
-health. This is what actually shows an experimenter that a session
-stalled for 24 minutes before the first trial, or that an animal ignored
-one node for half the run — the summary sections elsewhere are all
-derived from what's drawn here.
+events), plus a session-scope lane for trial boundaries. This is what
+actually shows an experimenter that an animal ignored one node for half
+the run — the summary sections elsewhere are all derived from what's
+drawn here.
 
 Long runs auto-paginate: a whole-run overview strip, then stacked
 ``window_s``-second detail panels — the print-native substitute for pan/
@@ -149,6 +148,16 @@ def _fmt_duration(seconds: float) -> str:
     return f"{s}s"
 
 
+def _actogram_tick_label(event_names: Sequence[str]) -> str:
+    """Short legend text for the events drawn as ticks."""
+    friendly = {
+        "Dome Opened": "dome opened",
+        "MousePresence Detected": "presence",
+        "Pellet Taken": "pellet taken",
+    }
+    return ", ".join(friendly.get(name, name) for name in event_names)
+
+
 def _actogram_panel(
     days,
     *,
@@ -195,7 +204,7 @@ def _actogram_panel(
 def _actogram_event_names(opts: dict) -> Tuple[str, ...]:
     """CAN EVENT display names that count as actogram ticks.
 
-    Default is presence onsets (``DEFAULT_ACTIVITY_EVENTS``). Design JSON
+    Default is dome openings (``DEFAULT_ACTIVITY_EVENTS``). Design JSON
     may pass ``event_names`` as a string or a list — several names are
     pooled into one series (union of ticks), not separate colours.
     """
@@ -219,12 +228,12 @@ def actogram_section(ctx: SectionContext) -> Optional[SectionResult]:
     over the session raster above it.
 
     ``event_names`` (design-JSON option) selects which CAN EVENT rows are
-    plotted; omit it to keep the presence-onset default. Multiple names
-    become one tick series. The section heading names those events so a
-    printed page is unambiguous about what the ticks are.
+    plotted; omit it to keep the dome-opening default. Multiple names
+    become one tick series. The section heading and the tick legend name
+    those events so a printed page is unambiguous about what the ticks are.
     """
     event_names = _actogram_event_names(ctx.opts)
-    event_label = ", ".join(event_names)
+    event_label = _actogram_tick_label(event_names)
     title = f"Actogram — {event_label}"
     figs = []
 
@@ -234,8 +243,9 @@ def actogram_section(ctx: SectionContext) -> Optional[SectionResult]:
             continue
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
         panel = _actogram_panel(days, event_label=event_label)
+        legend = charts.legend_glyphs([(event_label, "tick", 0)], prefix="Ticks:")
         figs.append(
-            f'{heading}<figure><figcaption>{len(days)} days.'
+            f'{heading}{legend}<figure><figcaption>{len(days)} days.'
             f'</figcaption>{panel}</figure>'
         )
 

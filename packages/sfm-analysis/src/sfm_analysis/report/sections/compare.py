@@ -66,7 +66,7 @@ def cohort_table_section(ctx: SectionContext) -> Optional[SectionResult]:
           <td>{_fmt_duration(median(latencies))}</td>
           <td>{_fmt_pct(safe_ratio(occ, run.duration_s))}</td>
           <td>{len(m.faults)}</td>
-          <td>{len(m.health.get('script_stalled', []))}</td>
+          <td>{len(m.health.get('pellet_lost', []))}</td>
           <td>{charts.sparkline(cumulative)}</td>
         </tr>
         """)
@@ -75,7 +75,7 @@ def cohort_table_section(ctx: SectionContext) -> Optional[SectionResult]:
     <table>
       <tr><th>Run</th><th>Subject</th><th>Day</th><th>Experiment</th><th>Duration</th>
           <th>Presented &rarr; Taken</th><th>Take rate</th><th>Median retrieval</th>
-          <th>Occupancy</th><th>Faults</th><th>Stalls</th><th>Cumulative</th></tr>
+          <th>Occupancy</th><th>Faults</th><th>Pellets lost</th><th>Cumulative</th></tr>
       {"".join(rows)}
     </table>
     """
@@ -204,14 +204,14 @@ def quality_matrix_section(ctx: SectionContext) -> Optional[SectionResult]:
     if len(ctx.runs) < 2:
         return SectionResult(section_id="compare.quality_matrix", title="Data Quality Matrix", html="", empty=True)
 
-    metrics_cols = ["script_stalled", "faults", "orphan closes", "post-session rows"]
+    metrics_cols = ["pellets lost", "faults", "orphan closes", "post-session rows"]
     runs_list = []
     matrix = []
     max_val = 1
     for run, m in zip(ctx.runs, ctx.metrics):
         _, presence_issues = m.presence
         row_vals = [
-            len(m.health.get("script_stalled", [])),
+            len(m.health.get("pellet_lost", [])),
             len(m.faults),
             presence_issues.orphan_closes,
             sum(1 for r in run.rows if r.post_session),
@@ -263,8 +263,8 @@ def cumulative_overlay_section(ctx: SectionContext) -> Optional[SectionResult]:
 
     html = f'<figure><figcaption>Alignment: <b>{escape_text(ctx.align)}</b>. ' \
           f'"relative" starts every run at its own session start; "event:&lt;name&gt;" starts every ' \
-          f'run at the first row named &lt;name&gt;, which is what makes a run with a long pre-trial ' \
-          f'stall comparable to a clean one.</figcaption>{legend}{chart}</figure>'
+          f'run at the first row named &lt;name&gt;, which is what makes a run with a long ' \
+          f'pre-trial gap comparable to a clean one.</figcaption>{legend}{chart}</figure>'
     return SectionResult(section_id="compare.cumulative_overlay", title="Cumulative Overlay", html=html)
 
 

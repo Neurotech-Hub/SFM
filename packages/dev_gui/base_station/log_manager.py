@@ -64,6 +64,34 @@ def sanitize_session_name(name: str) -> str:
 
 
 @dataclass
+class ResumeState:
+    """
+    Counters carried into the next run of an existing session file.
+
+    Each value is the sum, across every earlier run, of that run's own
+    progress: its high-water mark minus the offset recorded in its
+    ``session_resumed`` row (0 when the row is absent, as in logs written
+    before resume existed). ``from_run`` is the highest ``run_id`` already
+    in the file, or 0 when there is nothing to continue.
+    """
+
+    trials: int = 0
+    pellets: int = 0
+    node_pellets: Dict[int, int] = field(default_factory=dict)
+    node_taken: Dict[int, int] = field(default_factory=dict)
+    from_run: int = 0
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "trials": self.trials,
+            "pellets": self.pellets,
+            "node_pellets": dict(self.node_pellets),
+            "node_taken": dict(self.node_taken),
+            "from_run": self.from_run,
+        }
+
+
+@dataclass
 class LogEntry:
     """One logged CAN frame, experiment row, BNC edge, or sync marker."""
 
@@ -151,6 +179,7 @@ class LogManager:
         self._run_id: int = 0
         self._trial: int = 0
         self._session_start_ts: Optional[float] = None
+        self._resume_state: ResumeState = ResumeState()
 
         if auto_save:
             self._open_daily(log_dir)
@@ -246,6 +275,11 @@ class LogManager:
         return self._run_id
 
     @property
+    def resume_state(self) -> ResumeState:
+        """Counters to carry into the run ``open_session`` just opened. Empty before that."""
+        return self._resume_state
+
+    @property
     def is_named_session(self) -> bool:
         """True while the named experiment CSV is the active writer."""
         return self._sink_kind == "named" and self._csv_writer is not None
@@ -284,23 +318,27 @@ class LogManager:
         """
         sanitized = sanitize_session_name(session_name)
         if not sanitized:
-            return {"valid": False, "path": None, "will_create": True, "next_run_id": 1, "row_count": 0}
+            return {"valid": False, "path": None, "will_create": True, "next_run_id": 1, "row_count": 0,
+                    "resume": ResumeState().as_dict()}
         dir_path = Path(log_dir).expanduser().resolve()
         path = dir_path / f"{sanitized}.csv"
         if not path.exists():
-            return {"valid": True, "path": path, "will_create": True, "next_run_id": 1, "row_count": 0}
+            return {"valid": True, "path": path, "will_create": True, "next_run_id": 1, "row_count": 0,
+                    "resume": ResumeState().as_dict()}
         max_run_id, row_count, header_ok = self._scan_existing(path)
         if not header_ok:
             # A stale-format file of the same name — preview_session_path
             # mirrors open_session()'s decision to divert rather than clobber.
             diverted = dir_path / f"{sanitized}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            return {"valid": True, "path": diverted, "will_create": True, "next_run_id": 1, "row_count": 0}
+            return {"valid": True, "path": diverted, "will_create": True, "next_run_id": 1, "row_count": 0,
+                    "resume": ResumeState().as_dict()}
         return {
             "valid": True,
             "path": path,
             "will_create": False,
             "next_run_id": max_run_id + 1,
             "row_count": row_count,
+            "resume": self._scan_resume(path).as_dict(),
         }
 
     def open_session(self, session_name: str, log_dir: str) -> int:
@@ -332,11 +370,13 @@ class LogManager:
 
         run_id = 1
         mode = "w"
+        resume = ResumeState()
         if path.exists():
             max_run_id, _row_count, header_ok = self._scan_existing(path)
             if header_ok:
                 mode = "a"
                 run_id = max_run_id + 1
+                resume = self._scan_resume(path)
             else:
                 path = dir_path / f"{sanitized}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                 mode = "w"
@@ -354,6 +394,7 @@ class LogManager:
         self._run_id = run_id
         self._trial = 0
         self._session_start_ts = time.time()
+        self._resume_state = resume
 
         self.add(LogEntry(
             timestamp=self._session_start_ts,
@@ -397,6 +438,111 @@ class LogManager:
         except OSError:
             return 0, 0, False
         return max_run_id, row_count, header_ok
+
+    @staticmethod
+    def _scan_resume(path: Path) -> ResumeState:
+        """
+        Totals to carry into the next run of ``path``.
+
+        A run contributes ``high_water - offset``. The offset comes from that
+        run's ``session_resumed`` row and is 0 for a legacy run that restarted
+        its counters, so re-opening one of those files still continues from
+        the sum of what each run actually recorded.
+        """
+        header = LogManager.CSV_HEADER
+        try:
+            with open(path, "r", newline="") as f:
+                reader = csv.reader(f)
+                got = next(reader, None)
+                if got != header:
+                    return ResumeState()
+                idx = {name: header.index(name) for name in
+                       ("run_id", "trial", "node_id", "event_name", "fields_json")}
+                runs: Dict[int, Dict[str, Any]] = {}
+                for row in reader:
+                    if len(row) <= idx["fields_json"]:
+                        continue
+                    try:
+                        run_id = int(row[idx["run_id"]])
+                    except ValueError:
+                        continue
+                    if run_id <= 0:
+                        continue
+                    acc = runs.setdefault(run_id, {
+                        "trial": 0,
+                        "trial_offset": 0,
+                        "pellets": {},
+                        "taken": {},
+                        "pellets_offset": {},
+                        "taken_offset": {},
+                    })
+                    try:
+                        acc["trial"] = max(acc["trial"], int(row[idx["trial"]] or 0))
+                    except ValueError:
+                        pass
+                    fields = LogManager._parse_fields(row[idx["fields_json"]])
+                    try:
+                        node_id = int(row[idx["node_id"]] or 0)
+                    except ValueError:
+                        node_id = 0
+                    if node_id > 0:
+                        LogManager._take_max(acc["pellets"], node_id, fields.get("session_pellets"))
+                        LogManager._take_max(acc["taken"], node_id, fields.get("session_taken"))
+                    if row[idx["event_name"]] == "session_resumed":
+                        acc["trial_offset"] = LogManager._as_int(fields.get("trial_offset"))
+                        acc["pellets_offset"] = LogManager._int_map(fields.get("node_pellets_offset"))
+                        acc["taken_offset"] = LogManager._int_map(fields.get("node_taken_offset"))
+        except OSError:
+            return ResumeState()
+
+        state = ResumeState(from_run=max(runs) if runs else 0)
+        for acc in runs.values():
+            state.trials += max(0, acc["trial"] - acc["trial_offset"])
+            LogManager._add_progress(state.node_pellets, acc["pellets"], acc["pellets_offset"])
+            LogManager._add_progress(state.node_taken, acc["taken"], acc["taken_offset"])
+        state.pellets = sum(state.node_pellets.values())
+        return state
+
+    @staticmethod
+    def _parse_fields(raw: str) -> Dict[str, Any]:
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _as_int(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return 0
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return 0
+
+    @staticmethod
+    def _int_map(value: Any) -> Dict[int, int]:
+        if not isinstance(value, dict):
+            return {}
+        out: Dict[int, int] = {}
+        for key, item in value.items():
+            node = LogManager._as_int(key)
+            if node > 0:
+                out[node] = LogManager._as_int(item)
+        return out
+
+    @staticmethod
+    def _take_max(into: Dict[int, int], node: int, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        into[node] = max(into.get(node, 0), int(value))
+
+    @staticmethod
+    def _add_progress(total: Dict[int, int], high: Dict[int, int], offset: Dict[int, int]) -> None:
+        for node, hi in high.items():
+            total[node] = total.get(node, 0) + max(0, hi - offset.get(node, 0))
 
     def resume_daily(self, log_dir: Optional[str] = None) -> None:
         """

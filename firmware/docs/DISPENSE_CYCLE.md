@@ -258,7 +258,7 @@ until it receives `Recover`.
 | `FeedTimeout`      | M1 never confirmed a pellet on the plate — hopper empty / refill pellets                                   |
 | `ActuatorTimeout`  | M2 never reached its target (seek / lower / raise) — load-sensor issue or motor stuck                      |
 | `Jam`              | The load position sensor did not clear after the raise started; the plate is obstructed                    |
-| `PelletLost`       | The pellet left the plate during the raise                                                                 |
+| `PelletLost`       | The pellet left the plate during the raise. The base station reloads this automatically (Recover, then another dispense) and logs a warning; it only pauses the session after three consecutive losses on the same node |
 
 
 

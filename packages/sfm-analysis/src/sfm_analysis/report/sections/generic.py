@@ -83,7 +83,6 @@ def provenance_section(ctx: SectionContext) -> Optional[SectionResult]:
 
 def data_quality_section(ctx: SectionContext) -> Optional[SectionResult]:
     notes: List[str] = []
-    banners: List[str] = []
 
     for run, m in zip(ctx.runs, ctx.metrics):
         prefix = f"{run.run_label}: " if len(ctx.runs) > 1 else ""
@@ -122,18 +121,12 @@ def data_quality_section(ctx: SectionContext) -> Optional[SectionResult]:
         if post_session_rows:
             notes.append(f"{prefix}{post_session_rows} row(s) logged after session_end (excluded from rate denominators).")
 
-        if m.health.get("script_stalled"):
-            n = len(m.health["script_stalled"])
-            banners.append(f"{prefix}script_stalled fired {n} time(s) — the experiment script waited "
-                           f"on an event that never arrived. Check apparatus health below.")
-
-    banner_html = "".join(f'<div class="banner">{escape_text(b)}</div>' for b in banners)
     notes_html = "".join(f'<p class="note">{escape_text(n)}</p>' for n in notes) or '<p class="note">No data-quality issues detected.</p>'
 
     return SectionResult(
         section_id="generic.data_quality",
         title="Data Quality",
-        html=banner_html + notes_html,
+        html=notes_html,
         summary={"note_count": len(notes)},
         notes=notes,
     )
@@ -256,29 +249,30 @@ def interaction_funnel_section(ctx: SectionContext) -> Optional[SectionResult]:
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
         frame = Frame(h=220)
         nodes = sorted(m.funnel.keys())
-        stages = ["presented", "approached", "dome_opened", "taken"]
+        stages = ["loaded", "approached", "dome_opened", "taken"]
         cats = [f"node {n}" for n in nodes]
         series = [
             Series(stage.replace("_", " "), [getattr(m.funnel[n], stage) for n in nodes], key=i)
             for i, stage in enumerate(stages)
         ]
+        y_max = max((m.funnel[n].loaded for n in nodes), default=1) or 1
         chart = charts.svg(frame, charts.bars(frame, charts.linear(0, len(nodes), frame.px0, frame.px1),
-                                               charts.linear(0, max((getattr(m.funnel[n], "presented") for n in nodes), default=1) or 1,
-                                                             frame.py1, frame.py0),
+                                               charts.linear(0, y_max, frame.py1, frame.py0),
                                                cats, series), title="Interaction funnel")
         legend = charts.legend([(s.label, s.key) for s in series])
 
         rows = "".join(
-            f"<tr><td>{n}</td><td>{f.presented}</td><td>{f.approached}</td><td>{f.dome_opened}</td>"
-            f"<td>{f.taken}</td><td>{f.approach_without_dome}</td><td>{f.dome_without_take}</td></tr>"
+            f"<tr><td>{n}</td><td>{f.loaded}</td><td>{f.approached}</td><td>{f.dome_opened}</td>"
+            f"<td>{f.taken}</td><td>{f.approach_without_dome}</td><td>{f.dome_without_take}</td>"
+            f"<td>{f.no_feed_presented}</td></tr>"
             for n in nodes for f in [m.funnel[n]]
         )
         parts.append(f"""
         {heading}
         <figure>{legend}{chart}</figure>
         <table>
-          <tr><th>Node</th><th>Presented</th><th>Approached</th><th>Dome opened</th><th>Taken</th>
-              <th>Approach w/o dome</th><th>Dome w/o take</th></tr>
+          <tr><th>Node</th><th>Loaded</th><th>Approached</th><th>Dome opened</th><th>Taken</th>
+              <th>Approach w/o dome</th><th>Dome w/o take</th><th>No-feed presented</th></tr>
           {rows}
         </table>
         """)
@@ -366,7 +360,7 @@ def apparatus_health_section(ctx: SectionContext) -> Optional[SectionResult]:
 
     if not any_events:
         return SectionResult(section_id="generic.apparatus_health", title="Apparatus Health",
-                              html="<p>No vetoes, stalls, or script errors recorded.</p>")
+                              html="<p>No vetoes or script errors recorded.</p>")
 
     return SectionResult(section_id="generic.apparatus_health", title="Apparatus Health", html="".join(parts))
 

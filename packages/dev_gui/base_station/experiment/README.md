@@ -393,7 +393,8 @@ Register with `@exp.on(EventKind.X)` or the sugar decorators. Handlers receive
 | `@exp.on_feed_skipped`                        | `FEED_SKIPPED`                  | plate already occupied when dispensed                                   |
 | `@exp.on_no_feed_presented`                   | `NO_FEED_PRESENTED`             | a no-feed dispense finished raising an empty plate                      |
 | `@exp.on_dome_opened` / `@exp.on_dome_closed` | `DOME_OPENED` / `DOME_CLOSED`   | derived from the dome sensor                                            |
-| `@exp.on_fault`                               | `FAULT`                         | `fault_code` (`FeedTimeout` / `ActuatorTimeout` / `Jam` / `PelletLost`) |
+| `@exp.on_fault`                               | `FAULT`                         | `fault_code` (`FeedTimeout` / `ActuatorTimeout` / `Jam`). `PelletLost` is absorbed before this fires |
+| `@exp.on_pellet_lost`                         | `PELLET_LOST`                   | auto-reload of a dropped pellet: `warning`, `attempt`, `action` (`reload` or `halted`) |
 | `@exp.on_recover`                             | `NODE_RECOVERED`                | fired when an operator recovers a node                                  |
 | `@exp.on_bnc_in`                              | `BNC_IN`                        | `channel` (0/1), `edge` ("rising"/"falling"), `high`                    |
 | `@exp.on_presence_changed`                    | `PRESENCE_CHANGED`              |                                                                         |
@@ -473,8 +474,8 @@ or an `EventKind`. `node` restricts to one id or a list; omit for any node.
 - `control.wait_until(predicate, timeout=None, node=None, label=None)` — wait until
 `predicate(control)` returns True (checked every tick). Pass `node=` only if
 this wait should also abort when that node faults. Pass `label=` so
-`script_stalled` / `script_timeout` name the wait (`"plates_clear"`) instead
-of logging an unlabeled lambda as `condition`.
+`script_timeout` / `script_await_aborted` name the wait (`"plates_clear"`)
+instead of logging an unlabeled lambda as `condition`.
 - `control.wait(seconds)` — wait a fixed duration on the runner clock.
 
 Each `yield` returns the same object, with fields filled in once it resolves:

@@ -24,6 +24,7 @@ from typing import (
 from ..can_manager import CanManager
 from ..io_manager import IOManager
 from ..node_registry import DEFAULT_OFFLINE_TIMEOUT_S
+from ..protocol import ServiceStatus
 from .context import ExperimentControl
 from .events import EventKind, EventNormalizer, NodeEvent
 from .script import ScriptFn, ScriptScheduler
@@ -140,6 +141,10 @@ class Experiment:
     def on_fault(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.FAULT)(fn)
 
+    def on_pellet_lost(self, fn: EventCb) -> EventCb:
+        """Fired when a pellet falls off during the raise and is auto-reloaded."""
+        return self.on(EventKind.PELLET_LOST)(fn)
+
     def on_recover(self, fn: EventCb) -> EventCb:
         """Fired when an operator recovers a faulted node (re-arm the node here)."""
         return self.on(EventKind.NODE_RECOVERED)(fn)
@@ -247,6 +252,7 @@ class ExperimentRunner:
         self._active = False
         self._finished = False
         self._started = False
+        self._resume = None
         self._owns_can = False
         self._bnc_queue: List[NodeEvent] = []
 
@@ -277,16 +283,19 @@ class ExperimentRunner:
     def is_finished(self) -> bool:
         return self._finished
 
-    def start(self, now: Optional[float] = None) -> None:
+    def start(self, now: Optional[float] = None, resume: Any = None) -> None:
         """
         Begin watching start conditions (or activate immediately if none).
 
-        Call once before stepping. Does not open CAN — call ``open()`` first
-        if you need a live bus.
+        ``resume`` is a ``ResumeState`` (or anything with the same fields)
+        from the log of a previous run of this session name. When ``from_run``
+        is set, the trial and pellet counters continue from it and a
+        ``session_resumed`` row records the offsets.
         """
         if self._started:
             return
         self._started = True
+        self._resume = resume
         now = now if now is not None else time.time()
         self.ctx.set_now(now)
         # If no start_when, activate immediately.
@@ -455,6 +464,8 @@ class ExperimentRunner:
                 self.ctx.on_session_start()
             except Exception as exc:  # noqa: BLE001
                 self.ctx.log("callback_error", error=str(exc))
+        if self._apply_resume(now):
+            return
         for cb in self.experiment._on_start:
             self._safe_call_start(cb)
         self._fire_handlers(start_ev)
@@ -485,6 +496,36 @@ class ExperimentRunner:
                 self._safe_call_start(cb)
             self.ctx.end()
 
+    def _apply_resume(self, now: float) -> bool:
+        """
+        Carry trial and pellet counters in from the previous run.
+
+        Returns True when the pellet cap is already met, in which case the
+        session has been ended and the caller must not start the script.
+        """
+        resume = self._resume
+        if resume is None or not int(getattr(resume, "from_run", 0) or 0):
+            return False
+        trials = int(getattr(resume, "trials", 0) or 0)
+        pellets = int(getattr(resume, "pellets", 0) or 0)
+        node_pellets = getattr(resume, "node_pellets", {}) or {}
+        node_taken = getattr(resume, "node_taken", {}) or {}
+        self.ctx.resume_from(trials=trials, pellets=pellets)
+        self.ctx.log(
+            "session_resumed",
+            from_run=int(resume.from_run),
+            trial_offset=trials,
+            pellets_offset=pellets,
+            node_pellets_offset={int(k): int(v) for k, v in node_pellets.items()},
+            node_taken_offset={int(k): int(v) for k, v in node_taken.items()},
+        )
+        cap = self.experiment._end_pellets
+        if cap is not None and self.ctx.counter("pellets") >= cap:
+            self.ctx.stop("pellet_cap_reached_on_resume")
+            self._deactivate(now)
+            return True
+        return False
+
     def _dispatch_all(self, events: List[NodeEvent], now: float) -> None:
         # Waiting for start_when?
         if self._started and not self._active and not self._finished:
@@ -509,11 +550,19 @@ class ExperimentRunner:
             # Auto-count Loaded milestones for end_after(pellets=...).
             if ev.kind == EventKind.LOADED:
                 self.ctx.incr("pellets")
-            # Sticky per-node fault: halt just this node (cancel its timers,
-            # make its dispenses no-ops) before user handlers run. The rest of
-            # the experiment keeps running until an operator recovers the node.
+                self.ctx.note_pellet_loaded(ev.node_id)
+            # A pellet that falls off during the raise is reloaded in place.
+            # Anything else latches the node halted before user handlers run.
             elif ev.kind == EventKind.FAULT:
-                self.ctx.halt_node(ev.node_id)
+                if self._is_pellet_lost(ev) and self.ctx.absorb_pellet_lost(ev.node_id):
+                    ev = NodeEvent(
+                        kind=EventKind.PELLET_LOST,
+                        node_id=ev.node_id,
+                        timestamp=ev.timestamp,
+                        data=dict(ev.data),
+                    )
+                else:
+                    self.ctx.halt_node(ev.node_id)
             self._fire_handlers(ev)
             if self.script is not None:
                 self.script.observe(ev)
@@ -524,6 +573,11 @@ class ExperimentRunner:
         # budgets (MAX_ADVANCES_PER_TICK each) on every idle tick.
         if events and self.script is not None and self._active and not self._finished:
             self.script.advance(now)
+
+    @staticmethod
+    def _is_pellet_lost(ev: NodeEvent) -> bool:
+        code = ev.data.get("fault_code")
+        return code == ServiceStatus.PelletLost or code == ServiceStatus.PelletLost.name
 
     def _fire_handlers(self, ev: NodeEvent) -> None:
         for cb in self.experiment._handlers.get(ev.kind, []):

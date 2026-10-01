@@ -306,8 +306,8 @@ def test_startup_sweep_waits_for_occupied_plate() -> None:
     assert runner.ctx.trial == 1
 
 
-def test_plate_occupied_stall_names_the_wait() -> None:
-    """script_stalled must say plates_clear, not <lambda>."""
+def test_plate_occupied_wait_stays_quiet_and_blocks_the_trial() -> None:
+    """An occupied plate holds the trial loop without a stall log row."""
     exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
     runner = exp.make_runner()
     runner.start(now=0.0)
@@ -318,10 +318,8 @@ def test_plate_occupied_stall_names_the_wait() -> None:
     ])
     assert [e for e in runner.ctx.log_entries if e.name == "plate_occupied_wait"]
 
-    runner.step(now=120.0)
-    stalls = [e for e in runner.ctx.log_entries if e.name == "script_stalled"]
-    assert len(stalls) == 1
-    assert stalls[0].fields["waiting_on"] == "plates_clear(node=1,2)"
+    runner.step(now=600.0)
+    assert not [e for e in runner.ctx.log_entries if e.name == "script_stalled"]
     assert runner.ctx.trial == 0
 
 
@@ -391,3 +389,62 @@ def test_mimic_off_sends_only_the_fed_dispense() -> None:
     assert len(_dispense_cmds(runner)) == 1
     assert _dispense_cmds(runner)[0][0] == 1
     assert _no_feed_cmds(runner) == []
+
+
+def _pellet_lost(node: int, ts: float) -> NodeEvent:
+    from base_station.protocol import ServiceStatus
+    return NodeEvent(
+        EventKind.FAULT, node_id=node, timestamp=ts,
+        data={"fault_code": ServiceStatus.PelletLost},
+    )
+
+
+def test_pellet_lost_reruns_both_arms_without_pausing() -> None:
+    """A dropped pellet reloads the whole cycle: mimic first, then the fed arm."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    runner.inject(_pellet_lost(1, 1.0))
+    assert not runner.ctx.is_halted(1)
+    assert [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"] == []
+    lost = [e for e in runner.ctx.log_entries if e.name == "pellet_lost"]
+    assert lost[-1].fields["action"] == "reload"
+    # The mimic is still raising, so nothing is re-commanded yet.
+    assert len(_dispense_cmds(runner)) == 1
+    assert len(_no_feed_cmds(runner)) == 1
+
+    runner.inject(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=1.5))
+    kinds = [c[1] for c in runner.ctx.commands_sent
+             if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)]
+    assert kinds[-2:] == [CanCmd.DispenseNoFeed, CanCmd.Dispense]
+    assert _no_feed_cmds(runner)[-1][0] == 2
+    assert _dispense_cmds(runner)[-1][0] == 1
+    retry = [e for e in runner.ctx.log_entries if e.name == "cycle_retry"]
+    assert len(retry) == 1
+    assert retry[0].fields["attempt"] == 1
+    assert runner.ctx.trial == 1
+
+
+def test_third_consecutive_pellet_lost_halts_and_pauses() -> None:
+    exp = build_bandit(
+        nodes=[1, 2], p_high=1.0, block_size=50,
+        next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    runner.inject(_pellet_lost(1, 1.0))
+    runner.inject(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=1.5))
+    runner.inject(_pellet_lost(1, 2.0))
+    runner.inject(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=2.5))
+    runner.inject(_pellet_lost(1, 3.0))
+
+    actions = [e.fields["action"] for e in runner.ctx.log_entries if e.name == "pellet_lost"]
+    assert actions == ["reload", "reload", "halted"]
+    assert runner.ctx.is_halted(1)
+    paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
+    assert len(paused) == 1
+    assert runner.ctx.trial == 1

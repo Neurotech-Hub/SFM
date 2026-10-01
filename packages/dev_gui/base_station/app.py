@@ -958,10 +958,17 @@ class SFMApp:
         if info["will_create"]:
             dpg.set_value("exp_session_hint", f"→ will create {info['path']}")
         else:
+            resume = info.get("resume") or {}
+            extra = ""
+            if resume.get("from_run"):
+                nxt = int(resume.get("trials") or 0) + 1
+                loaded = int(resume.get("pellets") or 0)
+                taken = sum(int(v) for v in (resume.get("node_taken") or {}).values())
+                extra = f", resuming at trial {nxt}, pellets {loaded} → {taken}"
             dpg.set_value(
                 "exp_session_hint",
                 f"→ appending to {info['path']} (run {info['next_run_id']}, "
-                f"{info['row_count']:,} existing row(s))",
+                f"{info['row_count']:,} existing row(s){extra})",
             )
 
     # ------------------------------------------------------------------
@@ -1197,9 +1204,18 @@ class SFMApp:
             run_id = self._log.open_session(sanitized, self._exp_log_dir)
             self._log.set_context(session=sanitized, run_id=run_id, trial=0, session_start_ts=time.time())
 
-        # Fresh run, fresh pellet numbers. Nodes keep counting from power-on;
-        # this is what makes the first pellet of the run pellet 1 in the log.
-        self._pellets.reset()
+        # Continue the pellet numbers when this session name already has a
+        # log. Nodes keep counting from power-on; the baseline is what makes
+        # the next pellet one past the last run instead of pellet 1 again.
+        resume = self._log.resume_state if self._log is not None else None
+        baseline = None
+        if resume is not None and resume.from_run:
+            nodes_seen = set(resume.node_pellets) | set(resume.node_taken)
+            baseline = {
+                n: (resume.node_pellets.get(n, 0), resume.node_taken.get(n, 0))
+                for n in nodes_seen
+            }
+        self._pellets.reset(baseline)
 
         # Re-push GUI heartbeat interval so experiment runs never inherit the
         # firmware 5s default, and align experiment offline detection to 3× HB.
@@ -1213,6 +1229,7 @@ class SFMApp:
             log=self._log,
             on_session_start=self._fire_sync_marker,
             online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
+            resume=resume if resume is not None and resume.from_run else None,
         )
         if ok:
             # One ledger for the run: the experiment callbacks see the same

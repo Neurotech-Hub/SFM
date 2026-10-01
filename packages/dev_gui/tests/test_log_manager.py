@@ -368,3 +368,74 @@ class TestResumeDaily:
         assert "Run1" in names and "Run2" in names
         assert rows[-1]["run_id"] == "2"
         assert all(r["event_name"] != "PostStopCommand" for r in rows)
+
+
+def _pellet_row(node: int, pellets: int, taken: int, trial: int) -> LogEntry:
+    return make_entry(
+        node_id=node,
+        frame_type="EVENT",
+        event_name="Loaded",
+        trial=trial,
+        fields={"session_pellets": pellets, "session_taken": taken},
+    )
+
+
+def test_resume_scan_sums_legacy_runs_that_restarted_at_zero(tmp_path):
+    """A file written before resume existed: each run's own high-water mark adds up."""
+    lm = LogManager(auto_save=False)
+    lm.open_session("cohortA", str(tmp_path))
+    lm.set_context(trial=4)
+    lm.add(_pellet_row(1, 3, 2, 4))
+    lm.add(_pellet_row(2, 1, 1, 4))
+    lm.close()
+
+    lm2 = LogManager(auto_save=False)
+    lm2.open_session("cohortA", str(tmp_path))
+    lm2.set_context(trial=2)
+    lm2.add(_pellet_row(1, 2, 2, 2))
+    lm2.close()
+
+    info = LogManager(auto_save=False).preview_session_path("cohortA", str(tmp_path))
+    resume = info["resume"]
+    assert info["next_run_id"] == 3
+    assert resume["from_run"] == 2
+    assert resume["trials"] == 6
+    assert resume["node_pellets"] == {1: 5, 2: 1}
+    assert resume["node_taken"] == {1: 4, 2: 1}
+    assert resume["pellets"] == 6
+
+
+def test_resume_scan_subtracts_session_resumed_offsets(tmp_path):
+    """A continuous file must not count the carried-in total twice."""
+    lm = LogManager(auto_save=False)
+    lm.open_session("cohortA", str(tmp_path))
+    lm.set_context(trial=4)
+    lm.add(_pellet_row(1, 3, 2, 4))
+    lm.close()
+
+    lm2 = LogManager(auto_save=False)
+    assert lm2.open_session("cohortA", str(tmp_path)) == 2
+    state = lm2.resume_state
+    assert state.trials == 4
+    assert state.node_pellets == {1: 3}
+    lm2.add(make_entry(
+        source="EXP", frame_type="EXPERIMENT", event_name="session_resumed",
+        node_id=0, trial=4,
+        fields={
+            "from_run": 1,
+            "trial_offset": 4,
+            "pellets_offset": 3,
+            "node_pellets_offset": {1: 3},
+            "node_taken_offset": {1: 2},
+        },
+    ))
+    lm2.set_context(trial=7)
+    lm2.add(_pellet_row(1, 6, 5, 7))
+    lm2.close()
+
+    resume = LogManager(auto_save=False).preview_session_path("cohortA", str(tmp_path))["resume"]
+    assert resume["trials"] == 7
+    assert resume["node_pellets"] == {1: 6}
+    assert resume["node_taken"] == {1: 5}
+    assert resume["pellets"] == 6
+    assert resume["from_run"] == 2

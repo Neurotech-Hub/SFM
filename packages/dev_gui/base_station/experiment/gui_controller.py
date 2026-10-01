@@ -61,6 +61,7 @@ class ExperimentController:
         log: Optional[LogManager] = None,
         on_session_start: Optional[Callable[[], None]] = None,
         online_timeout_s: Optional[float] = None,
+        resume: Any = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
@@ -88,7 +89,7 @@ class ExperimentController:
         runner.ctx.on_session_start = on_session_start
         self._runner = runner
         self._exp_def = exp_def
-        runner.start()
+        runner.start(resume=resume)
         return True
 
     def stop(self) -> None:

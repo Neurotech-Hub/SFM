@@ -186,8 +186,8 @@ clock-time assumption rendered as though it were measured data. Time of
 day is on the axis; apply your own light cycle to it if you need one.
 
 The section heading and figure caption both name the plotted event
-(`Actogram — MousePresence Detected` by default) so a printed page is
-unambiguous about what each tick is. Ticks default to presence onsets.
+(`Actogram — dome opened` by default) so a printed page is
+unambiguous about what each tick is. Ticks default to dome openings.
 You can remap them **without editing the installed package** — see
 [Customize the actogram](#customize-the-actogram) below.
 

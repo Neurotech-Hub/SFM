@@ -36,27 +36,23 @@ def _kpi_band(runs: List[RunData], metrics: List[RunMetrics]) -> str:
     total_presented = sum(sum(a.presented_total for a in m.pellets.values()) for m in metrics)
     total_taken = sum(sum(a.taken_total for a in m.pellets.values()) for m in metrics)
     total_duration = sum(r.duration_s for r in runs)
-    total_stalled = sum(len(m.health.get("script_stalled", [])) for m in metrics)
     total_faults = sum(len(m.faults) for m in metrics)
 
     take_rate = f"{(total_taken / total_presented * 100):.0f}%" if total_presented else "—"
-
-    first_trial_t: Optional[float] = None
-    for run in runs:
-        trials = run.exp("trial")
-        if trials:
-            first_trial_t = trials[0].t
-            break
+    total_reloaded = sum(
+        1
+        for run in runs
+        for row in run.exp("pellet_lost")
+        if str(row.fields.get("action", "")) == "reload"
+    )
 
     tiles = [
         charts.kpi("Runs", str(len(runs))),
         charts.kpi("Duration", _fmt_duration(total_duration)),
         charts.kpi("Pellets presented → taken", f"{total_presented} → {total_taken}", sub=f"take rate {take_rate}"),
     ]
-    if first_trial_t is not None:
-        tiles.append(charts.kpi("Time to first trial", _fmt_duration(first_trial_t)))
-    if total_stalled:
-        tiles.append(charts.kpi("script_stalled events", str(total_stalled), severity="warning"))
+    if total_reloaded:
+        tiles.append(charts.kpi("Pellets lost (auto-reloaded)", str(total_reloaded), severity="warning"))
     if total_faults:
         tiles.append(charts.kpi("Fault intervals", str(total_faults), severity="serious"))
 

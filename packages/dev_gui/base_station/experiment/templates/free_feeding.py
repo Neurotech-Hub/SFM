@@ -5,9 +5,12 @@ Behavior:
   1. On session start, dispense a pellet on every configured node.
   2. On PelletTaken, wait the shared next-trial advance (``fixed_delay`` or
      ``presence_clear``) then re-dispense that node.
-  3. On Fault (jam / timeout / pellet lost), the whole session pauses —
-     no node reloads — until an operator **Recover**. The faulted node is
-     **halted** (latched); ``on_recover`` re-dispenses it once every
+  3. A pellet that falls off during the raise is reloaded by the runner
+     (Recover, then another dispense) and logged as a warning. It does not
+     pause the session. After three consecutive losses on the same node the
+     runner stops absorbing them, and the fault pauses the session like any
+     other fault (jam / timeout) until an operator **Recover**. The faulted
+     node is **halted** (latched); ``on_recover`` re-dispenses it once every
      session node is healthy again.
   4. End after ``duration`` and/or when total `Loaded` milestones reaches
      ``max_pellets``.

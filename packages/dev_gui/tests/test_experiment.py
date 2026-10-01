@@ -1370,3 +1370,84 @@ def test_experiment_commands_appear_under_command_filter() -> None:
     # It must NOT also appear as a generic EXPERIMENT row (no duplication).
     exp_rows = [e for e in log.all_entries() if e.frame_type == "EXPERIMENT"]
     assert not any(e.event_name == "command" for e in exp_rows)
+
+
+def test_free_feeding_pellet_lost_redispenses_without_pausing() -> None:
+    exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    before = [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense]
+
+    runner.inject(
+        NodeEvent(
+            EventKind.FAULT, node_id=1, timestamp=1.0,
+            data={"fault_code": ServiceStatus.PelletLost},
+        )
+    )
+    dispenses = [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense]
+    assert len(dispenses) == len(before) + 1
+    assert not runner.ctx.is_halted(1)
+    lost = [e for e in runner.ctx.log_entries if e.name == "pellet_lost"]
+    assert lost[-1].fields["action"] == "reload"
+    assert [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"] == []
+
+
+def test_free_feeding_third_consecutive_pellet_lost_halts() -> None:
+    exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    for ts in (1.0, 2.0, 3.0):
+        runner.inject(
+            NodeEvent(
+                EventKind.FAULT, node_id=1, timestamp=ts,
+                data={"fault_code": ServiceStatus.PelletLost},
+            )
+        )
+    actions = [e.fields["action"] for e in runner.ctx.log_entries if e.name == "pellet_lost"]
+    assert actions == ["reload", "reload", "halted"]
+    assert runner.ctx.is_halted(1)
+    faults = [e for e in runner.ctx.log_entries if e.name == "fault"]
+    assert len(faults) == 1
+    assert faults[0].node_id == 1
+
+
+def test_resume_continues_trial_and_pellet_counters() -> None:
+    from base_station.log_manager import ResumeState
+
+    exp = Experiment(nodes=[1], name="t")
+    started = []
+
+    @exp.on_start
+    def _s(ctx):
+        started.append(ctx.trial)
+
+    runner = exp.make_runner()
+    runner.start(now=0.0, resume=ResumeState(
+        trials=4, pellets=6, node_pellets={1: 6}, node_taken={1: 5}, from_run=2,
+    ))
+    assert started == [4]
+    assert runner.ctx.counter("pellets") == 6
+    resumed = [e for e in runner.ctx.log_entries if e.name == "session_resumed"]
+    assert len(resumed) == 1
+    assert resumed[0].fields["trial_offset"] == 4
+    assert resumed[0].fields["pellets_offset"] == 6
+    assert resumed[0].fields["from_run"] == 2
+    assert not runner.is_finished
+
+
+def test_resume_at_pellet_cap_ends_without_starting() -> None:
+    from base_station.log_manager import ResumeState
+
+    exp = Experiment(nodes=[1], name="t")
+    started = []
+
+    @exp.on_start
+    def _s(ctx):
+        started.append(True)
+
+    exp.end_after(pellets=6)
+    runner = exp.make_runner()
+    runner.start(now=0.0, resume=ResumeState(trials=4, pellets=6, from_run=1))
+    assert started == []
+    assert runner.is_finished
+    assert runner.ctx.stop_reason == "pellet_cap_reached_on_resume"

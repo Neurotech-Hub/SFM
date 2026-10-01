@@ -25,12 +25,12 @@ EVENT_GLYPH = {
     "Pellet Taken": ("circle", 5, "Pellet Taken"),
     "NoFeedPresented": ("circle", 3, "No-Feed Presented"),
     "FeedSkipped": ("diamond", 7, "Feed Skipped"),
+    "Pellet lost": ("cross", 3, "Pellet lost (reloaded)"),
 }
 
 # Glyph + key + legend label per session-level mark, drawn on lane 0.
 SESSION_MARK_STYLES = {
     "trial": ("tick", 3, "trial start"),  # key 3 = yellow
-    "script_stalled": ("cross", 7, "script stalled"),
     "session_end": ("diamond", 5, "session end"),
 }
 
@@ -84,10 +84,6 @@ def panel_marks_spans(run, m, nodes: List[int], w0: float, w1: float) -> Tuple[L
         if w0 <= row.t <= w1:
             glyph, key, _ = SESSION_MARK_STYLES["trial"]
             marks.append(Mark(lane=0, t=row.t, glyph=glyph, key=key, title=f"trial {row.fields.get('trial', '')}"))
-    for row in run.exp("script_stalled"):
-        if w0 <= row.t <= w1:
-            glyph, key, _ = SESSION_MARK_STYLES["script_stalled"]
-            marks.append(Mark(lane=0, t=row.t, glyph=glyph, key=key, title="script_stalled"))
     for row in run.exp("session_end"):
         if w0 <= row.t <= w1:
             glyph, key, _ = SESSION_MARK_STYLES["session_end"]
@@ -135,9 +131,28 @@ def panel_marks_spans(run, m, nodes: List[int], w0: float, w1: float) -> Tuple[L
                 glyph, key, _ = EVENT_GLYPH["FeedSkipped"]
                 marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key, title="FeedSkipped"))
             if row.frame_type == "EVENT" and row.event_name.startswith("Fault:") and w0 <= row.t <= w1:
+                if "PelletLost" in row.event_name and _pellet_loss_reloaded(run, node, row.t):
+                    glyph, key, _ = EVENT_GLYPH["Pellet lost"]
+                    marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key,
+                                       title="Pellet lost (reloaded)"))
+                    continue
                 # Filled (not hatched) — a solid red band reads unambiguously
                 # against the hatched orange dome-open band on the lane above.
                 spans.append(Span(lane=base + 2, t0=row.t, t1=min(w1, row.t + max(2.0, (w1 - w0) * 0.01)),
                                    key=7, hatch=False, title=row.event_name))
 
     return spans, marks
+
+
+def _pellet_loss_reloaded(run, node: int, t: float) -> bool:
+    """True when this Fault: PelletLost was reloaded rather than left as downtime."""
+    for row in run.exp("pellet_lost"):
+        if str(row.fields.get("action", "")) != "reload":
+            continue
+        try:
+            nid = int(row.fields.get("node", row.node_id))
+        except (TypeError, ValueError):
+            continue
+        if nid == node and abs(row.t - t) <= 1.0:
+            return True
+    return False

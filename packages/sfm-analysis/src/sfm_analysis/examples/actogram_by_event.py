@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Compare which CAN events count as actogram ticks.
 
-The printed report defaults to presence onsets (``MousePresence Detected``).
+The printed report defaults to dome openings (``Dome Opened``), one tick
+per physical lift.
 The same helper the report uses — ``activity_by_day`` — accepts any GUI-log
 event name. After ``pip install sfm-analysis`` this runs with no source
 tree and no Pi::

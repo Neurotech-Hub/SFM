@@ -18,7 +18,6 @@ defaults those forms ship with, plus the ones that are *not* on a form.
 | Value      | Constant / key              | Location | Notes |
 | ---------- | --------------------------- | -------- | ----- |
 | **90 s**   | `PRESENTATION_TIMEOUT_S`    | `experiment/kit.py` | Mechanical safeguard on the feed/mimic raise-sync gate. Must sit above firmware's 30 s feed timeout plus travel. Not a behavioral ITI |
-| **120 s**  | `STALL_WARN_S`              | `experiment/script.py` | Repeat interval for `script_stalled` while a script wait has no timeout (presence-clear, plate-clear, take wait) |
 | **60 s**   | `DEFAULT_HEARTBEAT_INTERVAL_S` | `app.py` / `node_registry.py` | Interval the GUI pushes to nodes via `SetConfig`. Firmware boot default is 5 s until this lands |
 | **3×**     | `HEARTBEAT_OFFLINE_MULTIPLIER` | `node_registry.py` | Seconds without a heartbeat before OFFLINE = interval × 3 (180 s at the 60 s default) |
 | **30 s**   | `DISCOVERY_IDLE_TIMEOUT_S`  | `discovery_manager.py` | No new ANNOUNCE/REJOIN for this long → discovery complete |
@@ -87,7 +86,6 @@ Shared by every `@exp.script` template (`kit.synchronized_cycle`,
 | Value | Constant | Location | Notes |
 | ----- | -------- | -------- | ----- |
 | 90 s | `PRESENTATION_TIMEOUT_S` | `kit.py` | Raise-sync gate; on timeout the unpresented arm is Recover'd |
-| 120 s | `STALL_WARN_S` | `script.py` | `script_stalled` cadence for unbounded waits |
 | 64 | `MAX_ADVANCES_PER_TICK` | `script.py` | Cap on consecutive yield-resolves in one `step()` so a tight loop cannot spin the GUI |
 | 100 ms | `_poll` / `_run` reschedule | `kit.after_advance` | Presence-clear / session-pause poll interval (free-feeding reloads) |
 | 5 s | `resolve_advance` `default_delay_s` | `kit.py` | Fallback ITI if a template does not pass its own default |
@@ -95,8 +93,8 @@ Shared by every `@exp.script` template (`kit.synchronized_cycle`,
 
 
 Pellet-taken and presence-clear waits have **no timeout by design**. An animal
-that parks on the pad stalls until `end_after` (duration / pellet cap) or Stop.
-That stall is visible via `script_stalled`.
+that parks on the pad holds the next trial until `end_after` (duration / pellet
+cap) or Stop. The wait itself is not written to the log.
 
 ---
 

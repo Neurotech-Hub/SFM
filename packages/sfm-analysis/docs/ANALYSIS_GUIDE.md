@@ -176,10 +176,11 @@ sensor bounce, yields `None` rather than a negative number).
 | `retrieval_latency` | `taken_t - ready_t` | ready | How long from available until taken? |
 
 - **Funnel** (`metrics.InteractionFunnel`) — per-node conversion counts
-  built from cycles that reached ready: presented → approached (presence
+  built from fed cycles that reached Loaded: loaded → approached (presence
   while ready) → dome opened → taken, plus `approach_without_dome` /
-  `dome_without_take`. Use it for "what fraction of presentations got a
-  take", not for durations.
+  `dome_without_take`. Empty-plate (mimic) presentations are
+  `no_feed_presented` and are not a bar. Use it for "what fraction of
+  loaded pellets got a take", not for durations.
 - **Take rate** (`PelletAccounting.take_rate`) —
   `taken_total / presented_total`, `None` if nothing was presented.
 - **Ledger vs seen counts** — `presented` / `taken` count rows *actually
@@ -189,7 +190,7 @@ sensor bounce, yields `None` rather than a negative number).
   [README trap #5](../README.md#five-things-to-know-before-trusting-a-number).
 - **Actogram** (`metrics.activity_by_day` / `timeline.actogram`) — one row
   per rig-local calendar day, ticks at time-of-day of chosen CAN events
-  (default: presence onsets). Renders only when a run spans 2+ distinct
+  (default: dome openings, one tick per physical lift). Renders only when a run spans 2+ distinct
   days. No light/dark shading: the rig does not record the facility's
   light schedule.
 - **`BoutIssues`** (`orphan_closes`, `duplicate_opens`, `censored`) —
@@ -325,7 +326,6 @@ per-template code), not the node hardware. Two groups:
 | `<experiment>_start` | once, e.g. `two_armed_bandit_start` | template-specific config: node roles, block size, probabilities, ... |
 | `trial` | once per trial boundary | `trial` (the trial number) |
 | `session_end` | once, session close (if a clean close happened) | template-specific end summary |
-| `script_stalled` | script runtime detects no forward progress | — |
 | `fault` / `node_halted` | a node enters a fault state | `node`, `fault_code` (a `ServiceStatus` int) |
 | `node_recovered` / `recovered` | a node's fault clears | `node` |
 | `paused_for_fault` / `resumed_after_fault` | session-level pause/resume around a fault | `node` |
@@ -482,7 +482,8 @@ midnight, sorted) — see [§7](#7-time-timezone-and-time-of-day) for why this
 needs no UTC offset.
 
 `activity_by_day(run, event_names=...)` selects which CAN EVENT display
-names count as ticks (default: `("MousePresence Detected",)`). The
+names count as ticks (default: `("Dome Opened",)`, with the milestone and
+the sensor edge of the same lift collapsed into one tick). The
 printed actogram (`timeline.actogram`) passes the same knob through from
 design JSON `options.event_names`. Multiple names are pooled into one
 series. Days with zero matching events are omitted, not drawn as a blank
