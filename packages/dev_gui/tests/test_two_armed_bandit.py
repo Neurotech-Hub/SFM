@@ -399,35 +399,9 @@ def _pellet_lost(node: int, ts: float) -> NodeEvent:
     )
 
 
-def test_pellet_lost_reruns_both_arms_without_pausing() -> None:
-    """A dropped pellet reloads the whole cycle: mimic first, then the fed arm."""
-    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
-    runner = exp.make_runner()
-    runner.start(now=0.0)
-    _bring_online(runner, [1, 2])
-
-    runner.inject(_pellet_lost(1, 1.0))
-    assert not runner.ctx.is_halted(1)
-    assert [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"] == []
-    lost = [e for e in runner.ctx.log_entries if e.name == "pellet_lost"]
-    assert lost[-1].fields["action"] == "reload"
-    # The mimic is still raising, so nothing is re-commanded yet.
-    assert len(_dispense_cmds(runner)) == 1
-    assert len(_no_feed_cmds(runner)) == 1
-
-    runner.inject(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=1.5))
-    kinds = [c[1] for c in runner.ctx.commands_sent
-             if c[1] in (CanCmd.Dispense, CanCmd.DispenseNoFeed)]
-    assert kinds[-2:] == [CanCmd.DispenseNoFeed, CanCmd.Dispense]
-    assert _no_feed_cmds(runner)[-1][0] == 2
-    assert _dispense_cmds(runner)[-1][0] == 1
-    retry = [e for e in runner.ctx.log_entries if e.name == "cycle_retry"]
-    assert len(retry) == 1
-    assert retry[0].fields["attempt"] == 1
-    assert runner.ctx.trial == 1
-
-
-def test_third_consecutive_pellet_lost_halts_and_pauses() -> None:
+def test_pellet_lost_is_a_normal_fault_with_no_auto_recovery() -> None:
+    """A dropped pellet halts the fed arm and pauses the session. The base
+    station must not Recover or re-dispense that node on its own."""
     exp = build_bandit(
         nodes=[1, 2], p_high=1.0, block_size=50,
         next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1,
@@ -435,16 +409,19 @@ def test_third_consecutive_pellet_lost_halts_and_pauses() -> None:
     runner = exp.make_runner()
     runner.start(now=0.0)
     _bring_online(runner, [1, 2])
+    dispensed_before = len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner))
 
     runner.inject(_pellet_lost(1, 1.0))
-    runner.inject(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=1.5))
-    runner.inject(_pellet_lost(1, 2.0))
-    runner.inject(NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=2.5))
-    runner.inject(_pellet_lost(1, 3.0))
-
-    actions = [e.fields["action"] for e in runner.ctx.log_entries if e.name == "pellet_lost"]
-    assert actions == ["reload", "reload", "halted"]
     assert runner.ctx.is_halted(1)
     paused = [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"]
     assert len(paused) == 1
+    assert [e for e in runner.ctx.log_entries if e.name == "cycle_retry"] == []
+    recovers = [n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Recover]
+    # The parked mimic is cleared so it can take the next trial; the faulted
+    # fed arm is left for the operator.
+    assert 1 not in recovers
+    assert 2 in recovers
+
+    runner.step(now=30.0)
+    assert len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner)) == dispensed_before
     assert runner.ctx.trial == 1

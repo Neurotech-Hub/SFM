@@ -1372,11 +1372,12 @@ def test_experiment_commands_appear_under_command_filter() -> None:
     assert not any(e.event_name == "command" for e in exp_rows)
 
 
-def test_free_feeding_pellet_lost_redispenses_without_pausing() -> None:
+def test_free_feeding_pellet_lost_halts_without_auto_recovery() -> None:
+    """PelletLost is a normal fault: halt, no Recover, no re-dispense."""
     exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
-    before = [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense]
+    runner.ctx.commands_sent.clear()
 
     runner.inject(
         NodeEvent(
@@ -1384,30 +1385,14 @@ def test_free_feeding_pellet_lost_redispenses_without_pausing() -> None:
             data={"fault_code": ServiceStatus.PelletLost},
         )
     )
-    dispenses = [c for c in runner.ctx.commands_sent if c[1] == CanCmd.Dispense]
-    assert len(dispenses) == len(before) + 1
-    assert not runner.ctx.is_halted(1)
-    lost = [e for e in runner.ctx.log_entries if e.name == "pellet_lost"]
-    assert lost[-1].fields["action"] == "reload"
-    assert [e for e in runner.ctx.log_entries if e.name == "paused_for_fault"] == []
-
-
-def test_free_feeding_third_consecutive_pellet_lost_halts() -> None:
-    exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
-    runner = exp.make_runner()
-    runner.start(now=0.0)
-    for ts in (1.0, 2.0, 3.0):
-        runner.inject(
-            NodeEvent(
-                EventKind.FAULT, node_id=1, timestamp=ts,
-                data={"fault_code": ServiceStatus.PelletLost},
-            )
-        )
-    actions = [e.fields["action"] for e in runner.ctx.log_entries if e.name == "pellet_lost"]
-    assert actions == ["reload", "reload", "halted"]
+    runner.step(now=10.0)
     assert runner.ctx.is_halted(1)
+    assert not runner.is_finished
     faults = [e for e in runner.ctx.log_entries if e.name == "fault"]
     assert len(faults) == 1
+    sent = [cmd for (_, cmd, _) in runner.ctx.commands_sent]
+    assert CanCmd.Recover not in sent
+    assert CanCmd.Dispense not in sent
     assert faults[0].node_id == 1
 
 
