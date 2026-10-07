@@ -149,14 +149,12 @@ class ExperimentController:
         if r.is_finished:
             reason = r.ctx.stop_reason or "ended"
             return (
-                f"Finished · pellets={r.ctx.counter('pellets')} "
-                f"elapsed={r.ctx.elapsed():.1f}s · {reason}"
+                f"Finished · elapsed={r.ctx.elapsed():.1f}s · {reason}"
             )
         if r.is_active:
             name = self._exp_def.label if self._exp_def else r.experiment.name
             return (
-                f"Running: {name} · pellets={r.ctx.counter('pellets')} "
-                f"elapsed={r.ctx.elapsed():.1f}s"
+                f"Running: {name} · elapsed={r.ctx.elapsed():.1f}s"
             )
         if r._started:
             return "Waiting for start condition…"

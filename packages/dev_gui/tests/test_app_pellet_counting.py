@@ -165,3 +165,57 @@ def test_nodes_do_not_share_a_counter(app) -> None:
     _feed(app, 2, CanEvent.Loaded, bytes([4, 0]))
     assert app._pellets.presented(1) == 1
     assert app._pellets.presented(2) == 2
+
+
+def _begin_run(app, nodes, baseline=None) -> SimpleNamespace:
+    """What _on_experiment_start does for the counters, minus the dpg form."""
+    app._pellets.reset(baseline)
+    app._exp = SimpleNamespace(is_running=True)
+    app._pellet_run_nodes = list(nodes)
+    return app._exp
+
+
+def test_gui_counters_are_empty_before_any_run(app) -> None:
+    _feed(app, 1, CanEvent.Loaded, bytes([10, 0]))  # manual dispense, no run
+    assert app._experiment_pellet_tallies() is None
+
+
+def test_gui_counters_track_the_run_live(app) -> None:
+    _begin_run(app, [1, 2])
+    _feed(app, 1, CanEvent.Loaded, bytes([10, 0]))
+    _feed(app, 1, CanEvent.PelletTaken, bytes([4, 0, 1]))
+    _feed(app, 2, CanEvent.Loaded, bytes([7, 0]))
+
+    tallies = app._experiment_pellet_tallies()
+    assert (tallies[1].presented, tallies[1].taken) == (1, 1)
+    assert (tallies[2].presented, tallies[2].taken) == (1, 0)
+
+    _feed(app, 2, CanEvent.Loaded, bytes([8, 0]))
+    assert app._experiment_pellet_tallies()[2].presented == 2
+
+
+def test_gui_counters_freeze_when_the_run_ends(app) -> None:
+    exp = _begin_run(app, [1])
+    _feed(app, 1, CanEvent.Loaded, bytes([10, 0]))
+    app._experiment_pellet_tallies()
+
+    # Run hits its pellet cap on the same frame its last Loaded arrives:
+    # that pellet still counts.
+    _feed(app, 1, CanEvent.Loaded, bytes([11, 0]))
+    exp.is_running = False
+    assert app._experiment_pellet_tallies()[1].presented == 2
+
+    # Manual dispenses after the run are not experiment pellets.
+    _feed(app, 1, CanEvent.Loaded, bytes([12, 0]))
+    assert app._pellets.presented(1) == 3
+    assert app._experiment_pellet_tallies()[1].presented == 2
+
+
+def test_gui_counters_continue_a_resumed_session(app) -> None:
+    _begin_run(app, [1], baseline={1: (12, 9)})
+    assert app._experiment_pellet_tallies()[1].presented == 12
+
+    _feed(app, 1, CanEvent.Loaded, bytes([50, 0]))
+    _feed(app, 1, CanEvent.PelletTaken, bytes([30, 0, 1]))
+    tally = app._experiment_pellet_tallies()[1]
+    assert (tally.presented, tally.taken) == (13, 10)
