@@ -39,7 +39,7 @@ static constexpr uint32_t kCalDurationMs = 5000;
 static constexpr uint32_t kDefaultThr    = 35000;
 static constexpr uint32_t kNudge         = 5000;
 static constexpr uint32_t kBtnDebounceMs = 30;
-static constexpr float    kDefaultFactor = 3.0f;
+static constexpr float    kDefaultFactor = 60.0f;
 static constexpr float    kMinFactor     = 0.1f;
 static constexpr float    kMaxFactor     = 100.0f;
 

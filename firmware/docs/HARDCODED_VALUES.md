@@ -136,7 +136,7 @@ threshold from the stored mean/σ without a new capture.
 | Value    | Constant / where                | Notes                                                                                     |
 | -------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | 35000    | `kDefaultPresenceThreshold`     | Compile-time fallback used only until a calibration is stored. Bench idle ≈ 35 000–35 500 |
-| 3.0      | `kDefaultPresenceFactor`        | Default multiplier in `thr = mean + factor × σ`. Runtime via serial `factor <n>`           |
+| 60       | `kDefaultPresenceFactor`        | Default multiplier in `thr = mean + factor × σ`. Runtime via serial `factor <n>`. A factor already stored in NVS (`presFac`) is kept across reboot |
 | 0.1–100  | `kMinPresenceFactor` / `kMax…`  | Clamp range for the factor                                                                |
 | 5 s      | `kPresenceCalMs`                | Idle capture duration                                                                     |
 | 25 ms    | `kPresenceCalSampleMs`          | Sample cadence during the capture (≈200 samples over 5 s)                                 |
@@ -182,10 +182,11 @@ the reading did not change, the decision boundary did.
 | 500 ms (50–5000 ms clamp) | `kDefaultSyncFlashMs` / `kMinSyncFlashMs` / `kMaxSyncFlashMs` (`SFM.h`) | Status LED solid-ON hold on `CanCmd::SyncFlash` (camera sync at session start)     |
 | 500 ms         | LED9 blink at boot                    | Fast blink = booting                                                               |
 | 1 s            | LED9 / status blink                   | Slow = waiting for discovery                                                       |
-| —              | LED9 during presence calibration      | Solid ON for the whole capture; yields back to the dome mirror when done            |
+| —              | LED9 during presence calibration      | Solid ON for the whole capture                                                     |
+| 600 ms / 100 ms | `kCalConfirmDurationMs` / `kCalConfirmBlinkMs` (`SFM.h`) | After a successful calibration, status LED and LED 9 blink together, then LED 9 returns to the dome mirror |
 | —              | LED9 after discovery                  | Live dome mirror: lit = dome open. Yields to the button-hold blink                  |
 | —              | LED10                                 | Live pellet mirror: lit = pellet on the plate. No other steady owner                |
-| 100 ms         | `LedService::flashConfirm()` delays   | Visual confirm (NVS clear / presence cal)                                          |
+| 100 ms         | `LedService::flashConfirm()` delays   | Visual confirm of an NVS ID clear (status, LED 9, and LED 10). Presence-cal confirm is the non-blocking blink above |
 
 
 ---

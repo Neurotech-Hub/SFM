@@ -334,12 +334,11 @@ void SFM::update() {
 
 
 
-    // Once discovery completes, turn the status LED off — unless a Ping blink
-    // or a SyncFlash hold is currently active, either of which takes
-    // precedence so the node stays visually identifiable for its full
-    // duration.
+    // Once discovery completes, turn the status LED off — unless a Ping blink,
+    // a SyncFlash hold, or the post-calibration confirm blink is active.
+    // Any of those owns the LED for its full duration.
 
-    if (identity_.isEnabled() && !pingBlinkActive_ && !syncFlashActive_) {
+    if (identity_.isEnabled() && !pingBlinkActive_ && !syncFlashActive_ && !calConfirmActive_) {
 
         leds_.setStatusLedBlinkMs(0);
 
@@ -636,10 +635,14 @@ void SFM::handlePresenceEvents() {
                 // of LedService::flashConfirm() — that call blocks on delay()
                 // for ~600ms, which stalled can_.update() and delayed the
                 // PresenceCalResult publish below by the same amount.
+                // Status LED and LED 9 both blink. The status LED is otherwise
+                // forced off once discovery completes, so the confirm window
+                // has to own it explicitly (same idea as a Ping blink).
                 calConfirmActive_  = true;
                 calConfirmUntilMs_ = millis() + kCalConfirmDurationMs;
                 leds_.setLed9(false);
                 leds_.setLed9BlinkMs(kCalConfirmBlinkMs);
+                leds_.setStatusLedBlinkMs(kCalConfirmBlinkMs);
                 break;
 
             case PresenceEvent::CalibrationFailed:
@@ -827,6 +830,8 @@ void SFM::updateCalConfirmBlink() {
         calConfirmUntilMs_ = 0;
         leds_.setLed9BlinkMs(0);
         leds_.setLed9(false); // updateSensorLeds() reclaims LED9 next tick
+        leds_.setStatusLedBlinkMs(0);
+        leds_.setStatusLed(false);
     }
 
 }
