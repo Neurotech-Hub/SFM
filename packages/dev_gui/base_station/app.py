@@ -44,7 +44,7 @@ from .experiment.schema import (
     ExperimentParam,
     param_visible,
 )
-from .pellet_ledger import PelletLedger
+from .pellet_ledger import NodeTally, PelletLedger
 from .protocol import (
     CanCmd,
     CanEvent,
@@ -94,7 +94,7 @@ from .protocol import (
 WINDOW_W = 1500
 WINDOW_H = 1200        
 TILE_W   = 320
-TILE_H   = 320  # room for multi-line fault instructions
+TILE_H   = 340  # room for multi-line fault instructions + pellet counts
 FAULT_TEXT_WRAP = TILE_W - 24  # stay inside child_window padding/border
 LOG_ROWS = 18        # visible rows in the log table before scroll
 LOG_TABLE_HEIGHT = 220  
@@ -244,6 +244,11 @@ class SFMApp:
         # report; node counters run from power-on and are read only as a
         # dropped-frame witness. Reset on every open_session().
         self._pellets = PelletLedger()
+        # What the Experiment panel and node tiles show: the ledger read live
+        # for the run's nodes while it runs, then frozen when it ends (the
+        # ledger keeps counting manual dispenses between runs).
+        self._pellet_run_nodes: List[int] = []
+        self._pellet_snapshot: Optional[Dict[int, NodeTally]] = None
 
         # Developer Menu values (presence factor) persisted across restarts —
         # see dev_settings.py.
@@ -723,6 +728,10 @@ class SFMApp:
                 dpg.add_spacer(width=6)
                 tags["dome_text"] = dpg.add_text("Dome: ○")
 
+            with dpg.group(horizontal=True):
+                dpg.add_text("Pellets:", color=(160,165,175,255))
+                tags["pellet_count_text"] = dpg.add_text("—", color=_COLOR_GREY)
+
             # Single wrapped line: "Status: Offline" until online, then
             # "Status: Healthy" or "Status: <fault instruction>" (wrapped)
             tags["fault_text"] = dpg.add_text(
@@ -903,6 +912,9 @@ class SFMApp:
                     callback=self._on_experiment_stop,
                 )
             dpg.add_text("Idle", tag="exp_status_text", color=(160, 165, 175, 255))
+            with dpg.group(horizontal=True):
+                dpg.add_text("Pellets:", color=(160, 165, 175, 255))
+                dpg.add_text("—", tag="exp_pellet_text", color=_COLOR_GREY)
             dpg.add_group(tag="exp_params_group")
             if self._exp_defs:
                 self._rebuild_experiment_params(default_def or self._exp_defs[0])
@@ -1248,6 +1260,7 @@ class SFMApp:
             runner = self._exp.runner if self._exp is not None else None
             if runner is not None:
                 runner.normalizer.set_pellet_ledger(self._pellets)
+            self._pellet_run_nodes = list(nodes)
             self._set_experiment_inputs_enabled(False)  # lock config while running
             dpg.configure_item("exp_start_btn", enabled=False)
             self._refresh_experiment_status()
@@ -1258,6 +1271,9 @@ class SFMApp:
             self._resume_daily_log()
 
     def _on_experiment_stop(self, sender=None, app_data=None, user_data=None) -> None:
+        # Last live read before the runner goes away; frozen from here on.
+        self._refresh_pellet_counters()
+        self._pellet_run_nodes = []
         if self._exp.is_running:
             self._exp.stop()
         self._resume_daily_log()
@@ -1326,6 +1342,49 @@ class SFMApp:
             self._resume_daily_log()
             if self._exp_inputs_locked:
                 self._set_experiment_inputs_enabled(True)
+
+    def _experiment_pellet_tallies(self) -> Optional[Dict[int, NodeTally]]:
+        """
+        Per-node pellet totals for the current (or last) experiment run.
+
+        Read live from the ledger while the run is going, and once more on
+        the frame it ends so the final pellet is counted; frozen after that.
+        A session resumed under the same name starts from the ledger's
+        baseline, so the numbers carry on from the previous run. None
+        before the first run.
+        """
+        if self._pellet_run_nodes:
+            self._pellet_snapshot = {
+                n: self._pellets.tally(n) for n in self._pellet_run_nodes
+            }
+            if not self._exp.is_running:
+                self._pellet_run_nodes = []
+        return self._pellet_snapshot
+
+    def _refresh_pellet_counters(self) -> None:
+        """Experiment-panel total and per-node tile counts."""
+        tallies = self._experiment_pellet_tallies()
+        if dpg.does_item_exist("exp_pellet_text"):
+            if tallies is None:
+                dpg.configure_item("exp_pellet_text", default_value="—", color=_COLOR_GREY)
+            else:
+                presented = sum(t.presented for t in tallies.values())
+                taken = sum(t.taken for t in tallies.values())
+                dpg.configure_item(
+                    "exp_pellet_text",
+                    default_value=f"{presented} presented · {taken} taken",
+                    color=(200, 210, 220, 255),
+                )
+        for node_id, tags in self._node_tiles.items():
+            tally = tallies.get(node_id) if tallies is not None else None
+            if tally is None:
+                dpg.configure_item(tags["pellet_count_text"], default_value="—", color=_COLOR_GREY)
+            else:
+                dpg.configure_item(
+                    tags["pellet_count_text"],
+                    default_value=f"{tally.presented} presented / {tally.taken} taken",
+                    color=(200, 210, 220, 255),
+                )
 
     def _build_log_panel(self) -> None:
         dpg.add_text("Event Log", color=(100, 180, 255, 255))
@@ -1415,6 +1474,7 @@ class SFMApp:
             if self._log and self._exp.runner is not None:
                 self._log.set_context(trial=self._exp.runner.ctx.trial)
         self._refresh_experiment_status()
+        self._refresh_pellet_counters()
 
         # 2. Tick discovery timeout
         if self._discovery:

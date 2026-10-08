@@ -476,12 +476,9 @@ def synchronized_cycle(
     wait — so a sequential template can log mid-trial without duplicating
     the wait logic.
 
-    A pellet that falls off the fed plate during the raise does not pause
-    the trial. The cycle waits until every mimic plate has finished its
-    raise (firmware only accepts a new command from Idle or Loaded), then
-    runs the whole synchronized motion again: mimics first, then the fed
-    node that lost the pellet, so both plates still arrive together. The
-    third consecutive loss on a node halts it instead.
+    A pellet that falls off the fed plate during the raise (PelletLost) is a
+    fault like any other: the cycle returns ``faulted`` and the node stays
+    halted until an operator recovers it. Nothing is re-dispensed here.
     """
     fed_t = _int_tuple(fed)
     mimic_t = tuple(n for n in _int_tuple(mimic_nodes) if n not in fed_t)
@@ -491,27 +488,6 @@ def synchronized_cycle(
         result.ok = True
         return result
 
-    control.begin_synchronized(commanded)
-    try:
-        return (yield from _run_synchronized_cycle(
-            control, fed_t, mimic_t, commanded, result,
-            timeout=timeout, on_commanded=on_commanded, on_presented=on_presented,
-        ))
-    finally:
-        control.end_synchronized()
-
-
-def _run_synchronized_cycle(
-    control,
-    fed_t: Tuple[int, ...],
-    mimic_t: Tuple[int, ...],
-    commanded: Tuple[int, ...],
-    result: CycleResult,
-    *,
-    timeout: float,
-    on_commanded: Optional[CycleCallback],
-    on_presented: Optional[CycleCallback],
-):
     for n in commanded:
         control.clear_presentation(n)
     accepted: Dict[int, bool] = {}
@@ -546,78 +522,31 @@ def _run_synchronized_cycle(
     if on_commanded is not None:
         on_commanded(result)
 
-    while True:
-        ready = yield control.wait_until(
-            lambda c: (
-                any(c.pellet_lost_pending(n) for n in fed_t)
-                or all(c.presentation_done(n) for n in commanded)
-            ),
-            node=commanded,
-            timeout=timeout,
-            label="arms_presented",
-        )
-        lost = [n for n in fed_t if control.pellet_lost_pending(n)]
-        if lost and not ready.faulted:
-            if mimic_t:
-                settled = yield control.wait_until(
-                    lambda c: all(c.presentation_done(n) or c.is_halted(n) for n in mimic_t),
-                    node=mimic_t,
-                    timeout=timeout,
-                    label="mimic_settled",
-                )
-                if settled.faulted or settled.timed_out:
-                    _recover_unpresented(control, commanded)
-                    if settled.faulted:
-                        result.faulted = True
-                        result.faulted_node = settled.faulted_node
-                    else:
-                        result.invalid = True
-                        result.invalid_reason = "arm_never_presented"
-                    return result
-            attempt = max(control.pellet_lost_streak(n) for n in lost)
-            control.log(
-                "cycle_retry", warning=1, trial=control.trial,
-                nodes=list(mimic_t) + lost, attempt=attempt,
-            )
-            for n in lost:
-                control.clear_pellet_lost_pending(n)
-            for n in list(mimic_t) + lost:
-                control.clear_presentation(n)
-            for n in mimic_t:
-                accepted[n] = bool(control.dispense(n, feed=False))
-            for n in lost:
-                accepted[n] = bool(control.dispense(n))
-            result.accepted = accepted
-            if not all(accepted.get(n, False) for n in list(mimic_t) + lost):
-                failed = next(n for n in list(mimic_t) + lost if not accepted.get(n))
-                cause = "halted" if control.is_halted(failed) else "plate_occupied"
-                result.invalid = True
-                result.invalid_reason = cause
-                _recover_unpresented(control, [n for n, ok in accepted.items() if ok])
-                return result
-            continue
-
-        if ready.faulted or ready.timed_out:
-            # A no-feed node holds at the drop position until a peer raises, with no
-            # timeout of its own — so an arm that never presented is still parked in
-            # Dwelling, where firmware rejects the next trial's dispense (it accepts
-            # only Idle/Loaded). Recover it here or the whole session wedges on the
-            # first hopper jam.
-            #
-            # Both exits need this, and the faulted one is the common case: the fed
-            # node's 30 s feed timeout fires well inside PRESENTATION_TIMEOUT_S, so
-            # a jam surfaces as `faulted`, not `timed_out`. The same path handles a
-            # pellet-lost streak that has hit its cap and halted the node.
-            _recover_unpresented(control, commanded)
-        if ready.faulted:
-            result.faulted = True
-            result.faulted_node = ready.faulted_node
-            return result
-        if ready.timed_out:
-            result.invalid = True
-            result.invalid_reason = "arm_never_presented"
-            return result
-        break
+    ready = yield control.wait_until(
+        lambda c: all(c.presentation_done(n) for n in commanded),
+        node=commanded,
+        timeout=timeout,
+        label="arms_presented",
+    )
+    if ready.faulted or ready.timed_out:
+        # A no-feed node holds at the drop position until a peer raises, with no
+        # timeout of its own — so an arm that never presented is still parked in
+        # Dwelling, where firmware rejects the next trial's dispense (it accepts
+        # only Idle/Loaded). Recover it here or the whole session wedges on the
+        # first hopper jam.
+        #
+        # Both exits need this, and the faulted one is the common case: the fed
+        # node's 30 s feed timeout fires well inside PRESENTATION_TIMEOUT_S, so
+        # a jam (or a PelletLost) surfaces as `faulted`, not `timed_out`.
+        _recover_unpresented(control, commanded)
+    if ready.faulted:
+        result.faulted = True
+        result.faulted_node = ready.faulted_node
+        return result
+    if ready.timed_out:
+        result.invalid = True
+        result.invalid_reason = "arm_never_presented"
+        return result
 
     baited_mimics = tuple(n for n in mimic_t if control.presented_pellet(n))
     if baited_mimics:

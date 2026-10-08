@@ -41,7 +41,6 @@ class EventKind(Enum):
     FEED_SKIPPED = auto()
     NO_FEED_PRESENTED = auto()  # empty plate raised to the top (no-feed cycle)
     FAULT = auto()
-    PELLET_LOST = auto()  # absorbed PelletLost: reloaded, not a session pause
     SEEKING = auto()
     LOWERING = auto()
     LOADING = auto()

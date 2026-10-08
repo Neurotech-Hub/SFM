@@ -24,7 +24,6 @@ from typing import (
 from ..can_manager import CanManager
 from ..io_manager import IOManager
 from ..node_registry import DEFAULT_OFFLINE_TIMEOUT_S
-from ..protocol import ServiceStatus
 from .context import ExperimentControl
 from .events import EventKind, EventNormalizer, NodeEvent
 from .script import ScriptFn, ScriptScheduler
@@ -140,10 +139,6 @@ class Experiment:
 
     def on_fault(self, fn: EventCb) -> EventCb:
         return self.on(EventKind.FAULT)(fn)
-
-    def on_pellet_lost(self, fn: EventCb) -> EventCb:
-        """Fired when a pellet falls off during the raise and is auto-reloaded."""
-        return self.on(EventKind.PELLET_LOST)(fn)
 
     def on_recover(self, fn: EventCb) -> EventCb:
         """Fired when an operator recovers a faulted node (re-arm the node here)."""
@@ -560,19 +555,12 @@ class ExperimentRunner:
             # Auto-count Loaded milestones for end_after(pellets=...).
             if ev.kind == EventKind.LOADED:
                 self.ctx.incr("pellets")
-                self.ctx.note_pellet_loaded(ev.node_id)
-            # A pellet that falls off during the raise is reloaded in place.
-            # Anything else latches the node halted before user handlers run.
+            # Sticky per-node fault (PelletLost included): halt just this node
+            # (cancel its timers, make its dispenses no-ops) before user
+            # handlers run. Nothing here sends Recover or re-dispenses — the
+            # node stays halted until an operator recovers it.
             elif ev.kind == EventKind.FAULT:
-                if self._is_pellet_lost(ev) and self.ctx.absorb_pellet_lost(ev.node_id):
-                    ev = NodeEvent(
-                        kind=EventKind.PELLET_LOST,
-                        node_id=ev.node_id,
-                        timestamp=ev.timestamp,
-                        data=dict(ev.data),
-                    )
-                else:
-                    self.ctx.halt_node(ev.node_id)
+                self.ctx.halt_node(ev.node_id)
             self._fire_handlers(ev)
             if self.script is not None:
                 self.script.observe(ev)
@@ -583,11 +571,6 @@ class ExperimentRunner:
         # budgets (MAX_ADVANCES_PER_TICK each) on every idle tick.
         if events and self.script is not None and self._active and not self._finished:
             self.script.advance(now)
-
-    @staticmethod
-    def _is_pellet_lost(ev: NodeEvent) -> bool:
-        code = ev.data.get("fault_code")
-        return code == ServiceStatus.PelletLost or code == ServiceStatus.PelletLost.name
 
     def _fire_handlers(self, ev: NodeEvent) -> None:
         for cb in self.experiment._handlers.get(ev.kind, []):

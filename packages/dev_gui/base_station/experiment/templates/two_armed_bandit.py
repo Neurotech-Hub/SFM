@@ -37,12 +37,6 @@ holds at the drop position and raises when it hears the fed arm's Raising event
 on the CAN bus, one frame time later (~0.5 ms). Both plates therefore reach the
 top together on every trial, whatever the fed arm's load took.
 
-A pellet that falls off a fed arm during the raise does not pause the trial.
-The runner recovers that node and reruns the whole synchronized cycle: the
-mimic arm lowers and rises again with the fed arm, so both plates still
-arrive together. Three consecutive losses on the same node stop the retry
-and pause the session the same way any other fault does.
-
 This template additionally gates the response window on BOTH arms finishing
 their raise (``presentation_done``) before doing anything with either one, so
 the trial's effective start stays well-defined even if a command is dropped.

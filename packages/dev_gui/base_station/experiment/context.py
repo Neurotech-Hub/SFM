@@ -27,10 +27,6 @@ if TYPE_CHECKING:
 TimerCallback = Callable[[], None]
 T = TypeVar("T")
 
-# Consecutive pellet-lost events on one node before the session halts.
-# The first two reload automatically; the third pauses for an operator.
-PELLET_LOST_MAX_RETRIES = 3
-
 # Events that count as "the animal did something" for quiet_for(). Deliberately
 # excludes HEARTBEAT (arrives on the configured interval; firmware boots at
 # ~5s until the base station pushes SetConfig) and the node's
@@ -128,11 +124,6 @@ class ExperimentControl:
         # Nodes latched into a fault; dispense() is a no-op for them until
         # an operator recovers the node (see halt_node / recover_node).
         self._halted: set = set()
-        # Consecutive PelletLost streaks, and nodes inside a synchronized
-        # cycle whose lost pellet the cycle itself will reload.
-        self._pellet_lost_streak: Dict[int, int] = {}
-        self._sync_nodes: set = set()
-        self._pellet_lost_pending: set = set()
         # Optional sink so a GUI host can mirror experiment log rows.
         self.on_log: Optional[Callable[[ExperimentLogEntry], None]] = None
         # Fired once, right after the "session_start" log row, when the
@@ -370,63 +361,6 @@ class ExperimentControl:
         self._view(node_id).dispensing = False
         self._send(node_id, CanCmd.Recover)
         self.log("node_recovered", node=node_id)
-        self._pellet_lost_streak.pop(node_id, None)
-        self._pellet_lost_pending.discard(node_id)
-
-    def note_pellet_loaded(self, node_id: int) -> None:
-        """A raise finished with a pellet aboard — the loss streak ends."""
-        self._pellet_lost_streak.pop(node_id, None)
-
-    def begin_synchronized(self, nodes: Sequence[int]) -> None:
-        """Mark nodes whose PelletLost the active synchronized cycle will reload."""
-        self._sync_nodes = set(int(n) for n in nodes)
-
-    def end_synchronized(self) -> None:
-        self._sync_nodes.clear()
-        self._pellet_lost_pending.clear()
-
-    def pellet_lost_pending(self, node_id: int) -> bool:
-        return node_id in self._pellet_lost_pending
-
-    def clear_pellet_lost_pending(self, node_id: int) -> None:
-        self._pellet_lost_pending.discard(node_id)
-
-    def pellet_lost_streak(self, node_id: int) -> int:
-        return self._pellet_lost_streak.get(node_id, 0)
-
-    def absorb_pellet_lost(self, node_id: int) -> bool:
-        """
-        Reload after a pellet falls off during the raise.
-
-        Returns True when the loss was absorbed: a warning is logged, Recover
-        goes out, and either this node's synchronized cycle is told to rerun
-        or (outside one) a new Dispense is sent immediately. Returns False
-        once the node has lost ``PELLET_LOST_MAX_RETRIES`` pellets in a row,
-        leaving the caller to halt as for any other fault.
-        """
-        streak = self._pellet_lost_streak.get(node_id, 0) + 1
-        self._pellet_lost_streak[node_id] = streak
-        view = self._view(node_id)
-        view.pellet = False
-        view.dispensing = False
-        view.presented_pellet = False
-        view.presented_empty = False
-        if streak >= PELLET_LOST_MAX_RETRIES:
-            self.log(
-                "pellet_lost", node=node_id, warning=1,
-                attempt=streak, action="halted",
-            )
-            return False
-        self.log(
-            "pellet_lost", node=node_id, warning=1,
-            attempt=streak, action="reload",
-        )
-        self._send(node_id, CanCmd.Recover)
-        if node_id in self._sync_nodes:
-            self._pellet_lost_pending.add(node_id)
-        else:
-            self.dispense(node_id)
-        return True
 
     def is_halted(self, node_id: int) -> bool:
         return node_id in self._halted
