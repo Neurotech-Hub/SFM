@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar, Union
 
-from ..protocol import CanCmd, build_setconfig_heartbeat
+from ..protocol import CanCmd, CanEvent, build_event_frame, build_setconfig_heartbeat
 from .events import EventKind, NodeEvent
 from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind, _until_label
 
@@ -26,6 +26,11 @@ if TYPE_CHECKING:
 
 TimerCallback = Callable[[], None]
 T = TypeVar("T")
+
+# Source id for the Raising frame trigger_peer_raise() puts on the bus. Node
+# ids stop at 254 (AssignId / mac_id_registry), so no real node ever sends
+# from 0x300 + 255.
+PEER_RAISE_SRC_ID = 0xFF
 
 # Events that count as "the animal did something" for quiet_for(). Deliberately
 # excludes HEARTBEAT (arrives on the configured interval; firmware boots at
@@ -134,6 +139,9 @@ class ExperimentControl:
         self.on_session_start: Optional[Callable[[], None]] = None
         # Commands issued during the session (for tests / inspection).
         self.commands_sent: List[tuple] = []
+        # Raw (arb_id, data) frames that are not node commands — see
+        # trigger_peer_raise().
+        self.raw_frames_sent: List[tuple] = []
         # Set by stop(); the runner ends the session on the next end-check.
         self._stop_requested: bool = False
         self._stop_reason: str = ""
@@ -280,6 +288,27 @@ class ExperimentControl:
     def recover(self, node: int) -> bool:
         """Send Recover to one node."""
         return self._send(node, CanCmd.Recover)
+
+    def trigger_peer_raise(self) -> bool:
+        """
+        Raise every node holding in a no-feed ``Dwelling``, with no fed peer.
+
+        Firmware has no raise command: a ``dispense(n, feed=False)`` node
+        lowers, then holds until it hears ANY other node's Raising event on
+        the bus. This puts one such frame on the bus from an id no node uses
+        (``PEER_RAISE_SRC_ID``), so a no-feed cycle can run on its own — the
+        actuator-only troubleshooting cycle relies on it.
+
+        The frame is bus-wide: every node dwelling at that moment raises,
+        not just one. A fed node ignores it. The base station does not
+        receive its own frames, so this never shows up as a node-255 event.
+        """
+        arb_id, data = build_event_frame(PEER_RAISE_SRC_ID, CanEvent.Raising)
+        self.raw_frames_sent.append((arb_id, data))
+        self.log("peer_raise", src_id=PEER_RAISE_SRC_ID)
+        if self._can is None:
+            return True  # dry-run / test mode
+        return self._can.send_raw(arb_id, data)
 
     def broadcast_dispense(self) -> bool:
         """

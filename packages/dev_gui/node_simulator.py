@@ -330,6 +330,17 @@ class NodeSimulator:
                         break
             return
 
+        # Raising event from a node this process does not simulate (a real
+        # node, or the base station's trigger_peer_raise): every simulated
+        # node in a no-feed cycle latches it, as firmware's peer listener does.
+        if CAN_EVENT_BASE < arb_id < CAN_EVENT_BASE + 0x100 and data[:1] == bytes([CanEvent.Raising]):
+            src_id = arb_id - CAN_EVENT_BASE
+            if all(node.node_id != src_id for node in self._nodes.values()):
+                for node in self._nodes.values():
+                    if node.no_feed:
+                        node.peer_raise_seen = True
+            return
+
         # Command frames (broadcast or per-node)
         is_broadcast = (arb_id == CAN_CMD_BROADCAST)
         for node in self._nodes.values():
