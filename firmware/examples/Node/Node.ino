@@ -66,6 +66,8 @@ static const char *stateStr(sfm::DispenseState s) {
         case sfm::DispenseState::Raising:     return "Raising";
         case sfm::DispenseState::Loaded:   return "Loaded";
         case sfm::DispenseState::Dwelling:    return "Dwelling";
+        case sfm::DispenseState::DomeHold:    return "DomeHold";
+        case sfm::DispenseState::Retracting:  return "Retracting";
         case sfm::DispenseState::Fault:       return "Fault";
     }
     return "?";

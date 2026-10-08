@@ -53,6 +53,7 @@ _PRESENTED_EVENTS = frozenset({
     CanEvent.OnPlate, CanEvent.Loaded, CanEvent.DomeOpened, CanEvent.FeedSkipped,
     CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading, CanEvent.Raising,
     CanEvent.NoFeedPresented, CanEvent.Dwelling,
+    CanEvent.DomeHold, CanEvent.Retracting, CanEvent.PelletReload,
 })
 
 

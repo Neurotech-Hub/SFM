@@ -24,10 +24,13 @@ These are the ones called out most often during bring-up.
 | **1 s**       | `kDefaultFeedPauseMs`   | `DispenserService.h` | M1 coils-off pause between feed bursts — avoids pellet build-up on the plate |
 | **30 s**      | `kDomeOpenWarnMs`       | `DispenserService.h` | Dome held open continuously → `DomeOpenWarning` (non-sticky)                             |
 | **5 s**       | `kLoadClearOnRaiseMs`   | `DispenserService.h` | After the raise starts, the load position sensor must clear within this or Fault/`Jam`   |
-| **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → Fault/`PelletLost`                     |
-| **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past** the load position sensor by this much before M1 turns. The sensor is not the drop height — the plate has to sit this far below it for the pellet to land cleanly. The load position sensor is ignored during this descent |
-| **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (= 280 + 1200 above the load sensor); bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from the grab depth, not from the load position sensor |
-| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel cap to clear the load sensor before the approach. When Seeking starts with the load sensor asserted, motion stops at sensor-clear **or** this step count, whichever comes first. A fixed (non-gated) seek is used only when the node already knows the plate is at drop depth (`belowLoad_`) |
+| **500 ms**    | `kPelletLostMs`         | `DispenserService.h` | Pellet sensor clear this long during the raise → retract and reload, or an early take once the raise is 80% done and the dome is open |
+| **80%**       | `kRaiseCommitPct`       | `DispenserService.h` | Below this fraction of the raise, a dome opening or a lost pellet retracts the plate. At or above it, a lost pellet with the dome open counts as a take |
+| **500 ms**    | `kDomeCloseSettleMs`    | `DispenserService.h` | Dome must stay closed this long before a raise starts or resumes |
+| **3**         | `kMaxPelletReloads`     | `DispenserService.h` | Automatic reloads in one dispense. The next miss faults `PelletLost` |
+| **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past the raw PG2 break** by this much before M1 turns. The debounced sensor is not the datum — the edge is latched the instant the beam breaks, and the 100 ms debounce only confirms it |
+| **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (raw PG2 break minus `kDefaultGrabSteps`). Bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from that drop position |
+| **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel cap before the approach. On an asserted load sensor, motion stops at sensor-clear or this count. From a known drop depth the seek runs until the beam breaks and then clears, and faults if the cap arrives first |
 
 
 ---
@@ -51,8 +54,11 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | 1 s         | `kDefaultFeedPauseMs`    | Coils-off settle pause between M1 feed bursts |
 | 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2000 steps. Exhausting it retries only when the load sensor is asserted or the plate is already known to be at drop depth; otherwise it faults (a blind seek-up after `PelletLost` can drive into the stop) |
 | 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel cap to clear the load sensor (sensor-clear or this many steps, whichever first, when seek starts on the sensor) |
-| 280 steps   | `kDefaultGrabSteps`      | M2 down past the load sensor to the pellet-drop position |
+| 280 steps   | `kDefaultGrabSteps`      | M2 down past the raw PG2 break to the pellet-drop position |
 | 1480 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
+| 80%         | `kRaiseCommitPct`        | Raise fraction below which a dome open or pellet loss retracts |
+| 500 ms      | `kDomeCloseSettleMs`     | Dome-closed settle before a raise starts or resumes |
+| 3           | `kMaxPelletReloads`      | Reloads per dispense before Fault/`PelletLost` |
 | 8 s         | `kDefaultLowerTimeoutMs` | M2 seek-away / approach / grab-descent timeout (re-armed per sub-phase) |
 | 30 s        | `kDefaultFeedTimeoutMs`  | M1 pellet load timeout |
 | 8 s         | `kDefaultRaiseTimeoutMs` | M2 raise phase timeout                    |
@@ -85,7 +91,7 @@ Same header; **not** runtime-configurable via CAN today.
 | ------ | ----------------------- | -------------------------------------------------------------------- |
 | 2 s    | `kPelletLoadConfirmMs`  | Pellet sensor held during `Loading` → `OnPlate`, raise starts        |
 | 200 ms | `kPelletTakenConfirmMs` | Pellet sensor clear while `Loaded` → `PelletTaken`, cycle completes |
-| 500 ms | `kPelletLostMs`         | Pellet sensor clear during the raise → Fault/`PelletLost`            |
+| 500 ms | `kPelletLostMs`         | Pellet sensor clear during the raise → retract and reload, or an early take |
 | 5 s    | `kLoadClearOnRaiseMs`   | Load position sensor still blocked after raise start → Jam           |
 | 30 s   | `kDomeOpenWarnMs`       | Dome held open → `DomeOpenWarning`                                   |
 
@@ -192,3 +198,29 @@ the reading did not change, the decision boundary did.
 2. Rebuild / flash the node firmware.
 3. Update the corresponding row in this document.
 4. If the value becomes experiment- or site-specific, prefer a setter / `SetConfig` path so nodes do not need a reflash.
+
+## Versioning
+
+The running firmware reports itself as `CanEvent::FirmwareInfo` (`0x15`, payload `major, minor, patch`). The base station logs that as a `Firmware Info` row and copies the per-node map into `session_start`. A node that never sends it (1.5.0 or older) is logged as `unknown`.
+
+The number lives in two places that must stay identical. `packages/dev_gui/tests/test_protocol.py` fails if they differ.
+
+| File | What to bump |
+| ---- | ------------ |
+| `firmware/src/SFMVersion.h` | `kFirmwareVersionMajor` / `Minor` / `Patch` and `kFirmwareVersionStr` |
+| `firmware/library.properties` | `version=` |
+
+Use the **minor** number for a behaviour or protocol change, and the **patch** number for a fix that does not change the wire format. Current release: **1.6.0**.
+
+When you bump the version, add a subsection here for the new number. The base station only records the number; this list is what that number means.
+
+### 1.6.0
+
+First version the node reports on the bus (`FirmwareInfo`). Everything below is relative to 1.5.0, which does not send that event.
+
+- **Drop position.** Latched at the raw PG2 break, then 280 steps further down. The 100 ms debounce only confirms the edge. A raise is always 1480 steps from that position. After a fault or `Recover` the position is forgotten and the next dispense homes again.
+- **Seek from below the sensor.** Up until PG2 breaks and then clears, still capped at 800 steps. A cap that arrives first faults `ActuatorTimeout`. Seeking that starts on an asserted PG2 is unchanged: up until the beam clears.
+- **Occupied plate.** Homes through the same seek, approach, and grab (M1 stays off), then raises. The old shortened raise from inside the beam is gone. A plate already at the top still stays `Loaded` with no motion.
+- **Dome.** A raise does not start until the dome has been closed for 500 ms (`DomeHold`, no timeout). If the dome opens before 80% of the raise, the plate retracts to the drop position and waits. No-feed cycles follow the same rule on their own dome.
+- **Pellet during the raise.** Clear for 500 ms before 80%, or at/after 80% with the dome closed: retract and reload. Clear for 500 ms at/after 80% with the dome open: count it as a take (`Loaded`, then `PelletTaken`), finish the travel, return to `Idle`. Up to 3 reloads per dispense, each logged as `PelletReload`; the next miss faults `PelletLost`.
+- **New wire values.** States `DomeHold` = 8, `Retracting` = 9. Events `DomeHold` = `0x12`, `Retracting` = `0x13`, `PelletReload` = `0x14` (count, reason, attempt), `FirmwareInfo` = `0x15` (major, minor, patch).

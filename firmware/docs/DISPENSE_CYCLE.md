@@ -60,10 +60,17 @@ always knows whether the plate is occupied — before a dispense, during travel,
                            OnPlate                            │
                               │                               │
                               ▼                               │
+                         DomeHold?  (dome must be closed)     │
+                              │                               │
+                              ▼                               │
                            Raising                            │
                               │                               │
-  pellet sensor clears ─► Fault (PelletLost)                  │
+        dome opens, or pellet clears, before 80%             │
                               │                               │
+                              ▼                               │
+                        Retracting ──► DomeHold ──► reload    │
+                              │               (PelletReload,  │
+                              │                up to 3 times) │
                               ▼                               │
                             Loaded ◄──────────────────────────┘
                               │
@@ -75,25 +82,29 @@ always knows whether the plate is occupied — before a dispense, during travel,
 ```
 
 **Occupancy check.** On `Dispense` the node reads the pellet sensor first. If a pellet is already on the
-plate it does not lower and does not run the feed wheel: it reports `FeedSkipped` and raises what is there
-(or stays `Loaded` if the plate is already elevated). An occupied plate sitting at the load sensor never made
-the grab descent, so its raise is shortened by `kDefaultGrabSteps` to finish at the same top height.
-A node never stacks a second pellet on an occupied plate.
+plate it does not run the feed wheel: it reports `FeedSkipped`. If the plate is already at presentation
+height it stays `Loaded` with no motion. Anywhere else it homes — the same seek, approach, and grab
+descent, with M1 skipped — and then raises `kDefaultRaiseSteps` from the drop position. A node never
+stacks a second pellet on an occupied plate, and it never raises from an unmeasured height.
 
 **Seeking.** This phase is conditional. It runs when the load sensor is asserted (plate at the load
 position) or when the node already knows the plate is at drop depth (`belowLoad_`). Entering this state
 emits the `Seeking` phase event (`0x0D`).
 
 When Seeking starts on an asserted load sensor, M2 raises until the beam clears **or**
-`kDefaultSeekAwaySteps` elapse, whichever comes first. A fixed `kDefaultSeekAwaySteps` raise (sensor
-ignored) is used only for the known drop-depth case, where the beam is already clear. Seeking is never
-started from an unknown height with a clear sensor — that path drove the plate into the stop after a
-`PelletLost` recover.
+`kDefaultSeekAwaySteps` elapse, whichever comes first. When the plate is already known to be below the
+sensor (beam clear), M2 raises until the beam **breaks and then clears**, still capped at
+`kDefaultSeekAwaySteps`. Hitting that cap without completing the sequence faults `ActuatorTimeout`
+rather than driving on. Seeking is never started from an unknown height with a clear sensor — that path
+drove the plate into the stop.
 
-**Lowering.** Only when the plate is empty. M2 approaches until the load position sensor asserts, budgeted by
-`kDefaultLowerSteps`. Entering this state emits `Lowering` (`0x07`) independently of `Seeking`; the two phases
-are not folded together. M2 then keeps going down a further `kDefaultGrabSteps` to the
-**drop position**, ignoring the sensor for that stretch. Both parts are budgeted by `kDefaultLowerTimeoutMs`.
+**Lowering.** Only when the plate is empty (or an occupied plate is homing with M1 skipped). M2 approaches
+until the load position sensor asserts, budgeted by `kDefaultLowerSteps`. Entering this state emits
+`Lowering` (`0x07`) independently of `Seeking`; the two phases are not folded together. The drop position
+is latched from the **raw** PG2 break — the stepper position at the instant the beam breaks — not from
+the debounced reading 100 ms later. A raw reopen before the debounce confirms is discarded. M2 then
+keeps going down to `edge − kDefaultGrabSteps`, ignoring the sensor for that stretch. Both parts are
+budgeted by `kDefaultLowerTimeoutMs`.
 
 Whether to seek away is decided by the load sensor and the tracked drop-depth flag together. The sensor alone
 cannot distinguish drop depth from the elevated position (both read clear). The node marks itself at-or-below
@@ -113,12 +124,31 @@ the beam early, and the wheel simply resumes the run-pause pattern within the sa
 elapses the node reports `OnPlate` and begins the raise in the same tick. If no pellet is confirmed within
 `kDefaultFeedTimeoutMs` — an empty hopper or a wheel jam — the node faults with `FeedTimeout` (refill the hopper).
 
-**Raising.** M2 lifts the plate by `kDefaultRaiseSteps` from the drop position — the grab descent back plus
-the top height above the load sensor. Two checks run during travel:
-the load position sensor must clear within `kLoadClearOnRaiseMs` (otherwise `Jam`), and the pellet sensor must
-stay asserted. A pellet that falls off in transit clears the sensor for `kPelletLostMs` and faults with
-`PelletLost`, so an empty plate never enters `Loaded`. If the raise travel itself exceeds
-`kDefaultRaiseTimeoutMs`, the fault is `ActuatorTimeout` (sensor or M2 motor).
+**Raising.** M2 lifts the plate by `kDefaultRaiseSteps` from the latched drop position, and from nowhere
+else. If that position is not known the cycle faults `ActuatorTimeout` and the next dispense re-homes.
+The raise does not start while the dome is open, or until the dome has stayed closed for
+`kDomeCloseSettleMs`. Until then the node sits in `DomeHold` (motors off, no timeout;
+`DomeOpenWarning` still fires at 30 s).
+
+Two checks run during travel: the load position sensor must clear within `kLoadClearOnRaiseMs` (otherwise
+`Jam`), and — on a fed cycle — the pellet sensor must stay asserted. Progress is
+`currentPosition − dropPos`. The commit point is `kRaiseCommitPct` (80%) of `kDefaultRaiseSteps`.
+
+- Dome opens before the commit point (fed or no-feed): `Retracting`. M2 returns to the drop position.
+  If the plate had already passed above PG2, the descent re-latches the raw break and recomputes the
+  drop position. The pellet sensor and the dome are ignored on the way down. Arrival goes back to
+  `DomeHold`.
+- Pellet sensor clear for `kPelletLostMs` before the commit point, or at/after it with the dome closed:
+  same retract, and the reload is logged as `LostDuringRaise`.
+- Pellet sensor clear for `kPelletLostMs` at/after the commit point with the dome open: the mouse took
+  it. The plate finishes the raise, then the node emits `Loaded` and `PelletTaken` (dome-open context)
+  and returns to `Idle`. It does not emit a second `Loaded`.
+
+Leaving `DomeHold` on a fed cycle: if the pellet sensor is asserted, raise. If it is clear and fewer than
+`kMaxPelletReloads` (3) reloads have been used, emit `PelletReload` and run `Loading` again. The next
+confirmed pellet raises. The fourth miss faults `PelletLost`. A no-feed cycle always raises when the
+dome has settled; it does not wait for another peer `Raising`, because that trigger was already latched.
+If the raise travel itself exceeds `kDefaultRaiseTimeoutMs`, the fault is `ActuatorTimeout`.
 
 **Loaded.** The plate is at the top and the pellet is ready for the mouse. The node stays here, watching two things:
 
@@ -155,8 +185,11 @@ cycle exists to remove. `DispenseNoFeed` now carries no payload at all; a traili
 station is ignored rather than rejected.
 
 The peer-raise flag is latched whenever a no-feed cycle is active, not only while in `Dwelling` — a fed node whose
-plate is already occupied raises almost immediately, before a node commanded at the same moment has finished
-lowering, and the flag has to survive that gap.
+plate is already at the top can still raise as soon as it is commanded, before a node commanded at the same
+moment has finished lowering, and the flag has to survive that gap. A no-feed plate follows the same dome
+rules as a fed one: it will not start up while its own dome is open, and it retracts if the dome opens
+before 80% of the raise. After that retract it raises when the dome has settled, without waiting for
+another peer `Raising`.
 
 ```
  DispenseNoFeed
@@ -188,8 +221,9 @@ inspect.
 An occupied plate is never silently swapped for empty: exactly as with `Dispense`, occupancy is checked first,
 and a plate that already holds a pellet is presented honestly (`FeedSkipped`) rather than run through the
 no-feed path. The pellet-lost guard that runs during a fed raise is skipped for a no-feed raise (an empty plate
-always has the pellet sensor clear, so that guard would otherwise fault every cycle); the load-sensor jam guard
-still applies, since it is about motion, not the pellet.
+always has the pellet sensor clear, so that guard would otherwise retract every cycle). The dome guard is
+not skipped: a no-feed plate holds and retracts on its own dome the same way a fed plate does. The
+load-sensor jam guard still applies, since it is about motion, not the pellet.
 
 ## Events
 
@@ -211,12 +245,16 @@ communication wire every node is connected to). Node → base on CAN ID
 | `0x09` | `Raising`         | count LE16                 | Phase entered: lifting the plate                                        |
 | `0x0A` | `DomeOpenWarning` | count LE16                 | The dome has been open for `kDomeOpenWarnMs`                            |
 | `0x0B` | `PelletTaken`     | count LE16, dome open      | The pellet left the plate; retrieval confirmed                          |
-| `0x0C` | `FeedSkipped`     | count LE16                 | A dispense arrived with the plate occupied; feed and lower were skipped |
+| `0x0C` | `FeedSkipped`     | count LE16                 | A dispense arrived with the plate occupied; the feed wheel was skipped. The plate still homes unless it is already at the top |
 | `0x0D` | `Seeking`         | count LE16                 | Conditional phase: clear load sensor (or step cap) before `Lowering`    |
 | `0x0E` | `NoFeedPresented` | count LE16 (unchanged)     | A no-feed raise finished; empty plate at the top. `count` does NOT increment |
 | `0x0F` | `Dwelling`        | count LE16                 | Phase entered: holding at the drop position, M1 idle (no-feed cycle)   |
 | `0x10` | `PresenceCalResult` | ok(1), threshold LE32, samples LE16 | Response to a `CalibratePresence` command — see below      |
 | `0x11` | `ConfigApplied`     | configType(1), ok(1), value LE32    | Ack of a `SetConfig` (heartbeat interval, presence factor) |
+| `0x12` | `DomeHold`        | count LE16                 | At the drop position, waiting for the dome to stay closed |
+| `0x13` | `Retracting`      | count LE16                 | M2 returning to the drop position |
+| `0x14` | `PelletReload`    | count LE16, reason, attempt | Warning: pellet missing; M1 is loading again. Reason 1 = lost during raise, 2 = missing after retract. `attempt` is 1-based and stops at 3 |
+| `0x15` | `FirmwareInfo`    | major, minor, patch        | Firmware version. Sent when the node is enabled and after every `Pong` |
 
 
 `count` is the node's running total of `Loaded` milestones — `NoFeedPresented` deliberately does not advance
@@ -258,7 +296,7 @@ until it receives `Recover`.
 | `FeedTimeout`      | M1 never confirmed a pellet on the plate — hopper empty / refill pellets                                   |
 | `ActuatorTimeout`  | M2 never reached its target (seek / lower / raise) — load-sensor issue or motor stuck                      |
 | `Jam`              | The load position sensor did not clear after the raise started; the plate is obstructed                    |
-| `PelletLost`       | The pellet left the plate during the raise. The base station reloads this automatically (Recover, then another dispense) and logs a warning; it only pauses the session after three consecutive losses on the same node |
+| `PelletLost`       | The pellet was missing and the node already reloaded `kMaxPelletReloads` (3) times this dispense. The base station reloads this automatically (Recover, then another dispense) and logs a warning; it only pauses the session after three consecutive losses on the same node |
 
 
 

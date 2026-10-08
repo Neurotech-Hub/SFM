@@ -24,6 +24,7 @@ from ..protocol import (
     parse_event,
     parse_event_context,
     parse_fault_code,
+    parse_pellet_reload,
     parse_heartbeat,
     parse_input_changed,
     parse_presence_cal,
@@ -45,6 +46,9 @@ class EventKind(Enum):
     LOWERING = auto()
     LOADING = auto()
     DWELLING = auto()  # holding at the drop position, M1 idle (no-feed cycle)
+    DOME_HOLD = auto()  # at the drop position, waiting for the dome to close
+    RETRACTING = auto()  # plate returning to the drop position
+    PELLET_RELOAD = auto()  # warning: pellet missing, M1 loading again
     RAISING = auto()
     DOME_OPEN_WARNING = auto()
     PRESENCE_CHANGED = auto()
@@ -79,6 +83,9 @@ _CAN_EVENT_TO_KIND: Dict[CanEvent, EventKind] = {
     CanEvent.Lowering: EventKind.LOWERING,
     CanEvent.Loading: EventKind.LOADING,
     CanEvent.Dwelling: EventKind.DWELLING,
+    CanEvent.DomeHold: EventKind.DOME_HOLD,
+    CanEvent.Retracting: EventKind.RETRACTING,
+    CanEvent.PelletReload: EventKind.PELLET_RELOAD,
     CanEvent.Raising: EventKind.RAISING,
     CanEvent.DomeOpenWarning: EventKind.DOME_OPEN_WARNING,
     CanEvent.PresenceCalResult: EventKind.PRESENCE_CAL_RESULT,
@@ -281,8 +288,8 @@ class EventNormalizer:
         if payload.event == CanEvent.InputChanged:
             return self._from_input_changed(node_id, payload, now)
 
-        # Pong is identity-only; not an experiment event.
-        if payload.event == CanEvent.Pong:
+        # Pong and FirmwareInfo are identity-only; not experiment events.
+        if payload.event in (CanEvent.Pong, CanEvent.FirmwareInfo):
             return []
 
         kind = _CAN_EVENT_TO_KIND.get(payload.event)
@@ -295,6 +302,16 @@ class EventNormalizer:
             event_data["fault_code"] = fault if fault is not None else ServiceStatus.Ok
             if payload.raw_extra:
                 event_data["raw_extra"] = bytes(payload.raw_extra)
+        elif payload.event == CanEvent.PelletReload:
+            info = parse_pellet_reload(payload)
+            if info is not None:
+                event_data["reason"] = info.reason_name
+                event_data["attempt"] = info.attempt
+                event_data["pellet_count"] = info.pellet_count
+                self._pellets.witness_event(node_id, payload.event, info.pellet_count)
+                tally = self._pellets.tally(node_id)
+                event_data["session_pellets"] = tally.presented
+                event_data["session_taken"] = tally.taken
         elif payload.event == CanEvent.PresenceCalResult:
             # Not a pellet count — must not fall into the generic raw_extra
             # count fallback below, or ok/threshold get misread as a count.

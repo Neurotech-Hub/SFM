@@ -46,6 +46,7 @@ class NodeState:
 
     # Identity
     mac: Optional[bytes] = None             # 6-byte MAC from discovery
+    firmware_version: Optional[str] = None  # "1.6.0" from FirmwareInfo; None = unknown
     discovery_state: str = "Pending"        # "Pending", "Announced", "Enabled"
 
     # Dispenser / sensor state (from heartbeat)
@@ -200,6 +201,8 @@ class NodeRegistry:
             CanEvent.OnPlate:         DispenseState.Loading,
             CanEvent.FeedSkipped:     DispenseState.Raising,
             CanEvent.Dwelling:        DispenseState.Dwelling,
+            CanEvent.DomeHold:        DispenseState.DomeHold,
+            CanEvent.Retracting:      DispenseState.Retracting,
             CanEvent.Raising:         DispenseState.Raising,
             CanEvent.Loaded:          DispenseState.Loaded,
             CanEvent.NoFeedPresented: DispenseState.Loaded,
@@ -263,6 +266,7 @@ class NodeRegistry:
         """
         for node in self._nodes.values():
             node.mac = None
+            node.firmware_version = None
             node.discovery_state = "Pending"
             node.online = False
             node.last_heartbeat_time = None

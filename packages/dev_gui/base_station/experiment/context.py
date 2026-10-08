@@ -657,14 +657,16 @@ class ExperimentControl:
         elif ev.kind in (
             EventKind.SEEKING, EventKind.LOWERING, EventKind.LOADING,
             EventKind.DWELLING, EventKind.RAISING,
+            EventKind.DOME_HOLD, EventKind.RETRACTING,
         ):
             # A new cycle starting means whatever was presented before is no
             # longer current. DOME_OPENED is deliberately NOT in this list —
             # a dome bout on an already-presented plate (pellet or empty)
-            # must not erase what was actually presented. `dispensing` is
-            # NOT cleared here — the cycle is still in flight through these
-            # phases; see LOADED/NO_FEED_PRESENTED/FEED_SKIPPED/FAULT.
+            # must not erase what was actually presented. These phases are
+            # still in flight, including a home-then-raise that started with
+            # FeedSkipped, so re-assert `dispensing` here.
             view.presented_pellet = view.presented_empty = False
+            view.dispensing = True
         elif ev.kind in (EventKind.FEED_SKIPPED, EventKind.FAULT):
             # Terminal without a normal raise: FeedSkipped means firmware
             # never ran a motion (plate already occupied), and a fault aborts

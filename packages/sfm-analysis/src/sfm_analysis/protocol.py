@@ -73,6 +73,10 @@ class CanEvent(IntEnum):
     Dwelling          = 0x0F  # phase: holding at the drop position, M1 idle
     PresenceCalResult = 0x10  # raw_extra: ok(1), threshold LE32, samples LE16
     ConfigApplied     = 0x11  # raw_extra: configType(1), ok(1), value LE32
+    DomeHold          = 0x12  # phase: at the drop position, waiting for the dome to close
+    Retracting        = 0x13  # phase: M2 returning to the drop position
+    PelletReload      = 0x14  # raw_extra: count LE16, reason(1), attempt(1)
+    FirmwareInfo      = 0x15  # raw_extra: major(1), minor(1), patch(1)
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
@@ -92,6 +96,10 @@ CAN_EVENT_DISPLAY_NAME = {
     CanEvent.FeedSkipped: "FeedSkipped",
     CanEvent.NoFeedPresented: "NoFeedPresented",
     CanEvent.Dwelling: "Dwelling",
+    CanEvent.DomeHold: "Dome Hold",
+    CanEvent.Retracting: "Retracting",
+    CanEvent.PelletReload: "Pellet Reload",
+    CanEvent.FirmwareInfo: "Firmware Info",
     CanEvent.PresenceCalResult: "PresenceCalResult",
     CanEvent.ConfigApplied: "ConfigApplied",
 }
@@ -104,6 +112,7 @@ _COUNT_EVENTS = frozenset({
     CanEvent.OnPlate, CanEvent.Loaded, CanEvent.DomeOpened, CanEvent.PelletTaken,
     CanEvent.FeedSkipped, CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading,
     CanEvent.Raising, CanEvent.NoFeedPresented, CanEvent.Dwelling,
+    CanEvent.DomeHold, CanEvent.Retracting, CanEvent.PelletReload,
 })
 
 
@@ -125,6 +134,8 @@ class DispenseState(IntEnum):
     Seeking       = 5  # M2 up until load sensor clears or seekAwaySteps_
     Fault         = 6  # FeedTimeout / ActuatorTimeout / jam / pellet lost
     Dwelling      = 7  # no-feed: holding at the drop position, M1 idle
+    DomeHold      = 8  # at the drop position, waiting for the dome to close
+    Retracting    = 9  # M2 returning to the drop position
 
 
 def behavioral_input_log_name(
@@ -171,7 +182,7 @@ class ServiceStatus(IntEnum):
     NotInitialized  = 1
     Jam             = 2
     InvalidData     = 3
-    PelletLost      = 4       # pellet left the plate during raise
+    PelletLost      = 4       # pellet missing and the reload cap was used up
     FeedTimeout     = 5       # M1: no pellet confirmed — refill hopper
     ActuatorTimeout = 6       # M2: never reached target — sensor or motor
 
@@ -182,7 +193,7 @@ SERVICE_STATUS_USER_MESSAGE = {
     ServiceStatus.NotInitialized: "Not initialized",
     ServiceStatus.Jam: "Jam — load sensor still blocked during raise",
     ServiceStatus.InvalidData: "Invalid data",
-    ServiceStatus.PelletLost: "Pellet lost from the plate during raise",
+    ServiceStatus.PelletLost: "Pellet lost — reload failed 3 times",
     ServiceStatus.FeedTimeout: "Out of pellets — refill the hopper (M1 feed timed out)",
     ServiceStatus.ActuatorTimeout: (
         "Actuator fault — plate did not reach position "
@@ -401,6 +412,50 @@ def parse_config_applied(event: EventPayload) -> Optional[ConfigAppliedPayload]:
         ok=bool(event.raw_extra[1]),
         raw_value=int.from_bytes(event.raw_extra[2:6], "little"),
     )
+
+
+# Mirror of firmware kMaxPelletReloads. The attempt byte on the wire is 1-based
+# and stops at this value; the next miss is a PelletLost fault instead.
+PELLET_RELOAD_MAX = 3
+
+
+class PelletReloadReason(IntEnum):
+    """Wire byte on CanEvent.PelletReload. Mirror of firmware PelletReloadReason."""
+    LostDuringRaise = 1
+    MissingAfterRetract = 2
+
+
+@dataclass
+class PelletReloadPayload:
+    pellet_count: int
+    reason: int
+    attempt: int
+
+    @property
+    def reason_name(self) -> str:
+        try:
+            return PelletReloadReason(self.reason).name
+        except ValueError:
+            return f"Unknown({self.reason})"
+
+
+def parse_pellet_reload(event: EventPayload) -> Optional[PelletReloadPayload]:
+    """Decode PelletReload extra bytes: count LE16, reason(1), attempt(1)."""
+    if event.event != CanEvent.PelletReload or len(event.raw_extra) < 4:
+        return None
+    return PelletReloadPayload(
+        pellet_count=event.raw_extra[0] | (event.raw_extra[1] << 8),
+        reason=event.raw_extra[2],
+        attempt=event.raw_extra[3],
+    )
+
+
+def parse_firmware_info(event: EventPayload) -> Optional[str]:
+    """Decode FirmwareInfo extra bytes (major, minor, patch) as ``1.6.0``."""
+    if event.event != CanEvent.FirmwareInfo or len(event.raw_extra) < 3:
+        return None
+    major, minor, patch = event.raw_extra[0], event.raw_extra[1], event.raw_extra[2]
+    return f"{major}.{minor}.{patch}"
 
 
 def config_applied_factor(payload: ConfigAppliedPayload) -> float:

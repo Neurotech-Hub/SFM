@@ -82,13 +82,15 @@ except ImportError:
         Pong=0x05; InputChanged=0x06; Lowering=0x07; Loading=0x08; Raising=0x09
         DomeOpenWarning=0x0A; PelletTaken=0x0B; FeedSkipped=0x0C; Seeking=0x0D
         NoFeedPresented=0x0E; Dwelling=0x0F; PresenceCalResult=0x10
+        ConfigApplied=0x11; DomeHold=0x12; Retracting=0x13
+        PelletReload=0x14; FirmwareInfo=0x15
 
     class InputId(IntEnum):
         Pellet=0x01; LoadPosition=0x02; Dome=0x03; MousePresence=0x04
 
     class DispenseState(IntEnum):
         Idle=0; Lowering=1; Loading=2; Raising=3; Loaded=4; Seeking=5
-        Fault=6; Dwelling=7
+        Fault=6; Dwelling=7; DomeHold=8; Retracting=9
 
     class ServiceStatus(IntEnum):
         Ok=0; NotInitialized=1; Jam=2; InvalidData=3; PelletLost=4
@@ -346,7 +348,9 @@ class NodeSimulator:
             if cmd == CanCmd.Ping:
                 # Pong carries the node's MAC — mirrors real firmware so the
                 # GUI can confirm/refresh its MAC<->ID mapping from a live node.
+                # FirmwareInfo follows every Pong (major, minor, patch).
                 self._send_event(node, CanEvent.Pong, node.mac)
+                self._send_event(node, CanEvent.FirmwareInfo, bytes([1, 6, 0]))
                 print(f"  [SIM] Node {node.node_id}: status LED blink (Ping)", flush=True)
 
             elif cmd == CanCmd.Dispense:
