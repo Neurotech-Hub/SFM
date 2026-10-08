@@ -175,7 +175,7 @@ class SimNode:
     peer_raise_seen: bool = False
     cal_until: Optional[float] = None  # presence calibration in progress until this time
     presence_threshold: int = 35000    # mirrors firmware kDefaultPresenceThreshold
-    presence_factor: float = 3.0       # mirrors firmware kDefaultPresenceFactor
+    presence_factor: float = 60.0      # mirrors firmware kDefaultPresenceFactor
 
     # Timing
     last_heartbeat: float = field(default_factory=time.time)

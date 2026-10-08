@@ -71,7 +71,7 @@ the multiplier used in `threshold = mean + factor × σ`.
 
 | Value | Constant | Location | Notes |
 | ----- | -------- | -------- | ----- |
-| 3.0 | `DEFAULT_PRESENCE_FACTOR` | `dev_settings.py` | Dev-settings default; persisted under `~/.sfm/dev_settings.json` |
+| 60 | `DEFAULT_PRESENCE_FACTOR` | `dev_settings.py` | Dev-settings default; persisted under `~/.sfm/dev_settings.json`. A file that already stores a factor keeps that value |
 | 0.1–100 | `PRESENCE_FACTOR_MIN` / `MAX` | `protocol.py` | Clamp on `SetConfig` payload; mirrors firmware |
 
 

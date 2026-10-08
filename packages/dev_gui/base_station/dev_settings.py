@@ -8,7 +8,7 @@ File format (JSON)::
 
     {
       "version": 1,
-      "presence_factor": 3.0
+      "presence_factor": 60.0
     }
 
 Unknown keys are ignored on load, so a settings file written by an older build
@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 DEFAULT_SETTINGS_PATH = Path("~/.sfm/dev_settings.json")
 
 # Mirrors firmware's kDefaultPresenceFactor (PresenceService.h).
-DEFAULT_PRESENCE_FACTOR = 3.0
+DEFAULT_PRESENCE_FACTOR = 60.0
 
 
 class DevSettings:
