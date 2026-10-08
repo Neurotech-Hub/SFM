@@ -34,6 +34,8 @@ _PHASE_FIELDS = {
     "Raising": "raising_t",
     "Seeking": "seeking_t",
     "Dwelling": "dwelling_t",
+    "Dome Hold": "dome_hold_t",
+    "Retracting": "retracting_t",
 }
 
 
@@ -71,6 +73,8 @@ class Cycle:
     raising_t: Optional[float] = None
     seeking_t: Optional[float] = None
     dwelling_t: Optional[float] = None
+    dome_hold_t: Optional[float] = None
+    retracting_t: Optional[float] = None
     ready_t: Optional[float] = None        # Loaded (fed) or NoFeedPresented (no-feed)
     first_presence_t: Optional[float] = None
     first_dome_t: Optional[float] = None

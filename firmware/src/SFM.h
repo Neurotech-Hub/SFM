@@ -16,6 +16,7 @@
 //   }
 // ---------------------------------------------------------------------------
 
+#include "SFMVersion.h"
 #include "hardware/SFMPins.h"
 #include "services/ServiceTypes.h"
 #include "services/DispenserService.h"
@@ -91,8 +92,13 @@ private:
     bool reportedPresence_ = false;
 
     // Last dispenser FSM state published as a phase event (Seeking / Lowering /
-    // Loading / Raising). Heartbeats still carry the full state snapshot.
+    // Loading / Raising / DomeHold / Retracting). Heartbeats still carry the
+    // full state snapshot.
     DispenseState lastReportedDispenseState_ = DispenseState::Idle;
+
+    // FirmwareInfo is sent once when the node becomes Enabled, and again
+    // after every Pong. Cleared if identity drops so the next enable repeats it.
+    bool firmwareAnnounced_ = false;
 
     // Button (PIN_BTN, active LOW): short click recalibrates presence, long
     // hold clears the NVS node ID.
@@ -143,6 +149,7 @@ private:
     void handleInputEvents();
     void sendInputChanged(InputId input, bool active);
     void sendPhaseEvent(CanEvent ev);
+    void sendFirmwareInfo();
     void sendHeartbeatIfDue();
     void updateCalConfirmBlink();
     void handlePresenceEvents();

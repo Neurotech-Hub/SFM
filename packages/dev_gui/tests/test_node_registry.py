@@ -313,7 +313,8 @@ class TestNodeRegistry:
 
     @pytest.mark.parametrize("event", [
         CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading, CanEvent.OnPlate,
-        CanEvent.Dwelling, CanEvent.Raising, CanEvent.Loaded,
+        CanEvent.Dwelling, CanEvent.DomeHold, CanEvent.Retracting,
+        CanEvent.Raising, CanEvent.Loaded,
         CanEvent.FeedSkipped, CanEvent.PelletTaken, CanEvent.Fault,
     ])
     def test_stale_empty_flag_is_cleared_by_next_cycle_event(self, event):

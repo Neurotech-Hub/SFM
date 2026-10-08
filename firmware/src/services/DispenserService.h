@@ -36,9 +36,16 @@ constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)
 // Delivery / jam / warning timers
 constexpr uint32_t kPelletLoadConfirmMs    = 2000;   // pellet sensor held during Loading → OnPlate
 constexpr uint32_t kPelletTakenConfirmMs   = 200;    // pellet sensor clear → PelletTaken
-constexpr uint32_t kPelletLostMs           = 500;    // pellet sensor clear during raise → PelletLost
+constexpr uint32_t kPelletLostMs           = 500;    // pellet sensor clear during raise → retract / reload
 constexpr uint32_t kLoadClearOnRaiseMs     = 5000;   // load sensor must clear after raise start
 constexpr uint32_t kDomeOpenWarnMs         = 30000;  // dome open → DomeOpenWarning
+// Below this fraction of raiseSteps_ a dome opening or a lost pellet retracts
+// the plate. At or above it, a lost pellet with the dome open is a take.
+constexpr uint32_t kRaiseCommitPct         = 80;
+// Dome must stay closed this long before a raise starts or resumes.
+constexpr uint32_t kDomeCloseSettleMs      = 500;
+// Automatic reloads of one dispense before Fault/PelletLost.
+constexpr uint8_t  kMaxPelletReloads       = 3;
 
 // ---------------------------------------------------------------------------
 class DispenserService {
@@ -71,6 +78,10 @@ public:
     uint32_t      pelletCount() const { return pelletCount_; }
     uint32_t      takenCount() const { return takenCount_; }
     DispenseEvent takeEvent();
+
+    // Latched with the last PelletReload event (reason = PelletReloadReason).
+    uint8_t lastReloadReason() const { return lastReloadReason_; }
+    uint8_t lastReloadAttempt() const { return lastReloadAttempt_; }
 
     ServiceStatus faultCode() const { return lastFault_; }
 
@@ -108,7 +119,11 @@ private:
     AccelStepper motor2_;
 
     DispenseState state_;
-    DispenseEvent pendingEvent_;
+    static constexpr uint8_t kEventQueueCap = 4;
+    DispenseEvent eventQ_[kEventQueueCap];
+    uint8_t       eventHead_;
+    uint8_t       eventTail_;
+    uint8_t       eventCount_;
     uint32_t      pelletCount_;
     uint32_t      takenCount_;
     ServiceStatus lastFault_;
@@ -118,6 +133,7 @@ private:
     bool     pg3WasOpen_;
     bool     grabPhase_; // Lowering sub-phase: descending past load sensor to drop position
     bool     noFeed_;    // this cycle runs the motion but never turns M1
+    bool     skipFeed_;  // occupied plate: home to the drop position, then raise (M1 off)
     // Latched when a peer node starts raising. Set regardless of the current
     // phase — an occupied fed node raises almost immediately, before this node
     // has finished lowering — and consumed only by Dwelling.
@@ -135,12 +151,37 @@ private:
     bool     belowLoad_;
     bool     approachRetried_; // one seek-away retry per dispense cycle
     // Seeking exit: when true, stop as soon as the load sensor clears (or at
-    // seekAwaySteps_). When false, fixed travel — only used when belowLoad_ is
-    // already known (plate at drop depth, sensor already clear).
+    // seekAwaySteps_). Used when seek starts on an asserted load sensor.
     bool     seekUntilClear_;
+    // Plate is known to be below the load sensor (beam already clear). Seek
+    // up until the beam breaks and then clears, still capped at seekAwaySteps_.
+    bool     seekBreakThenClear_;
+    bool     seekSawBreak_;
+
+    // Drop position is the raw PG2 break edge minus grabSteps_. A raise always
+    // starts from this absolute stepper position. Unknown after boot, fault,
+    // and recover — the next cycle re-homes and latches it again.
+    long     dropPos_;
+    bool     dropPosKnown_;
+    long     edgePos_;       // stepper position at the raw PG2 break
+    bool     edgeLatched_;
+    bool     pg2RawRose_;    // raw PG2 clear→broken this tick
+    bool     pg2RawFell_;    // raw PG2 broken→clear this tick
+
+    // This raise: saw the load beam assert, then saw it clear (plate is above).
+    bool     raiseSawBeam_;
+    bool     raiseLeftBeam_;
+    bool     raiseDomeOpen_; // debounced dome state already observed this raise
+    bool     retractRelatch_; // retract started above the sensor; re-home on the way down
+    bool     earlyTaken_;    // pellet taken at/after the commit point; finish the raise
+    bool     pelletLostDuringRaise_;
+    uint8_t  reloadCount_;
+    uint8_t  lastReloadReason_;
+    uint8_t  lastReloadAttempt_;
 
     uint32_t raiseStartMs_;
     uint32_t pg3OpenSinceMs_;
+    uint32_t pg3ClosedSinceMs_; // millis() when the dome last closed; 0 while open
     uint32_t pelletClearSinceMs_; // pellet sensor clear timer (Raising or Loaded)
     uint32_t pelletSeenSinceMs_;  // pellet sensor held timer during Loading (0 = not seen)
     bool     domeWarnLatched_;
@@ -174,9 +215,16 @@ private:
     bool phaseTimedOut(uint32_t timeoutMs) const;
 
     void startSeekAwayFromPg2(bool untilClear);
+    void startSeekBreakThenClear();
     void startApproachPg2();
     void startGrabDescent();
-    void startRaise(long steps);
+    void requestRaise();
+    void beginRaiseOrReload();
+    void startRaise();
+    void startRetract(bool pelletLost);
+    bool domeSettled() const;
+    bool eventQueueHasRoom() const;
+    long raiseCommitSteps() const;
     void startFeed();
     void beginFeedBurst();
     void stopFeedMotor();

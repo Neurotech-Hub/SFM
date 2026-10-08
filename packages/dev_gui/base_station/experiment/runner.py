@@ -205,6 +205,7 @@ class Experiment:
         io: Optional[IOManager] = None,
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
+        firmware_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> "ExperimentRunner":
         """Build a runner for GUI hosting or synthetic testing."""
         return ExperimentRunner(
@@ -213,6 +214,7 @@ class Experiment:
             io=io,
             wire_bnc=wire_bnc,
             online_timeout_s=online_timeout_s,
+            firmware_for=firmware_for,
         )
 
 
@@ -231,10 +233,12 @@ class ExperimentRunner:
         io: Optional[IOManager] = None,
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
+        firmware_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> None:
         self.experiment = experiment
         self.can = can
         self.io = io
+        self._firmware_for = firmware_for
         self.ctx = ExperimentControl(
             nodes=experiment.nodes,
             can=can,
@@ -452,12 +456,18 @@ class ExperimentRunner:
         # different timezone has no way to know what "local" meant here --
         # see sfm_analysis.report.timezones for how the SDK consumes it.
         utc_offset_s = datetime.now().astimezone().utcoffset()
+        # String keys: this dict is JSON-encoded into the session CSV.
+        firmware = {
+            str(n): (self._firmware_for(n) if self._firmware_for is not None else None) or "unknown"
+            for n in self.ctx.nodes
+        }
         self.ctx.log(
             "session_start",
             experiment=self.experiment.name,
             nodes=self.ctx.nodes,
             seed=self.ctx.seed,
             utc_offset_s=utc_offset_s.total_seconds() if utc_offset_s is not None else None,
+            firmware=firmware,
         )
         if self.ctx.on_session_start is not None:
             try:

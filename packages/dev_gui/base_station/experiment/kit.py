@@ -517,7 +517,7 @@ def _run_synchronized_cycle(
     accepted: Dict[int, bool] = {}
     # Mimics go out FIRST. A no-feed node raises when it hears a peer's Raising
     # event, and it can only latch that event once its own cycle is running. A
-    # fed node whose plate is already occupied skips straight to the raise
+    # fed node whose plate is already at the top raises without homing
     # (firmware's beginOccupiedDispense), so commanding it first can put its
     # Raising frame on the bus before the mimic has been told to do anything —
     # the mimic would then hold at the drop position until Recover.

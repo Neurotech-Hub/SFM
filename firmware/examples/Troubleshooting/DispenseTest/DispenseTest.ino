@@ -90,9 +90,11 @@ static const char *stateStr(sfm::DispenseState s) {
         case sfm::DispenseState::Lowering: return "Lowering";
         case sfm::DispenseState::Loading:  return "Loading";
         case sfm::DispenseState::Dwelling: return "Dwelling";
-        case sfm::DispenseState::Raising:  return "Raising";
-        case sfm::DispenseState::Loaded:   return "Loaded";
-        case sfm::DispenseState::Fault:    return "Fault";
+        case sfm::DispenseState::Raising:    return "Raising";
+        case sfm::DispenseState::Loaded:     return "Loaded";
+        case sfm::DispenseState::DomeHold:   return "DomeHold";
+        case sfm::DispenseState::Retracting: return "Retracting";
+        case sfm::DispenseState::Fault:      return "Fault";
     }
     return "?";
 }
@@ -731,6 +733,12 @@ static void handleDispenseEvent(sfm::DispenseEvent ev) {
         case sfm::DispenseEvent::NoFeedPresented:
             Serial.println(F("[Event] NoFeedPresented"));
             finishCycle(true);
+            break;
+        case sfm::DispenseEvent::PelletReload:
+            Serial.print(F("[Event] PelletReload reason="));
+            Serial.print(dispenser.lastReloadReason());
+            Serial.print(F(" attempt="));
+            Serial.println(dispenser.lastReloadAttempt());
             break;
         case sfm::DispenseEvent::Fault:
             printFaultDetail();

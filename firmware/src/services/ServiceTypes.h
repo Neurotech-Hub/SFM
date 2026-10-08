@@ -25,7 +25,7 @@ enum class ServiceStatus : uint8_t {
     NotInitialized,
     Jam,
     InvalidData,
-    PelletLost,       // pellet left the plate during raise
+    PelletLost,       // pellet left the plate and the reload cap was used up
     FeedTimeout,      // M1: no pellet confirmed — hopper empty / need refill
     ActuatorTimeout,  // M2: never reached load/raise target — sensor or motor
 };
@@ -34,24 +34,29 @@ enum class ServiceStatus : uint8_t {
 // Dispenser state machine states
 //
 // User-facing cycle (events mirror these phases):
-//   Seeking (conditional) → Lowering → Loading → Raising → Loaded
+//   Seeking (conditional) → Lowering → Loading → DomeHold? → Raising → Loaded
+// A raise that is interrupted drops back through Retracting to DomeHold.
 // Loaded means the plate is at the top and ready for the mouse to take.
 // ---------------------------------------------------------------------------
 enum class DispenseState : uint8_t {
-    Idle     = 0,
-    Lowering = 1, // M2 down to the load sensor, then grabSteps_ past it (empty plate only)
-    Loading  = 2, // M1 until the pellet sensor asserts
-    Raising  = 3, // M2 up by raiseSteps_ from the pellet-drop position
-    Loaded   = 4, // plate at top, ready for the mouse; ends on PelletTaken → Idle
-    Seeking  = 5, // M2 up until load sensor clears or seekAwaySteps_ (before approach)
-    Fault    = 6, // sticky until recover()
-    Dwelling = 7, // no-feed: holding at the drop position, M1 idle, waiting for a
-                  // peer node's Raising event (no timer — held until Recover)
+    Idle       = 0,
+    Lowering   = 1, // M2 down to the load sensor, then grabSteps_ past the raw edge
+    Loading    = 2, // M1 until the pellet sensor asserts
+    Raising    = 3, // M2 up by raiseSteps_ from the pellet-drop position
+    Loaded     = 4, // plate at top, ready for the mouse; ends on PelletTaken → Idle
+    Seeking    = 5, // M2 up until load sensor clears or seekAwaySteps_ (before approach)
+    Fault      = 6, // sticky until recover()
+    Dwelling   = 7, // no-feed: holding at the drop position, M1 idle, waiting for a
+                    // peer node's Raising event (no timer — held until Recover)
+    DomeHold   = 8, // at the drop position, motors off, waiting for the dome to
+                    // stay closed before the raise (no timeout)
+    Retracting = 9, // M2 back down to the drop position (dome opened or pellet
+                    // lost before the raise commit point)
 };
 
 // ---------------------------------------------------------------------------
-// Dispenser events – one event is latched per transition.
-// Read with DispenserService::takeEvent(); returns None if no new event.
+// Dispenser events. Queued (a short FIFO) so a transition can report more
+// than one. Read with DispenserService::takeEvent(); returns None if empty.
 // ---------------------------------------------------------------------------
 enum class DispenseEvent : uint8_t {
     None = 0,
@@ -60,9 +65,16 @@ enum class DispenseEvent : uint8_t {
     DomeOpened,       // dome lifted while Loaded
     Fault,            // FeedTimeout / ActuatorTimeout / Jam / PelletLost (see faultCode())
     DomeOpenWarning,  // dome open continuously > kDomeOpenWarnMs
-    PelletTaken,      // pellet sensor cleared while Loaded → Idle
+    PelletTaken,      // pellet sensor cleared while Loaded (or an early take) → Idle
     FeedSkipped,      // Dispense with plate already occupied
     NoFeedPresented,  // no-feed raise complete; empty plate at the top (pelletCount NOT incremented)
+    PelletReload,     // warning: pellet missing at the drop position; M1 is loading again
+};
+
+// Why a PelletReload warning was emitted. Wire byte on CanEvent::PelletReload.
+enum class PelletReloadReason : uint8_t {
+    LostDuringRaise     = 1, // pellet sensor cleared during the raise; plate retracted
+    MissingAfterRetract = 2, // pellet sensor clear after a retract, before the raise resumes
 };
 
 // ---------------------------------------------------------------------------
@@ -106,6 +118,10 @@ enum class CanEvent : uint8_t {
     Dwelling          = 0x0F, // phase: holding at the drop position, M1 idle
     PresenceCalResult = 0x10, // extra: ok(1), threshold LE32, samples LE16
     ConfigApplied     = 0x11, // extra: configType(1), ok(1), value LE32 (uint32 or float32 bit pattern, per configType)
+    DomeHold          = 0x12, // phase: at the drop position, waiting for the dome to close
+    Retracting        = 0x13, // phase: M2 returning to the drop position
+    PelletReload      = 0x14, // extra: count LE16, PelletReloadReason(1), attempt(1)
+    FirmwareInfo      = 0x15, // extra: major(1), minor(1), patch(1)
 };
 
 // Input IDs carried by CanEvent::InputChanged.

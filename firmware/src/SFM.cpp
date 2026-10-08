@@ -30,6 +30,9 @@ bool SFM::begin() {
 
     bool ok = true;
 
+    Serial.print("SFM firmware v");
+    Serial.println(kFirmwareVersionStr);
+
 
 
     // 1. LEDs first – visual feedback during boot
@@ -104,6 +107,7 @@ bool SFM::begin() {
 
             case CanCmd::Ping: {
                 can_.sendEvent(CanEvent::Pong, identity_.mac(), 6);
+                sendFirmwareInfo();
                 blinkStatusLedForPing();
                 break;
             }
@@ -294,6 +298,13 @@ void SFM::update() {
 
     identity_.update();  // then act on any received discovery frames
 
+    if (!identity_.isEnabled() || can_.nodeId() == 0) {
+        firmwareAnnounced_ = false;
+    } else if (!firmwareAnnounced_) {
+        sendFirmwareInfo();
+        firmwareAnnounced_ = true;
+    }
+
     dispenser_.update();
 
     leds_.update();
@@ -399,6 +410,8 @@ void SFM::handleDispenserEvents() {
 
         case DispenseEvent::DomeOpenWarning: canEv = CanEvent::DomeOpenWarning; break;
 
+        case DispenseEvent::PelletReload:    canEv = CanEvent::PelletReload;    break;
+
         case DispenseEvent::Fault:
 
             canEv = CanEvent::Fault;
@@ -476,6 +489,18 @@ void SFM::handleDispenserEvents() {
 
     }
 
+    if (ev == DispenseEvent::PelletReload) {
+
+        uint8_t reload[4];
+        reload[0] = extra[0];
+        reload[1] = extra[1];
+        reload[2] = dispenser_.lastReloadReason();
+        reload[3] = dispenser_.lastReloadAttempt();
+        can_.sendEvent(canEv, reload, 4);
+        return;
+
+    }
+
     can_.sendEvent(canEv, extra, 2);
 
 }
@@ -520,9 +545,28 @@ void SFM::handleDispensePhaseEvents() {
             sendPhaseEvent(CanEvent::Raising);
             break;
 
+        case DispenseState::DomeHold:
+            sendPhaseEvent(CanEvent::DomeHold);
+            break;
+
+        case DispenseState::Retracting:
+            sendPhaseEvent(CanEvent::Retracting);
+            break;
+
         default:
             break;
     }
+}
+
+
+void SFM::sendFirmwareInfo() {
+    if (!identity_.isEnabled() || can_.nodeId() == 0) return;
+    uint8_t extra[3] = {
+        kFirmwareVersionMajor,
+        kFirmwareVersionMinor,
+        kFirmwareVersionPatch,
+    };
+    can_.sendEvent(CanEvent::FirmwareInfo, extra, 3);
 }
 
 

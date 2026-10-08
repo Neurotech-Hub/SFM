@@ -63,6 +63,9 @@ from .protocol import (
     parse_discovery,
     parse_presence_cal,
     parse_config_applied,
+    parse_pellet_reload,
+    parse_firmware_info,
+    PELLET_RELOAD_MAX,
     config_applied_factor,
     build_setconfig_heartbeat,
     build_setconfig_presence_factor,
@@ -1220,6 +1223,12 @@ class SFMApp:
         # Re-push GUI heartbeat interval so experiment runs never inherit the
         # firmware 5s default, and align experiment offline detection to 3× HB.
         self._sync_heartbeat_policy(broadcast=True)
+        def _firmware_for(node_id: int) -> Optional[str]:
+            node = self._registry.get(node_id) if self._registry is not None else None
+            if node is None:
+                return None
+            return node.firmware_version
+
         ok = self._exp.start(
             exp_def,
             params=params,
@@ -1230,6 +1239,7 @@ class SFMApp:
             on_session_start=self._fire_sync_marker,
             online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
             resume=resume if resume is not None and resume.from_run else None,
+            firmware_for=_firmware_for,
         )
         if ok:
             # One ledger for the run: the experiment callbacks see the same
@@ -1526,6 +1536,34 @@ class SFMApp:
                             entry_name = f"Fault: {code}"
                         elif ev.event == CanEvent.DomeOpenWarning:
                             details = "dome sensor open >30s"
+                        elif ev.event == CanEvent.PelletReload:
+                            info = parse_pellet_reload(ev)
+                            if info is None:
+                                details = "malformed PelletReload payload"
+                            else:
+                                details = (
+                                    f"warning reason={info.reason_name} "
+                                    f"attempt {info.attempt}/{PELLET_RELOAD_MAX}"
+                                )
+                                ctx = {"pellet_count": info.pellet_count}
+                                rec = self._pellets.witness_event(
+                                    node_id, ev.event, info.pellet_count
+                                )
+                                details += " " + self._pellet_details(
+                                    node_id, ev.event, ctx, rec
+                                )
+                                log_fields.update(
+                                    self._pellet_fields(node_id, ev.event, ctx, rec)
+                                )
+                        elif ev.event == CanEvent.FirmwareInfo:
+                            version = parse_firmware_info(ev)
+                            if version is None:
+                                details = "malformed FirmwareInfo payload"
+                            else:
+                                details = f"version={version}"
+                                node = self._registry.get(node_id)
+                                if node is not None:
+                                    node.firmware_version = version
                         elif ev.event == CanEvent.PresenceCalResult:
                             cal = parse_presence_cal(ev)
                             if cal is None:
