@@ -574,6 +574,12 @@ class SFMApp:
         self._build_main_screen(num_nodes)
         self._screen = "main"
 
+        # Probe the bus immediately: every already-running node answers with a
+        # Pong carrying its live MAC (_handle_pong_mac), so tiles show MAC and
+        # online status now instead of waiting for heartbeats / the per-node
+        # MAC-resolution retry timer.
+        self._broadcast(CanCmd.Ping)
+
     # ------------------------------------------------------------------
     # Main Screen
     # ------------------------------------------------------------------
@@ -1440,8 +1446,8 @@ class SFMApp:
             dpg.add_table_column(label="Type",      width_fixed=True, init_width_or_weight=90)
             dpg.add_table_column(label="Event",     width_fixed=True, init_width_or_weight=150)
             dpg.add_table_column(label="ID",        width_fixed=True, init_width_or_weight=55)
-            dpg.add_table_column(label="Data",      width_stretch=True)
-            dpg.add_table_column(label="Details",   width_stretch=True)
+            dpg.add_table_column(label="Data",      width_stretch=True, init_width_or_weight=0.4)
+            dpg.add_table_column(label="Details",   width_stretch=True, init_width_or_weight=1.6)
 
     # ------------------------------------------------------------------
     # Render callback (called every frame)
@@ -2348,6 +2354,10 @@ class SFMApp:
                     label="Apply to All Nodes", width=180,
                     callback=self._on_apply_presence_factor,
                 )
+            dpg.add_text(
+                "Note: a lower factor makes detection more sensitive.",
+                color=(160, 165, 175, 255), wrap=390,
+            )
 
     def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
         factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else self._dev_settings.presence_factor
