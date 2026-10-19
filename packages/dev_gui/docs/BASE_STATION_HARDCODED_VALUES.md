@@ -162,7 +162,11 @@ fallbacks (kept in sync).
 | Value | Where | Notes |
 | ----- | ----- | ----- |
 | `~/sfm_logs` | `storage.py` | Fallback when no writable external drive is mounted under `/media/<user>/*` |
-| 1000 | `LogManager(max_entries=…)` | In-memory ring only; CSV is unbounded |
+| 1000 | `LogManager(max_entries=…)` | Display ring only. Heartbeats are excluded. CSV is unbounded and written off the GUI thread |
+| 30 | `LOG_VISIBLE_ROWS` | Fixed event-strip widgets in `app.py`. Filters rewrite these in place |
+| 0.5 s | `UI_PAINT_INTERVAL` | Status line and pellet counters |
+| 1 s | `_FLUSH_INTERVAL_S` | `log_manager.py` background CSV flush |
+| 50000 | `_RETAINED_HISTORY` | `experiment/context.py` in-memory command and experiment-log lists |
 | 64 chars | `sanitize_session_name` | Session-name filesystem cap |
 | `~/.sfm/mac_id_registry.json` | `mac_id_registry.py` | Persistent MAC ↔ Node ID map |
 | `~/.sfm/dev_settings.json` | `dev_settings.py` | Presence factor, etc. |
