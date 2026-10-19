@@ -10,7 +10,8 @@ The DearPyGui render callback fires every frame (~60 fps).  Each frame:
   2. Classify and dispatch each received frame.
   3. Tick the DiscoveryManager for timeout detection.
   4. Run staleness checks every second.
-  5. Refresh tile widgets and the log table.
+  5. Repaint status text a few times a second, and the event strip only
+     when a non-heartbeat row arrives.
 """
 
 from __future__ import annotations
@@ -96,9 +97,10 @@ WINDOW_H = 1200
 TILE_W   = 320
 TILE_H   = 340  # room for multi-line fault instructions + pellet counts
 FAULT_TEXT_WRAP = TILE_W - 24  # stay inside child_window padding/border
-LOG_ROWS = 18        # visible rows in the log table before scroll
-LOG_TABLE_HEIGHT = 220  
+LOG_VISIBLE_ROWS = 30  # fixed event-strip rows; created once, updated in place
+LOG_TABLE_HEIGHT = 220
 STALE_CHECK_INTERVAL = 1.0  # seconds between staleness sweeps
+UI_PAINT_INTERVAL = 0.5     # status line and pellet counters, not every frame
 DEFAULT_HEARTBEAT_INTERVAL_S = 60  # default node heartbeat interval (seconds)
 MAC_PING_RETRY_S = 3.0  # min seconds between MAC-resolution Pings to the same node
 DEFAULT_EXPERIMENT_NAME = "free_feeding"  # matches experiments/free_feeding.json "name"
@@ -272,7 +274,8 @@ class SFMApp:
         self._node_tiles: Dict[int, dict] = {}   # node_id → {tag dict}
         self._log_filter_node = 0                # 0 = all
         self._log_filter_type = "All"
-        self._show_heartbeats = False
+        self._last_panel_paint = 0.0
+        self._last_display_generation = -1
         self._hb_interval_s = float(DEFAULT_HEARTBEAT_INTERVAL_S)
         # Nodes that have already received (or been covered by) a SetConfig
         # HeartbeatInterval push this session. Cleared on Re-discover so a
@@ -1406,26 +1409,17 @@ class SFMApp:
             dpg.add_text("Type:", color=(160,165,175,255))
             dpg.add_combo(
                 tag="log_filter_type",
-                items=["All", "EVENT", "COMMAND", "HEARTBEAT", "DISCOVERY", "BNC", "SYNC", "WARNING", "EXPERIMENT"],
+                items=["All", "EVENT", "COMMAND", "DISCOVERY", "BNC", "SYNC", "WARNING", "EXPERIMENT"],
                 default_value="All",
                 width=120,
                 callback=self._refresh_log_table,
             )
-            dpg.add_checkbox(
-                tag="log_show_hb",
-                label="Show Heartbeats",
-                default_value=False,
-                callback=self._refresh_log_table,
-            )
-            dpg.add_button(label="Clear",  callback=self._on_log_clear)
-            dpg.add_button(label="Export", callback=self._on_log_export)
+            dpg.add_button(label="Clear", callback=self._on_log_clear)
             # TODO(report-gui-hook): a "Report" button belongs here, calling
             # base_station.report.build_session_report(self._log.csv_path, ...)
             # on a background threading.Thread (this render loop is single-
             # threaded — see _make_render_callback/_on_render — so report
-            # generation on a multi-hour session must not run inline) and
-            # surfacing the result path through the existing render-tick pump,
-            # the same way _on_log_export writes to log_count_text below.
+            # generation on a multi-hour session must not run inline).
             dpg.add_text("", tag="log_count_text", color=(160,165,175,255))
 
         with dpg.table(
@@ -1448,6 +1442,16 @@ class SFMApp:
             dpg.add_table_column(label="ID",        width_fixed=True, init_width_or_weight=55)
             dpg.add_table_column(label="Data",      width_stretch=True, init_width_or_weight=0.4)
             dpg.add_table_column(label="Details",   width_stretch=True, init_width_or_weight=1.6)
+            for i in range(LOG_VISIBLE_ROWS):
+                with dpg.table_row(tag=f"log_row_{i}", show=False):
+                    dpg.add_text("", tag=f"log_time_{i}")
+                    dpg.add_text("", tag=f"log_node_{i}")
+                    dpg.add_text("", tag=f"log_dir_{i}")
+                    dpg.add_text("", tag=f"log_type_{i}")
+                    dpg.add_text("", tag=f"log_event_{i}")
+                    dpg.add_text("", tag=f"log_id_{i}")
+                    dpg.add_text("", tag=f"log_data_{i}")
+                    dpg.add_text("", tag=f"log_details_{i}")
 
     # ------------------------------------------------------------------
     # Render callback (called every frame)
@@ -1479,8 +1483,14 @@ class SFMApp:
             self._exp.step(messages, now=now)
             if self._log and self._exp.runner is not None:
                 self._log.set_context(trial=self._exp.runner.ctx.trial)
-        self._refresh_experiment_status()
-        self._refresh_pellet_counters()
+        # Switch back to the daily CSV on the same frame a run ends.
+        # Widget repaints stay on UI_PAINT_INTERVAL.
+        if not self._exp.is_running:
+            self._resume_daily_log()
+        if now - self._last_panel_paint >= UI_PAINT_INTERVAL:
+            self._last_panel_paint = now
+            self._refresh_experiment_status()
+            self._refresh_pellet_counters()
 
         # 2. Tick discovery timeout
         if self._discovery:
@@ -1496,10 +1506,10 @@ class SFMApp:
         # 3b. Base-station dispense scheduler (interval + chained modes)
         self._tick_schedulers(now)
 
-        # 4. Refresh log table when CAN/BNC activity or new experiment log rows
-        log_count = self._log.total_count if self._log else 0
-        if messages or bnc_events or log_count != getattr(self, "_last_log_count", 0):
-            self._last_log_count = log_count
+        # 4. Repaint the event strip only when a non-heartbeat row arrived
+        #    or the operator changed a filter (that path calls refresh directly).
+        if self._log is not None and self._log.display_generation != self._last_display_generation:
+            self._last_display_generation = self._log.display_generation
             self._refresh_log_table()
 
     # ------------------------------------------------------------------
@@ -1994,39 +2004,43 @@ class SFMApp:
     # ------------------------------------------------------------------
 
     def _refresh_log_table(self, *_) -> None:
-        if not self._log:
+        if not self._log or not dpg.does_item_exist("log_row_0"):
             return
 
         node_filter = dpg.get_value("log_filter_node")
         type_filter = dpg.get_value("log_filter_type")
-        show_hb     = dpg.get_value("log_show_hb")
 
         node_id = None if node_filter == "All" else int(node_filter)
         ftype   = None if type_filter == "All" else type_filter
 
-        entries = self._log.get_filtered(
-            node_id=node_id,
-            frame_type=ftype,
-            show_heartbeats=show_hb,
+        matched = self._log.get_filtered(node_id=node_id, frame_type=ftype)
+        shown = matched[:LOG_VISIBLE_ROWS]
+
+        for i in range(LOG_VISIBLE_ROWS):
+            if i >= len(shown):
+                dpg.configure_item(f"log_row_{i}", show=False)
+                continue
+            entry = shown[i]
+            dir_color = (100, 220, 120, 255) if entry.direction == "RX" else (120, 160, 255, 255)
+            dpg.configure_item(f"log_row_{i}", show=True)
+            dpg.configure_item(f"log_time_{i}", default_value=entry.timestamp_str)
+            dpg.configure_item(
+                f"log_node_{i}",
+                default_value=str(entry.node_id) if entry.node_id else "—",
+            )
+            dpg.configure_item(f"log_dir_{i}", default_value=entry.direction, color=dir_color)
+            dpg.configure_item(f"log_type_{i}", default_value=entry.frame_type)
+            dpg.configure_item(f"log_event_{i}", default_value=entry.event_name)
+            dpg.configure_item(f"log_id_{i}", default_value=entry.raw_id_hex)
+            dpg.configure_item(f"log_data_{i}", default_value=entry.raw_data_hex)
+            dpg.configure_item(f"log_details_{i}", default_value=entry.details)
+
+        path = self._log.csv_path
+        where = f" · {path.name}" if path is not None else ""
+        dpg.set_value(
+            "log_count_text",
+            f"  {len(shown)}/{len(matched)} recent · {self._log.rows_written} on disk{where}",
         )
-
-        # Rebuild table rows
-        dpg.delete_item("log_table", children_only=True, slot=1)
-        for entry in entries:
-            with dpg.table_row(parent="log_table"):
-                dpg.add_text(entry.timestamp_str)
-                dpg.add_text(str(entry.node_id) if entry.node_id else "—")
-                dir_color = (100, 220, 120, 255) if entry.direction == "RX" else (120, 160, 255, 255)
-                dpg.add_text(entry.direction, color=dir_color)
-                dpg.add_text(entry.frame_type)
-                dpg.add_text(entry.event_name)
-                dpg.add_text(entry.raw_id_hex)
-                dpg.add_text(entry.raw_data_hex)
-                dpg.add_text(entry.details)
-
-        total = self._log.total_count
-        shown = len(entries)
-        dpg.set_value("log_count_text", f"  {shown} / {total} entries")
 
     # ------------------------------------------------------------------
     # Discovery UI
@@ -2731,17 +2745,8 @@ class SFMApp:
     def _on_log_clear(self) -> None:
         if self._log:
             self._log.clear()
+        self._last_display_generation = self._log.display_generation if self._log else -1
         self._refresh_log_table()
-
-    def _on_log_export(self) -> None:
-        if not self._log:
-            return
-        log_dir = self._exp_log_dir or "~/sfm_logs"
-        stem = self._log.session_name or "session"
-        path = self._log.export(
-            str(Path(log_dir).expanduser() / f"{stem}_export_{time.strftime('%Y%m%d_%H%M%S')}.csv")
-        )
-        dpg.set_value("log_count_text", f"  Exported → {path.name}")
 
     # ------------------------------------------------------------------
     # Shutdown

@@ -20,24 +20,27 @@ Two kinds of CSV sink exist:
 
 HEARTBEAT rows are always diverted to a sibling file
 (``session_YYYYMMDD_heartbeats.csv`` / ``{session}_heartbeats.csv``) so the
-main CSV stays event/command/experiment traffic only. Heartbeats still
-enter the in-memory ring (hidden in the GUI by default).
+main CSV stays event/command/experiment traffic only. Heartbeats do not
+enter the in-memory display ring. The last few are kept only so a test or
+a diagnostic can inspect the row that was queued for the heartbeat file.
 
 ``open_session()`` closes whichever sink is currently open and switches to
 the named one; it is not a second, parallel writer, so daily traffic is
 never merged into the experiment file.
 
-Performance note:
-  At 9 nodes × ~1/60 Hz heartbeat + events the CSV load is light.
-  A 1,000-entry deque update is O(1) amortized.  CSV writes use line-buffered
-  IO so each append is a single fwrite — no performance concern.
+CSV bytes are written on a background thread. ``add()`` only enqueues a
+finished row, so the GUI render thread does not wait on the SD card.
+The writer flushes about once a second, and ``close()`` / session switches
+wait until the queue has reached disk.
 """
 
 from __future__ import annotations
 
 import csv
 import json
+import queue
 import re
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -47,6 +50,12 @@ from pathlib import Path
 from sfm_analysis.logs import CSV_HEADER as _CSV_HEADER
 from sfm_analysis.logs import heartbeat_path_for as _heartbeat_path_for
 from typing import Any, Deque, Dict, List, Optional
+
+# Last heartbeats retained for inspection. Not shown in the GUI.
+_RECENT_HEARTBEATS = 32
+# How long a non-empty write queue may sit before it is flushed.
+_FLUSH_INTERVAL_S = 1.0
+_DRAIN_TIMEOUT_S = 10.0
 
 
 def sanitize_session_name(name: str) -> str:
@@ -142,7 +151,7 @@ class LogManager:
         lm.set_context(session="cohortA_day3", run_id=run_id, session_start_ts=time.time())
         lm.add(LogEntry(...))                       # goes to the named sink, stamped with run_id
         lm.resume_daily()                           # close experiment file; back to daily
-        entries = lm.get_filtered(show_heartbeats=False)
+        entries = lm.get_filtered()
         lm.export("~/Desktop/my_session.csv")
     """
 
@@ -181,6 +190,19 @@ class LogManager:
         self._session_start_ts: Optional[float] = None
         self._resume_state: ResumeState = ResumeState()
 
+        # Bumped when the display ring changes. The GUI paints on change.
+        self._display_generation: int = 0
+        self._recent_heartbeats: Deque[LogEntry] = deque(maxlen=_RECENT_HEARTBEATS)
+        self._rows_written: int = 0
+        self._write_error: Optional[BaseException] = None
+
+        self._pending: "queue.Queue[tuple]" = queue.Queue()
+        self._io_lock = threading.Lock()
+        self._writer = threading.Thread(
+            target=self._write_loop, name="sfm-csv", daemon=True
+        )
+        self._writer.start()
+
         if auto_save:
             self._open_daily(log_dir)
 
@@ -190,29 +212,27 @@ class LogManager:
 
     def add(self, entry: LogEntry) -> None:
         """
-        Append an entry to the ring buffer and (optionally) CSV.
+        Queue an entry for CSV and, unless it is a heartbeat, the display ring.
 
         HEARTBEAT rows go only to the sibling ``*_heartbeats.csv`` sink.
-        All other types write to the main session CSV.
+        All other types are queued for the main session CSV.
 
-        Writes whenever a CSV sink is open — the constructor's ``auto_save``
-        flag only controls whether the daily sink opens at construction; an
-        explicit ``open_session()`` call always opens a writer, since naming
-        a session is an explicit request to record it regardless of that
-        constructor flag.
+        The row is built here, on the caller thread, so session/run/trial
+        stamps match the moment ``add`` was called. The background writer
+        owns the file objects. A sink must be open (constructor ``auto_save``
+        or ``open_session``) or the queued row is discarded when the writer
+        reaches it.
         """
         if self._sink_kind == "daily":
             self._rollover_daily_if_needed()
         self._stamp_context(entry)
-        self._buffer.append(entry)
-        if entry.frame_type == "HEARTBEAT":
-            if self._hb_csv_writer is not None:
-                self._hb_csv_writer.writerow(self._entry_to_row(entry))
-                self._hb_csv_file.flush()
-            return
-        if self._csv_writer is not None:
-            self._csv_writer.writerow(self._entry_to_row(entry))
-            self._csv_file.flush()
+        which = "hb" if entry.frame_type == "HEARTBEAT" else "main"
+        if which == "hb":
+            self._recent_heartbeats.append(entry)
+        else:
+            self._buffer.append(entry)
+            self._display_generation += 1
+        self._pending.put(("row", which, self._entry_to_row(entry)))
 
     def _stamp_context(self, entry: LogEntry) -> None:
         """Fill in run_id/trial from the current session context when unset."""
@@ -232,17 +252,18 @@ class LogManager:
         show_heartbeats: bool = False,
     ) -> List[LogEntry]:
         """
-        Return a filtered view of the buffer (newest-first).
+        Return a filtered view of the display ring (newest-first).
+
+        Heartbeats are never in this ring. ``show_heartbeats`` is accepted
+        so older callers keep working and does not change the result.
 
         Args:
-            node_id:        Filter to a specific node; None = all nodes.
-            frame_type:     Filter to a type ("EVENT", "COMMAND", etc.); None = all.
-            show_heartbeats: Include HEARTBEAT frames (hidden by default).
+            node_id:    Filter to a specific node; None = all nodes.
+            frame_type: Filter to a type ("EVENT", "COMMAND", etc.); None = all.
         """
+        del show_heartbeats
         result = []
         for entry in reversed(self._buffer):
-            if not show_heartbeats and entry.frame_type == "HEARTBEAT":
-                continue
             if node_id is not None and entry.node_id != node_id:
                 continue
             if frame_type is not None and entry.frame_type != frame_type:
@@ -251,12 +272,31 @@ class LogManager:
         return result
 
     def all_entries(self) -> List[LogEntry]:
-        """All buffered entries, oldest-first."""
+        """Display-ring entries, oldest-first. Heartbeats are not included."""
         return list(self._buffer)
+
+    def recent_heartbeats(self) -> List[LogEntry]:
+        """The last few heartbeat rows queued for the heartbeat CSV."""
+        return list(self._recent_heartbeats)
 
     @property
     def total_count(self) -> int:
         return len(self._buffer)
+
+    @property
+    def display_generation(self) -> int:
+        """Increments when the display ring gains or loses a row."""
+        return self._display_generation
+
+    @property
+    def rows_written(self) -> int:
+        """Rows the background writer has handed to a CSV file."""
+        return self._rows_written
+
+    @property
+    def write_error(self) -> Optional[BaseException]:
+        """Last background-writer failure, if a flush could not finish."""
+        return self._write_error
 
     @property
     def csv_path(self) -> Optional[Path]:
@@ -406,6 +446,8 @@ class LogManager:
             raw_data=b"",
             details=f"session={sanitized} run={run_id} mode={'append' if mode == 'a' else 'create'} path={path}",
         ))
+        # The open row should be on disk before the run proceeds.
+        self._drain()
         return run_id
 
     @staticmethod
@@ -575,6 +617,7 @@ class LogManager:
     def clear(self) -> None:
         """Clear the display buffer (CSV file is NOT truncated — it keeps growing)."""
         self._buffer.clear()
+        self._display_generation += 1
 
     def export(self, filepath: str) -> Path:
         """
@@ -592,17 +635,10 @@ class LogManager:
         return path
 
     def close(self) -> None:
-        """Flush and close the main and heartbeat CSV files."""
-        if self._csv_file is not None:
-            self._csv_file.flush()
-            self._csv_file.close()
-            self._csv_file = None
-            self._csv_writer = None
-        if self._hb_csv_file is not None:
-            self._hb_csv_file.flush()
-            self._hb_csv_file.close()
-            self._hb_csv_file = None
-            self._hb_csv_writer = None
+        """Drain queued rows to disk, then close the main and heartbeat CSV files."""
+        self._drain()
+        with self._io_lock:
+            self._close_files_locked()
 
     # ------------------------------------------------------------------
     # Internal
@@ -678,6 +714,95 @@ class LogManager:
         self._hb_csv_writer = csv.writer(self._hb_csv_file)
         if write_header:
             self._hb_csv_writer.writerow(self.CSV_HEADER)
+
+    def _drain(self) -> None:
+        """Block until every row queued so far has been written and flushed."""
+        if not self._writer.is_alive():
+            return
+        done = threading.Event()
+        self._pending.put(("flush", done))
+        if not done.wait(_DRAIN_TIMEOUT_S):
+            raise TimeoutError("CSV writer did not finish within 10s")
+
+    def _write_loop(self) -> None:
+        """Append queued rows and flush about once a second, or on demand.
+
+        The one-second window starts when the first unflushed row arrives
+        and is not pushed back by later rows, so a steady stream still
+        reaches disk once a second.
+        """
+        pending: List[tuple] = []
+        deadline: Optional[float] = None
+        while True:
+            timeout = None
+            if pending and deadline is not None:
+                timeout = max(0.0, deadline - time.monotonic())
+            try:
+                first = self._pending.get(timeout=timeout)
+                items = [first]
+                while True:
+                    try:
+                        items.append(self._pending.get_nowait())
+                    except queue.Empty:
+                        break
+            except queue.Empty:
+                items = []
+
+            flush_events: List[threading.Event] = []
+            stop = False
+            for item in items:
+                kind = item[0]
+                if kind == "row":
+                    if not pending:
+                        deadline = time.monotonic() + _FLUSH_INTERVAL_S
+                    pending.append(item)
+                elif kind == "flush":
+                    flush_events.append(item[1])
+                elif kind == "stop":
+                    flush_events.append(item[1])
+                    stop = True
+
+            due = deadline is not None and time.monotonic() >= deadline
+            if pending and (flush_events or due or not items):
+                self._commit(pending)
+                pending = []
+                deadline = None
+            for event in flush_events:
+                event.set()
+            if stop:
+                return
+
+    def _commit(self, rows: List[tuple]) -> None:
+        try:
+            with self._io_lock:
+                for _kind, which, row in rows:
+                    writer = self._hb_csv_writer if which == "hb" else self._csv_writer
+                    if writer is None:
+                        continue
+                    writer.writerow(row)
+                    self._rows_written += 1
+                self._flush_files_locked()
+        except Exception as exc:  # noqa: BLE001 — keep the writer alive
+            self._write_error = exc
+
+    def _flush_files_locked(self) -> None:
+        if self._csv_file is not None:
+            self._csv_file.flush()
+        if self._hb_csv_file is not None:
+            self._hb_csv_file.flush()
+
+    def _close_files_locked(self) -> None:
+        if self._csv_file is not None:
+            self._csv_file.flush()
+            self._csv_file.close()
+            self._csv_file = None
+            self._csv_writer = None
+        if self._hb_csv_file is not None:
+            self._hb_csv_file.flush()
+            self._hb_csv_file.close()
+            self._hb_csv_file = None
+            self._hb_csv_writer = None
+        self._sink_kind = None
 
     def _entry_to_row(self, entry: LogEntry) -> list:
         elapsed_s = ""

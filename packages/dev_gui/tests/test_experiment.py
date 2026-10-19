@@ -667,8 +667,8 @@ def test_free_feeding_immediate_reload_when_delay_zero() -> None:
     assert dispenses == [(2, CanCmd.Dispense)]
 
 
-def test_fault_pauses_whole_free_feeding_session_until_recovered() -> None:
-    """A fault on any node pauses reloads on every node until Recover."""
+def test_healthy_node_reloads_while_another_is_faulted() -> None:
+    """A fault halts only that node. The other node still reloads on its delay."""
     exp = build_free_feeding(nodes=[1, 2], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
@@ -695,20 +695,57 @@ def test_fault_pauses_whole_free_feeding_session_until_recovered() -> None:
     assert runner.ctx.is_halted(1)
     assert not runner.ctx.is_halted(2)
 
-    # Past node 2's reload delay — session is paused, so node 2 must not reload.
+    # Past node 2's reload delay — node 1 is still faulted, node 2 reloads.
     runner.ctx.commands_sent.clear()
     runner.step(now=3.5)
     dispenses = [
         n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
-    assert dispenses == []
+    assert dispenses == [2]
+    assert runner.ctx.is_halted(1)
 
+    runner.ctx.commands_sent.clear()
     runner.recover_node(1, now=4.0)
     runner.step(now=4.2)
     dispenses = [
         n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
-    assert 2 in dispenses
+    assert dispenses == [1]
+    assert not runner.ctx.is_halted(1)
+
+
+def test_free_feeding_reload_waits_until_pellet_beam_clears() -> None:
+    """A beam still broken when the fixed reload delay elapses is retried, not dropped."""
+    exp = build_free_feeding(
+        nodes=[1], next_trial_wait="fixed_delay", reload_delay_s=2.0, seconds=60,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))
+    runner.ctx.commands_sent.clear()
+
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=1.0))
+    # Fragment re-breaks the beam after the take.
+    runner.inject(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=1.1,
+        data={"gate": "pellet", "active": True},
+    ))
+
+    runner.step(now=3.5)  # delay elapsed; beam still occupied
+    dispenses = [
+        (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
+    ]
+    assert dispenses == []
+
+    runner.inject(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=4.0,
+        data={"gate": "pellet", "active": False},
+    ))
+    runner.step(now=4.2)  # next 0.1 s poll after the beam clears
+    dispenses = [
+        (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
+    ]
+    assert dispenses == [(1, CanCmd.Dispense)]
 
 
 def test_fault_cancels_faulted_nodes_pending_reload() -> None:
@@ -1436,3 +1473,19 @@ def test_resume_at_pellet_cap_ends_without_starting() -> None:
     assert started == []
     assert runner.is_finished
     assert runner.ctx.stop_reason == "pellet_cap_reached_on_resume"
+
+
+def test_control_history_drops_the_oldest() -> None:
+    from base_station.experiment.context import _RETAINED_HISTORY
+
+    ctx = ExperimentContext(nodes=[1])
+    for i in range(_RETAINED_HISTORY + 5):
+        ctx.log("tick", i=i)
+    assert len(ctx.log_entries) == _RETAINED_HISTORY
+    assert ctx.log_entries[0].fields["i"] == 5
+    assert ctx.log_entries[-1].fields["i"] == _RETAINED_HISTORY + 4
+
+    ctx.commands_sent.clear()
+    for _ in range(_RETAINED_HISTORY + 5):
+        assert ctx._send(1, CanCmd.Dispense)
+    assert len(ctx.commands_sent) == _RETAINED_HISTORY

@@ -19,6 +19,18 @@ from ..protocol import CanCmd, CanEvent, build_event_frame, build_setconfig_hear
 from .events import EventKind, NodeEvent
 from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind, _until_label
 
+# In-memory copies of rows that are already in the CSV. Bounds a runaway
+# poll loop across a multi-day session. Unit tests inspect shorter histories
+# than this, so a normal experiment run still sees every command it sent.
+_RETAINED_HISTORY = 50_000
+
+
+def _append_capped(buf: List[Any], item: Any, limit: int = _RETAINED_HISTORY) -> None:
+    buf.append(item)
+    overflow = len(buf) - limit
+    if overflow > 0:
+        del buf[:overflow]
+
 if TYPE_CHECKING:
     from ..can_manager import CanManager
     from ..io_manager import IOManager
@@ -304,7 +316,7 @@ class ExperimentControl:
         receive its own frames, so this never shows up as a node-255 event.
         """
         arb_id, data = build_event_frame(PEER_RAISE_SRC_ID, CanEvent.Raising)
-        self.raw_frames_sent.append((arb_id, data))
+        _append_capped(self.raw_frames_sent, (arb_id, data))
         self.log("peer_raise", src_id=PEER_RAISE_SRC_ID)
         if self._can is None:
             return True  # dry-run / test mode
@@ -824,7 +836,7 @@ class ExperimentControl:
             node_id=node,
             fields=dict(fields),
         )
-        self._log_entries.append(entry)
+        _append_capped(self._log_entries, entry)
         if self.on_log is not None:
             try:
                 self.on_log(entry)
@@ -840,7 +852,7 @@ class ExperimentControl:
     # ------------------------------------------------------------------
 
     def _send(self, node_id: int, cmd: CanCmd, payload: bytes = b"") -> bool:
-        self.commands_sent.append((node_id, cmd, payload))
+        _append_capped(self.commands_sent, (node_id, cmd, payload))
         self.log(
             "command",
             node=node_id,

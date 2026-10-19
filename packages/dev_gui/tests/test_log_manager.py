@@ -63,18 +63,21 @@ class TestLogManager:
         result = lm.get_filtered(frame_type="COMMAND", show_heartbeats=True)
         assert all(e.frame_type == "COMMAND" for e in result)
 
-    def test_heartbeats_hidden_by_default(self):
+    def test_heartbeats_are_not_in_the_display_ring(self):
         lm = LogManager(auto_save=False)
         lm.add(make_entry(frame_type="HEARTBEAT"))
         lm.add(make_entry(frame_type="EVENT"))
-        result = lm.get_filtered(show_heartbeats=False)
-        assert all(e.frame_type != "HEARTBEAT" for e in result)
+        result = lm.get_filtered()
+        assert [e.frame_type for e in result] == ["EVENT"]
+        assert all(e.frame_type != "HEARTBEAT" for e in lm.all_entries())
+        assert [e.frame_type for e in lm.recent_heartbeats()] == ["HEARTBEAT"]
 
     def test_heartbeats_shown_when_requested(self):
         lm = LogManager(auto_save=False)
         lm.add(make_entry(frame_type="HEARTBEAT"))
         result = lm.get_filtered(show_heartbeats=True)
-        assert len(result) == 1
+        assert result == []
+        assert len(lm.recent_heartbeats()) == 1
 
     def test_newest_first(self):
         lm = LogManager(auto_save=False)
@@ -135,8 +138,8 @@ class TestLogManager:
         assert [r["frame_type"] for r in main_rows] == ["EVENT"]
         assert [r["frame_type"] for r in hb_rows] == ["HEARTBEAT"]
         assert hb_rows[0]["node_id"] == "2"
-        # Still in the ring buffer for the GUI
-        assert any(e.frame_type == "HEARTBEAT" for e in lm.all_entries())
+        assert all(e.frame_type != "HEARTBEAT" for e in lm.all_entries())
+        assert lm.recent_heartbeats()[0].frame_type == "HEARTBEAT"
 
     def test_named_session_heartbeats_sibling(self, tmp_path):
         lm = LogManager(auto_save=False)
@@ -368,6 +371,25 @@ class TestResumeDaily:
         assert "Run1" in names and "Run2" in names
         assert rows[-1]["run_id"] == "2"
         assert all(r["event_name"] != "PostStopCommand" for r in rows)
+
+
+class TestAsyncCsv:
+    def test_burst_reaches_disk_on_close(self, tmp_path):
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        for i in range(40):
+            lm.add(make_entry(event_name=f"E{i}"))
+        lm.add(make_entry(frame_type="HEARTBEAT", node_id=3))
+        assert lm.display_generation == 40
+        lm.close()
+        today = datetime.now().strftime("%Y%m%d")
+        with open(tmp_path / f"session_{today}.csv") as f:
+            names = [r["event_name"] for r in csv.DictReader(f)]
+        assert names == [f"E{i}" for i in range(40)]
+        with open(tmp_path / f"session_{today}_heartbeats.csv") as f:
+            hb = list(csv.DictReader(f))
+        assert len(hb) == 1
+        assert hb[0]["node_id"] == "3"
+        assert lm.rows_written == 41
 
 
 def _pellet_row(node: int, pellets: int, taken: int, trial: int) -> LogEntry:
