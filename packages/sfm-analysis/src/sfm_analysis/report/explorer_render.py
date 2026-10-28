@@ -105,7 +105,8 @@ def explorer_widget_html(payload: Dict[str, Any], *, dom_id: str) -> str:
     <div class="sfm-tooltip"></div>
   </div>
   <p class="sfm-hint">Time-of-day and wall-clock use the recording rig's own
-  local clock, not the viewer's.</p>
+  local clock, not the viewer's. The Time axis control switches these
+  labels between time since start and that clock.</p>
 </div>"""
 
 
@@ -139,7 +140,7 @@ function initSfmExplorer(root, DATA) {
   var spans = DATA.spans;   // [lane, t0, t1, key, hatch, openEnded, titleIdx]
   var marks = DATA.marks;   // [lane, t, glyph, key, titleIdx]
 
-  var PAD_LEFT = 130, PAD_RIGHT = 14, PAD_TOP = 8, PAD_BOTTOM = 22;
+  var PAD_LEFT = 130, PAD_RIGHT = 14, PAD_TOP = 8, PAD_BOTTOM = 34;
   var MIN_VIEW_S = 1.0;
 
   // ---- rig-local time, deliberately not real timezone conversion ----
@@ -156,6 +157,10 @@ function initSfmExplorer(root, DATA) {
     return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], frac);
   }
   var t0Local = parseNaiveIso(meta.t0_iso);
+  // A parseable rig timestamp, not merely a non-zero epoch: t=0 at
+  // 1970-01-01 is a real (if unlikely) clock, and an empty iso parses
+  // to 0 too. Absolute labels require the iso itself.
+  var hasWallClock = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.test(meta.t0_iso || "");
 
   function wallClockAt(t) {
     return new Date(t0Local + t * 1000);
@@ -178,6 +183,186 @@ function initSfmExplorer(root, DATA) {
     if (h) return h + "h " + pad2(m) + "m " + pad2(s) + "s";
     if (m) return m + "m " + pad2(s) + "s";
     return s + "s";
+  }
+
+  // Tick ladder and two-line labels, ported from report/time_axis.py.
+  // Keep the two in step: the static SVG and this canvas are the same axis.
+  var TIME_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800,
+    3600, 7200, 10800, 14400, 21600, 43200, 86400, 172800, 259200, 604800];
+
+  function chooseStep(span, maxTicks) {
+    var gaps = Math.max(1, maxTicks - 1);
+    var raw = span > 0 ? span / gaps : TIME_STEPS[0];
+    for (var i = 0; i < TIME_STEPS.length; i++) {
+      if (TIME_STEPS[i] >= raw) return TIME_STEPS[i];
+    }
+    var step = TIME_STEPS[TIME_STEPS.length - 1];
+    while (span / step > gaps) step *= 2;
+    return step;
+  }
+  function bumpStep(step) {
+    for (var i = 0; i < TIME_STEPS.length; i++) {
+      if (TIME_STEPS[i] > step) return TIME_STEPS[i];
+    }
+    return step * 2;
+  }
+  function fitTicks(build, span, maxTicks) {
+    var step = chooseStep(span, maxTicks);
+    var ticks = build(step);
+    var guard = 0;
+    var limit = Math.max(1, maxTicks);
+    while (ticks.length > limit && guard < 24) {
+      step = bumpStep(step);
+      ticks = build(step);
+      guard += 1;
+    }
+    return ticks;
+  }
+  function relLine1(t, step, mode) {
+    var total = Math.round(t);
+    var sign = total < 0 ? "-" : "";
+    var a = Math.abs(total);
+    var hh, rem, mm, ss;
+    if (mode === "day") {
+      var within = a % 86400;
+      hh = Math.floor(within / 3600);
+      return pad2(hh) + ":" + pad2(Math.floor((within % 3600) / 60));
+    }
+    if (mode === "minute" && a < 3600) {
+      return sign + Math.floor(a / 60) + ":" + pad2(a % 60);
+    }
+    hh = Math.floor(a / 3600);
+    rem = a % 3600;
+    mm = Math.floor(rem / 60);
+    ss = rem % 60;
+    if (step < 60) return sign + hh + ":" + pad2(mm) + ":" + pad2(ss);
+    return sign + hh + ":" + pad2(mm);
+  }
+  function alignedTimes(d0, d1, step) {
+    if (!(step > 0)) return [d0];
+    var k = Math.ceil((d0 - 1e-9) / step);
+    var times = [];
+    var guard = 0;
+    while (guard < 10000) {
+      var t = k * step;
+      if (t > d1 + 1e-6) break;
+      if (t >= d0 - 1e-6) times.push(t);
+      k += 1;
+      guard += 1;
+    }
+    return times.length ? times : [d0];
+  }
+  function relTickLabels(d0, d1, maxTicks) {
+    if (d1 < d0) { var swap = d0; d0 = d1; d1 = swap; }
+    var span = d1 - d0;
+    if (span <= 0 || maxTicks < 1) {
+      return [{ t: d0, line1: relLine1(d0, 60, "minute"), line2: "" }];
+    }
+    var mode = (d0 >= -1e-6 && span > 86400) ? "day" : (span >= 3600 ? "hour" : "minute");
+    function build(step) {
+      var times = alignedTimes(d0, d1, step);
+      var ticks = [];
+      var prevDay = null;
+      for (var i = 0; i < times.length; i++) {
+        var t = times[i];
+        var line2 = "";
+        if (mode === "day") {
+          var day = Math.floor(Math.round(t) / 86400) + 1;
+          if (i === 0 || day !== prevDay) line2 = "day " + day;
+          prevDay = day;
+        }
+        ticks.push({ t: t, line1: relLine1(t, step, mode), line2: line2 });
+      }
+      return ticks;
+    }
+    return fitTicks(build, span, maxTicks);
+  }
+  function utcParts(ms) {
+    var d = new Date(ms);
+    return {
+      y: d.getUTCFullYear(), mo: d.getUTCMonth(), day: d.getUTCDate(),
+      h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds(),
+      frac: d.getUTCMilliseconds()
+    };
+  }
+  function ceilAligned(ms, step) {
+    var p = utcParts(ms);
+    if (p.frac > 0) {
+      return ceilAligned(Date.UTC(p.y, p.mo, p.day, p.h, p.mi, p.s) + 1000, step);
+    }
+    if (step >= 86400) {
+      var midnight = Date.UTC(p.y, p.mo, p.day, 0, 0, 0);
+      if (ms !== midnight) return Date.UTC(p.y, p.mo, p.day + 1, 0, 0, 0);
+      return midnight;
+    }
+    if (step >= 3600) {
+      var hours = Math.floor(step / 3600);
+      var base = Date.UTC(p.y, p.mo, p.day, p.h, 0, 0);
+      if (ms !== base) base = Date.UTC(p.y, p.mo, p.day, p.h + 1, 0, 0);
+      var bp = utcParts(base);
+      var rem = bp.h % hours;
+      if (rem) base = Date.UTC(bp.y, bp.mo, bp.day, bp.h + (hours - rem), 0, 0);
+      return base;
+    }
+    if (step >= 60) {
+      var minutes = Math.floor(step / 60);
+      var baseM = Date.UTC(p.y, p.mo, p.day, p.h, p.mi, 0);
+      if (ms !== baseM) baseM = Date.UTC(p.y, p.mo, p.day, p.h, p.mi + 1, 0);
+      var mp = utcParts(baseM);
+      var remM = mp.mi % minutes;
+      if (remM) baseM = Date.UTC(mp.y, mp.mo, mp.day, mp.h, mp.mi + (minutes - remM), 0);
+      return baseM;
+    }
+    var remS = p.s % step;
+    if (remS) return Date.UTC(p.y, p.mo, p.day, p.h, p.mi, p.s + (step - remS));
+    return ms;
+  }
+  function absLines(ms, step, showDate) {
+    var p = utcParts(ms);
+    var line1 = step < 60
+      ? pad2(p.h) + ":" + pad2(p.mi) + ":" + pad2(p.s)
+      : pad2(p.h) + ":" + pad2(p.mi);
+    return { line1: line1, line2: showDate ? (MONTHS[p.mo] + " " + p.day) : "" };
+  }
+  function absTickLabels(d0, d1, maxTicks) {
+    if (!hasWallClock) return [];
+    if (d1 < d0) { var swap = d0; d0 = d1; d1 = swap; }
+    var span = d1 - d0;
+    function at(t) { return t0Local + t * 1000; }
+    if (span <= 0 || maxTicks < 1) {
+      var lone = absLines(at(d0), 60, true);
+      return [{ t: d0, line1: lone.line1, line2: lone.line2 }];
+    }
+    function build(step) {
+      var startMs = at(d0);
+      var endMs = at(d1);
+      var cursor = ceilAligned(startMs, step);
+      var found = [];
+      var guard = 0;
+      while (cursor <= endMs + 0.5 && guard < 10000) {
+        var rel = (cursor - t0Local) / 1000;
+        if (rel >= d0 - 1e-3) found.push({ t: rel, ms: cursor });
+        cursor += step * 1000;
+        guard += 1;
+      }
+      if (!found.length) found.push({ t: d0, ms: startMs });
+      var ticks = [];
+      var prevDate = null;
+      for (var i = 0; i < found.length; i++) {
+        var p = utcParts(found[i].ms);
+        var date = p.y + "-" + p.mo + "-" + p.day;
+        var show = i === 0 || date !== prevDate;
+        var lines = absLines(found[i].ms, step, show);
+        ticks.push({ t: found[i].t, line1: lines.line1, line2: lines.line2 });
+        prevDate = date;
+      }
+      return ticks;
+    }
+    return fitTicks(build, span, maxTicks);
+  }
+  function axisIsAbsolute() {
+    var el = document.getElementById("sfm-tf-abs");
+    return !!(el && el.checked && hasWallClock);
   }
 
   function color(key) {
@@ -241,19 +426,6 @@ function initSfmExplorer(root, DATA) {
       toPx: function (t) { return PAD_LEFT + (t - t0) * scale; },
       toT: function (px) { return t0 + (px - PAD_LEFT) / scale; },
     };
-  }
-
-  function niceTimeTicks(t0, t1, target) {
-    var span = t1 - t0;
-    if (span <= 0) return [t0];
-    var steps = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
-    var raw = span / target;
-    var step = steps[steps.length - 1];
-    for (var i = 0; i < steps.length; i++) { if (steps[i] >= raw) { step = steps[i]; break; } }
-    var start = Math.ceil(t0 / step) * step;
-    var out = [];
-    for (var t = start; t <= t1; t += step) out.push(t);
-    return out;
   }
 
   function drawGlyph(ctx, cx, cy, glyph, col) {
@@ -324,19 +496,23 @@ function initSfmExplorer(root, DATA) {
     }
 
     if (opts.showAxis) {
-      var ticks = niceTimeTicks(t0, t1, 7);
+      var maxTicks = Math.max(2, Math.floor((w - PAD_LEFT - PAD_RIGHT) / 80));
+      var ticks = axisIsAbsolute()
+        ? absTickLabels(t0, t1, maxTicks)
+        : relTickLabels(t0, t1, maxTicks);
       ctx.strokeStyle = "#e1e0d9";
       ctx.fillStyle = "#52514e";
       ctx.font = "10px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       for (var ti = 0; ti < ticks.length; ti++) {
-        var px = sc.toPx(ticks[ti]);
+        var px = sc.toPx(ticks[ti].t);
         ctx.beginPath();
         ctx.moveTo(px, PAD_TOP);
         ctx.lineTo(px, h - PAD_BOTTOM);
         ctx.stroke();
-        ctx.fillText(fmtRunRelative(ticks[ti]), px, h - PAD_BOTTOM + 4);
+        ctx.fillText(ticks[ti].line1, px, h - PAD_BOTTOM + 3);
+        if (ticks[ti].line2) ctx.fillText(ticks[ti].line2, px, h - PAD_BOTTOM + 14);
       }
     }
 
@@ -557,9 +733,14 @@ function initSfmExplorer(root, DATA) {
     }
   }
 
+  var hoverT = null;
+  function fmtAxis(t) {
+    return axisIsAbsolute() ? fmtWallClock(t) : fmtRunRelative(t);
+  }
   function updateReadout(t) {
+    hoverT = t;
     if (t === null || t === undefined) {
-      readout.innerHTML = "View: " + fmtRunRelative(view.t0) + " – " + fmtRunRelative(view.t1);
+      readout.innerHTML = "View: " + fmtAxis(view.t0) + " – " + fmtAxis(view.t1);
       return;
     }
     t = Math.max(0, Math.min(duration, t));
@@ -567,6 +748,15 @@ function initSfmExplorer(root, DATA) {
       "<b>" + fmtWallClock(t) + "</b> &nbsp;·&nbsp; time-of-day " + fmtTimeOfDay(t) +
       " &nbsp;·&nbsp; +" + fmtRunRelative(t) + " into run";
   }
+
+  function onTimeModeChange() {
+    redraw();
+    updateReadout(hoverT);
+  }
+  var relToggle = document.getElementById("sfm-tf-rel");
+  var absToggle = document.getElementById("sfm-tf-abs");
+  if (relToggle) relToggle.addEventListener("change", onTimeModeChange);
+  if (absToggle) absToggle.addEventListener("change", onTimeModeChange);
 
   window.addEventListener("resize", function () { redraw(); });
 

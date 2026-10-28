@@ -157,6 +157,15 @@ class TestExplorerWidget:
         assert "<script" not in markup
         assert "<style" not in markup
 
+    def test_axis_follows_the_report_time_toggle(self):
+        """The canvas ports time_axis.py and redraws when the report-wide
+        radios change. No clock of its own — it reads #sfm-tf-abs."""
+        assert "sfm-tf-abs" in EXPLORER_JS
+        assert "sfm-tf-rel" in EXPLORER_JS
+        assert "absTickLabels" in EXPLORER_JS
+        assert "relTickLabels" in EXPLORER_JS
+        assert "line2" in EXPLORER_JS
+
     def test_css_scoped_under_sfm_explorer(self):
         # Every rule must be scoped so N widgets (and the report's own
         # unrelated styles) can't bleed into each other.

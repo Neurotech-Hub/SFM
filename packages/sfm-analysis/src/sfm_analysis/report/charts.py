@@ -25,6 +25,15 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 from . import style
+from .time_axis import (
+    TimeBase,
+    abs_ticks,
+    fmt_abs,
+    fmt_abs_range,
+    fmt_rel,
+    max_ticks_for,
+    rel_ticks,
+)
 
 # ---------------------------------------------------------------------------
 # Escaping
@@ -70,6 +79,15 @@ class Frame:
     def py1(self) -> float:
         return self.h - self.b
 
+    def time_frame(self) -> "Frame":
+        """Room under the axis for a two-line time label plus the axis title.
+
+        The plot area stays the same height: the svg grows by whatever the
+        bottom margin still needs to reach 52px.
+        """
+        b = max(self.b, 52)
+        return Frame(w=self.w, h=self.h + (b - self.b), l=self.l, r=self.r, t=self.t, b=b)
+
 
 @dataclass(frozen=True)
 class Scale:
@@ -106,6 +124,16 @@ class Series:
     label: str
     values: Sequence[float]
     key: int = 0
+
+
+@dataclass(frozen=True)
+class TimeSeries:
+    """One line on a ``time_series`` chart. ``pts`` is ``(t_seconds, value)``."""
+
+    label: str
+    pts: Sequence[Tuple[float, float]]
+    key: int = 0
+    step: bool = False
 
 
 @dataclass(frozen=True)
@@ -159,28 +187,7 @@ def nice_ticks(d0: float, d1: float, target: int = 6) -> List[float]:
     return ticks or [d0, d1]
 
 
-def _fmt_hms(seconds: float) -> str:
-    seconds = max(0, int(round(seconds)))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
-
-
-def time_ticks(dur_s: float, target: int = 8) -> List[Tuple[float, str]]:
-    """Tick positions (seconds) + formatted labels ("0:00", "12:30", "1:04:00")."""
-    if dur_s <= 0:
-        return [(0.0, "0:00")]
-    raw_step = dur_s / max(1, target)
-    nice_steps = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200]
-    step = next((s for s in nice_steps if s >= raw_step), nice_steps[-1])
-    out: List[Tuple[float, str]] = []
-    t = 0.0
-    while t <= dur_s + step * 0.5:
-        out.append((t, _fmt_hms(t)))
-        t += step
-    return out
+_HOVER_LIMIT = 300
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +266,212 @@ def _fmt_num(v: float) -> str:
     if abs(v - round(v)) < 1e-9:
         return str(int(round(v)))
     return f"{v:g}"
+
+
+def _time_x_group(cls: str, frame: Frame, x: Scale, ticks, x_label: str) -> str:
+    """One togglable x axis: its own gridlines, two-line labels, and title.
+
+    Gridlines live inside the group so the grid follows the active tick
+    set. The baseline and the y axis are drawn by the caller and stay
+    visible in both modes.
+    """
+    parts = [f'<g class="{cls}">']
+    for tick in ticks:
+        px = x(tick.t)
+        parts.append(
+            f'<line class="gridline" x1="{px:.1f}" y1="{frame.py0:.1f}" '
+            f'x2="{px:.1f}" y2="{frame.py1:.1f}"/>'
+        )
+        y1 = frame.py1 + 13
+        label = escape_text(tick.line1)
+        if tick.line2:
+            label += f'<tspan x="{px:.1f}" dy="11">{escape_text(tick.line2)}</tspan>'
+        parts.append(f'<text x="{px:.1f}" y="{y1:.1f}" text-anchor="middle">{label}</text>')
+    if x_label:
+        parts.append(
+            f'<text x="{(frame.px0 + frame.px1) / 2:.1f}" y="{frame.h - 4:.1f}" '
+            f'text-anchor="middle">{escape_text(x_label)}</text>'
+        )
+    parts.append("</g>")
+    return "".join(parts)
+
+
+def time_x_groups(
+    frame: Frame,
+    x: Scale,
+    base: TimeBase,
+    d0: float,
+    d1: float,
+    *,
+    absolute: bool = True,
+    x_label_rel: str = "time since start",
+    x_label_abs: str = "rig-local date / time",
+) -> str:
+    """The two x-axis groups a time chart toggles between.
+
+    When absolute labels are unavailable, the relative group is marked
+    ``tx-only`` so the report-wide Absolute control does not blank it.
+    """
+    budget = max_ticks_for(frame.px1 - frame.px0)
+    rel = rel_ticks(d0, d1, budget)
+    abs_ = abs_ticks(base, d0, d1, budget) if absolute else []
+    rel_cls = "tx tx-rel" if abs_ else "tx tx-rel tx-only"
+    parts = [_time_x_group(rel_cls, frame, x, rel, x_label_rel)]
+    if abs_:
+        parts.append(_time_x_group("tx tx-abs", frame, x, abs_, x_label_abs))
+    return "".join(parts)
+
+
+def time_axes(
+    frame: Frame,
+    x: Scale,
+    y: Scale,
+    base: TimeBase,
+    d0: float,
+    d1: float,
+    *,
+    y_ticks: Sequence[float],
+    y_label: str = "",
+    absolute: bool = True,
+    x_label_rel: str = "time since start",
+    x_label_abs: str = "rig-local date / time",
+) -> str:
+    """Y axis (always visible) plus the togglable time x axis.
+
+    Pass a frame from ``Frame.time_frame()`` so the two label lines and
+    the axis title have room under the plot.
+    """
+    parts = []
+    for yt in y_ticks:
+        py = y(yt)
+        parts.append(
+            f'<line class="gridline" x1="{frame.px0:.1f}" y1="{py:.1f}" '
+            f'x2="{frame.px1:.1f}" y2="{py:.1f}"/>'
+        )
+    parts.append(
+        f'<line class="axis-line" x1="{frame.px0:.1f}" y1="{frame.py1:.1f}" '
+        f'x2="{frame.px1:.1f}" y2="{frame.py1:.1f}"/>'
+    )
+    parts.append(
+        f'<line class="axis-line" x1="{frame.px0:.1f}" y1="{frame.py0:.1f}" '
+        f'x2="{frame.px0:.1f}" y2="{frame.py1:.1f}"/>'
+    )
+    for yt in y_ticks:
+        py = y(yt)
+        parts.append(
+            f'<text x="{frame.px0 - 6:.1f}" y="{py + 3:.1f}" text-anchor="end">'
+            f'{escape_text(_fmt_num(yt))}</text>'
+        )
+    if y_label:
+        cx, cy = 12, (frame.py0 + frame.py1) / 2
+        parts.append(
+            f'<text x="{cx:.1f}" y="{cy:.1f}" text-anchor="middle" '
+            f'transform="rotate(-90 {cx:.1f} {cy:.1f})">{escape_text(y_label)}</text>'
+        )
+    parts.append(time_x_groups(
+        frame, x, base, d0, d1,
+        absolute=absolute, x_label_rel=x_label_rel, x_label_abs=x_label_abs,
+    ))
+    return "".join(parts)
+
+
+def _thin_pts(pts: Sequence[Tuple[float, float]], limit: int = _HOVER_LIMIT) -> List[Tuple[float, float]]:
+    n = len(pts)
+    if n <= limit:
+        return list(pts)
+    if limit < 2:
+        return [pts[0], pts[-1]]
+    last = n - 1
+    idxs = {0, last}
+    stride = last / (limit - 1)
+    for i in range(1, limit - 1):
+        idxs.add(int(round(i * stride)))
+    return [pts[i] for i in sorted(idxs)]
+
+
+def _hover_targets(frame: Frame, x: Scale, y: Scale, base: TimeBase, series: TimeSeries) -> str:
+    """Invisible circles whose ``<title>`` is the point's clock, offset, and value.
+
+    Thinned so a long run (one point per pellet) does not emit tens of
+    thousands of elements. ``pointer-events="all"`` keeps a transparent
+    circle hittable; the default SVG hit test ignores an unpainted fill.
+    """
+    parts = []
+    for t, v in _thin_pts(series.pts):
+        rel = fmt_rel(t)
+        prefix = rel if rel.startswith("-") else f"+{rel}"
+        tip = f"{fmt_abs(base, t)} · {prefix} · {series.label}: {_fmt_num(v)}"
+        parts.append(
+            f'<circle cx="{x(t):.1f}" cy="{y(v):.1f}" r="5" fill="none" '
+            f'pointer-events="all"><title>{escape_text(tip)}</title></circle>'
+        )
+    return "".join(parts)
+
+
+def time_series(
+    base: TimeBase,
+    d0: float,
+    d1: float,
+    series: Sequence[TimeSeries],
+    *,
+    y_label: str,
+    title: str,
+    frame: Optional[Frame] = None,
+    absolute: bool = True,
+    x_label_rel: str = "time since start",
+    x_label_abs: str = "rig-local date / time",
+) -> str:
+    """A complete time-on-x line chart: axes, lines, and hover titles.
+
+    This is the template later time charts should call instead of building
+    ticks themselves. ``absolute=False`` draws relative labels only (marked
+    ``tx-only``); use it when the x domain is not one rig clock, such as a
+    combined chart aligned to an event rather than to wall time.
+    """
+    frame = (frame or Frame()).time_frame()
+    vals = [v for s in series for _t, v in s.pts]
+    hi = max(vals) if vals else 1.0
+    if hi <= 0:
+        hi = 1.0
+    x = linear(d0, d1, frame.px0, frame.px1)
+    y = linear(0, hi, frame.py1, frame.py0)
+    y_ticks = nice_ticks(0, hi, 5)
+    body = [time_axes(
+        frame, x, y, base, d0, d1,
+        y_ticks=y_ticks, y_label=y_label, absolute=absolute,
+        x_label_rel=x_label_rel, x_label_abs=x_label_abs,
+    )]
+    for s in series:
+        if s.pts:
+            body.append(line(frame, x, y, s.pts, key=s.key, step=s.step))
+            body.append(_hover_targets(frame, x, y, base, s))
+    return svg(frame, "".join(body), title=title)
+
+
+def dual_time(base: TimeBase, t: float) -> str:
+    """A table cell that follows the report-wide time toggle.
+
+    Relative is the default; absolute is hidden until the control selects
+    it. With no rig clock, the relative text is ``tx-only`` and stays put.
+    """
+    rel = escape_text(fmt_rel(t))
+    if base.wall(0) is None:
+        return f'<span class="tx tx-rel tx-only">{rel}</span>'
+    return (
+        f'<span class="tx tx-rel">{rel}</span>'
+        f'<span class="tx tx-abs">{escape_text(fmt_abs(base, t))}</span>'
+    )
+
+
+def dual_range(base: TimeBase, t0: float, t1: float) -> str:
+    """Same as ``dual_time`` for a window caption (``2h 00m–4h 00m``)."""
+    rel = escape_text(f"{fmt_rel(t0)}–{fmt_rel(t1)}")
+    if base.wall(0) is None:
+        return f'<span class="tx tx-rel tx-only">{rel}</span>'
+    return (
+        f'<span class="tx tx-rel">{rel}</span>'
+        f'<span class="tx tx-abs">{escape_text(fmt_abs_range(base, t0, t1))}</span>'
+    )
 
 
 # ---------------------------------------------------------------------------

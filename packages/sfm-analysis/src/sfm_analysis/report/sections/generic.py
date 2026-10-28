@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from ...protocol import fault_user_message, reload_reason_message
 from .. import charts
-from ..charts import Frame, Series, escape_text
+from ..charts import Frame, Series, TimeSeries, escape_text
 from ..naming import parse_session_name
 from ..schema import SectionContext, SectionResult
 from ..stats import median, safe_ratio
+from ..time_axis import TimeBase
 
 
 def _fmt_duration(seconds: Optional[float]) -> str:
@@ -34,6 +36,15 @@ def _fmt_duration(seconds: Optional[float]) -> str:
 
 def _fmt_pct(v: Optional[float]) -> str:
     return "—" if v is None else f"{v * 100:.0f}%"
+
+
+def _downtime_by_node(faults) -> Dict[int, float]:
+    totals: Dict[int, float] = {}
+    for fault in faults:
+        if fault.dur is None:
+            continue
+        totals[fault.node] = totals.get(fault.node, 0.0) + fault.dur
+    return totals
 
 
 def _fmt_num(v: Optional[float], digits: int = 1) -> str:
@@ -81,34 +92,154 @@ def provenance_section(ctx: SectionContext) -> Optional[SectionResult]:
     )
 
 
+def _run_heading(ctx: SectionContext, label: str) -> str:
+    if len(ctx.runs) <= 1:
+        return ""
+    return f"<h3>{escape_text(label)}</h3>"
+
+
+def _faults_block(run, faults, base) -> str:
+    """The Faults & Downtime table for one run. Empty when the run has no faults."""
+    if not faults:
+        return ""
+    ordered = sorted(faults, key=lambda f: (f.t0, f.node))
+    rows = "".join(
+        "<tr>"
+        f"<td>{f.node}</td>"
+        f"<td>{escape_text(f.code.name)}</td>"
+        f"<td>{escape_text(fault_user_message(f.code))}</td>"
+        f"<td>{charts.dual_time(base, f.t0)}</td>"
+        f"<td>{'still open at run end' if f.censored else charts.dual_time(base, f.t1 or 0)}</td>"
+        f"<td>{_fmt_duration(f.dur)}</td>"
+        f"<td>{escape_text(f.cleared_by)}</td>"
+        "</tr>"
+        for f in ordered
+    )
+    downtime = _downtime_by_node(faults)
+    summary_bits = []
+    for node in sorted(downtime):
+        total = downtime[node]
+        share = (total / run.duration_s) if run.duration_s else None
+        summary_bits.append(f"node {node}: {_fmt_duration(total)} ({_fmt_pct(share)})")
+    summary = (
+        f'<p class="note">Downtime: {escape_text("; ".join(summary_bits))}.</p>'
+        if summary_bits else ""
+    )
+    return f"""
+    <h3>Faults &amp; Downtime</h3>
+    <table>
+      <tr><th>Node</th><th>Fault</th><th>What it means</th><th>Started</th>
+      <th>Cleared</th><th>Downtime</th><th>Cleared by</th></tr>
+      {rows}
+    </table>
+    {summary}
+    """
+
+
+def _data_quality_events(ctx: SectionContext) -> tuple:
+    """Pellet reloads, mechanism counts, then Faults & Downtime, then script events.
+
+    Each block is omitted when it has nothing to show. Returns (html, has_clock).
+    """
+    parts: List[str] = []
+    has_clock = False
+    for run, m in zip(ctx.runs, ctx.metrics):
+        heading = _run_heading(ctx, run.run_label)
+        base = TimeBase.from_run(run)
+        clock = base.wall(0) is not None
+
+        if m.reloads:
+            has_clock = has_clock or clock
+            rows = "".join(
+                "<tr>"
+                f"<td>{event.node}</td>"
+                f"<td>{charts.dual_time(base, event.t)}</td>"
+                f"<td>{escape_text(reload_reason_message(event.reason))}</td>"
+                f"<td>{escape_text((str(event.attempt) + ' of 3') if event.attempt else '—')}</td>"
+                "</tr>"
+                for event in m.reloads
+            )
+            parts.append(f"""
+            {heading}
+            <h3>Pellet reloads</h3>
+            <table>
+              <tr><th>Node</th><th>Time</th><th>Reason</th><th>Attempt</th></tr>
+              {rows}
+            </table>
+            """)
+            heading = ""
+
+        active = [s for s in m.mechanism.values() if (
+            s.retracts or s.holds or s.reload_count or s.dome_open_warnings or s.feed_skips
+        )]
+        if active:
+            rows = "".join(
+                "<tr>"
+                f"<td>{s.node}</td><td>{s.retracts}</td><td>{s.holds}</td>"
+                f"<td>{_fmt_duration(s.hold_total_s)}</td>"
+                f"<td>{_fmt_duration(s.hold_longest_s)}</td>"
+                f"<td>{s.dome_open_warnings}</td><td>{s.feed_skips}</td>"
+                "</tr>"
+                for s in sorted(active, key=lambda s: s.node)
+            )
+            parts.append(f"""
+            {heading}
+            <h3>Mechanism events per node</h3>
+            <p class="note">Holds and retracts are the firmware keeping the pellet out of reach
+            while the dome is open. They are expected behaviour, not faults.</p>
+            <table>
+              <tr><th>Node</th><th>Retracts</th><th>Dome holds</th><th>Total hold</th>
+              <th>Longest hold</th><th>Dome-open warnings</th><th>Feed skips</th></tr>
+              {rows}
+            </table>
+            """)
+            heading = ""
+
+        block = _faults_block(run, m.faults, base)
+        if block:
+            has_clock = has_clock or clock
+            parts.append(heading + block)
+            heading = ""
+
+        if m.health:
+            has_clock = has_clock or clock
+            rows = []
+            for name, evs in sorted(m.health.items()):
+                ordered = sorted(evs, key=lambda r: r.t)
+                rows.append(
+                    "<tr>"
+                    f"<td>{escape_text(name)}</td><td>{len(ordered)}</td>"
+                    f"<td>{charts.dual_time(base, ordered[0].t)}</td>"
+                    f"<td>{charts.dual_time(base, ordered[-1].t)}</td>"
+                    "</tr>"
+                )
+            parts.append(f"""
+            {heading}
+            <h3>Script and control events</h3>
+            <table>
+              <tr><th>Event</th><th>Count</th><th>First</th><th>Last</th></tr>
+              {''.join(rows)}
+            </table>
+            """)
+
+    return "".join(parts), has_clock
+
+
 def data_quality_section(ctx: SectionContext) -> Optional[SectionResult]:
+    """Issue notes are only node reboots, missed event frames, and a missing session_end.
+
+    Faults, pellet reloads, and mechanism counts are listed below those notes
+    when they occurred. A run that passes the three checks adds no sentence.
+    """
     notes: List[str] = []
-    banners: List[str] = []
 
     for run, m in zip(ctx.runs, ctx.metrics):
         prefix = f"{run.run_label}: " if len(ctx.runs) > 1 else ""
-        for note in run.notes:
-            notes.append(prefix + note)
+        if not run.has_session_end:
+            notes.append(f"{prefix}No session_end — session may have been interrupted "
+                         f"(power loss, crash, or the operator closed the GUI without Stop).")
 
-        _, presence_issues = m.presence
-        if presence_issues.orphan_closes:
-            notes.append(f"{prefix}{presence_issues.orphan_closes} presence bout(s) closed with no matching open (run began mid-bout).")
-        if presence_issues.censored:
-            notes.append(f"{prefix}{presence_issues.censored} presence bout(s) still open at run end.")
-
-        _, dome_issues = m.dome
-        if dome_issues.orphan_closes:
-            notes.append(f"{prefix}{dome_issues.orphan_closes} dome bout(s) closed with no matching open.")
-
-        for node, acct in m.pellets.items():
-            loss_p = acct.bus_loss_presented
-            loss_t = acct.bus_loss_taken
-            if loss_p:
-                notes.append(f"{prefix}node {node}: heartbeat counter shows {loss_p} more pellet(s) "
-                             f"presented than CAN events recorded (possible bus loss).")
-            if loss_t:
-                notes.append(f"{prefix}node {node}: heartbeat counter shows {loss_t} more pellet(s) "
-                             f"taken than CAN events recorded (possible bus loss).")
+        for node, acct in sorted(m.pellets.items()):
             if acct.missed_frames:
                 notes.append(f"{prefix}node {node}: {acct.missed_frames} event frame(s) never arrived; "
                              f"the node counter caught the gap and the session totals above are "
@@ -118,24 +249,16 @@ def data_quality_section(ctx: SectionContext) -> Optional[SectionResult]:
                              f"(pellet counter restarted). Counts continue across the reboot; "
                              f"anything dispensed while it was down is not in this run.")
 
-        post_session_rows = sum(1 for r in run.rows if r.post_session)
-        if post_session_rows:
-            notes.append(f"{prefix}{post_session_rows} row(s) logged after session_end (excluded from rate denominators).")
-
-        if m.health.get("script_stalled"):
-            n = len(m.health["script_stalled"])
-            banners.append(f"{prefix}script_stalled fired {n} time(s) — the experiment script waited "
-                           f"on an event that never arrived. Check apparatus health below.")
-
-    banner_html = "".join(f'<div class="banner">{escape_text(b)}</div>' for b in banners)
-    notes_html = "".join(f'<p class="note">{escape_text(n)}</p>' for n in notes) or '<p class="note">No data-quality issues detected.</p>'
+    notes_html = "".join(f'<p class="note">{escape_text(n)}</p>' for n in notes)
+    extra_html, has_clock = _data_quality_events(ctx)
 
     return SectionResult(
         section_id="generic.data_quality",
         title="Data Quality",
-        html=banner_html + notes_html,
+        html=notes_html + extra_html,
         summary={"note_count": len(notes)},
         notes=notes,
+        uses_time_axis=has_clock,
     )
 
 
@@ -291,84 +414,67 @@ def interaction_funnel_section(ctx: SectionContext) -> Optional[SectionResult]:
 
 def throughput_section(ctx: SectionContext) -> Optional[SectionResult]:
     parts = []
+    has_clock = False
     for run, m in zip(ctx.runs, ctx.metrics):
         if not m.throughput:
             continue
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
-        frame = Frame()
-        max_v = max(max(p.presented, p.taken) for p in m.throughput) or 1
-        x = charts.linear(0, run.duration_s, frame.px0, frame.px1)
-        y = charts.linear(0, max_v, frame.py1, frame.py0)
-        axes = charts.axes(frame, x, y,
-                            x_ticks=charts.time_ticks(run.duration_s),
-                            y_ticks=charts.nice_ticks(0, max_v, 5),
-                            x_label="time", y_label="cumulative pellets")
-        presented_line = charts.line(frame, x, y, [(p.t, p.presented) for p in m.throughput], key=0, step=True)
-        taken_line = charts.line(frame, x, y, [(p.t, p.taken) for p in m.throughput], key=1, step=True)
-        chart = charts.svg(frame, axes + presented_line + taken_line, title="Cumulative throughput")
+        base = TimeBase.from_run(run)
+        has_clock = has_clock or base.wall(0) is not None
+        chart = charts.time_series(
+            base, 0.0, run.duration_s,
+            [
+                TimeSeries("presented", [(p.t, p.presented) for p in m.throughput], key=0, step=True),
+                TimeSeries("taken", [(p.t, p.taken) for p in m.throughput], key=1, step=True),
+            ],
+            y_label="cumulative pellets",
+            title="Cumulative throughput",
+        )
         legend = charts.legend([("presented", 0), ("taken", 1)])
         parts.append(f"{heading}<figure>{legend}{chart}</figure>")
 
     if not parts:
         return SectionResult(section_id="generic.throughput", title="Throughput", html="", empty=True)
 
-    return SectionResult(section_id="generic.throughput", title="Throughput", html="".join(parts))
+    return SectionResult(
+        section_id="generic.throughput",
+        title="Throughput",
+        html="".join(parts),
+        uses_time_axis=has_clock,
+    )
 
 
 def faults_section(ctx: SectionContext) -> Optional[SectionResult]:
-    parts = []
-    any_faults = False
-    for run, m in zip(ctx.runs, ctx.metrics):
-        if not m.faults:
-            continue
-        any_faults = True
-        heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
-        rows = "".join(
-            f"<tr><td>{f.node}</td><td>{escape_text(f.code.name)}</td>"
-            f"<td>{_fmt_duration(f.t0)}</td><td>{_fmt_duration(f.dur)}</td>"
-            f"<td>{'unrecovered at run end' if f.censored else ('inferred' if f.inferred_close else 'recovered')}</td></tr>"
-            for f in m.faults
-        )
-        parts.append(f"""
-        {heading}
-        <table>
-          <tr><th>Node</th><th>Fault</th><th>Started at</th><th>Duration</th><th>Resolution</th></tr>
-          {rows}
-        </table>
-        """)
+    """Alias that renders nothing.
 
-    if not any_faults:
-        return SectionResult(section_id="generic.faults", title="Faults & Downtime", html="<p>No faults recorded.</p>")
-
-    return SectionResult(section_id="generic.faults", title="Faults & Downtime", html="".join(parts))
+    The fault table lives inside Data Quality. A design that still names
+    ``generic.faults`` skips this section instead of showing it twice or
+    showing an error box.
+    """
+    del ctx
+    return SectionResult(
+        section_id="generic.faults",
+        title="Faults & Downtime",
+        html="",
+        empty=True,
+    )
 
 
 def apparatus_health_section(ctx: SectionContext) -> Optional[SectionResult]:
-    parts = []
-    any_events = False
-    for run, m in zip(ctx.runs, ctx.metrics):
-        if not m.health:
-            continue
-        any_events = True
-        heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
-        rows = "".join(
-            f"<tr><td>{escape_text(name)}</td><td>{len(evs)}</td>"
-            f"<td>{_fmt_duration(evs[0].t)}</td><td>{_fmt_duration(evs[-1].t)}</td></tr>"
-            for name, evs in sorted(m.health.items())
-        )
-        parts.append(f"""
-        {heading}
-        <table>
-          <tr><th>Event</th><th>Count</th><th>First at</th><th>Last at</th></tr>
-          {rows}
-        </table>
-        """)
+    """Alias that renders nothing.
 
-    if not any_events:
-        return SectionResult(section_id="generic.apparatus_health", title="Apparatus Health",
-                              html="<p>No vetoes, stalls, or script errors recorded.</p>")
-
-    return SectionResult(section_id="generic.apparatus_health", title="Apparatus Health", html="".join(parts))
+    Hand-written designs may still name ``generic.apparatus_health``. Leaving
+    the entry in SECTIONS means those designs skip the section instead of
+    showing an error box. Faults, pellet reloads, and mechanism counts live
+    in Data Quality.
+    """
+    del ctx
+    return SectionResult(
+        section_id="generic.apparatus_health",
+        title="Apparatus Health",
+        html="",
+        empty=True,
+    )
 
 
 SECTIONS: Dict[str, Any] = {

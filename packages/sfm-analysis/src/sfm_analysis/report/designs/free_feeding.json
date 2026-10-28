@@ -8,13 +8,11 @@
     { "ref": "timeline.session_raster", "options": { "min_window_s": 900 } },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
-    { "ref": "generic.data_quality" },
     { "ref": "generic.retrieval_latency" },
     { "ref": "generic.presence" },
     { "ref": "generic.interaction_funnel" },
     { "ref": "generic.throughput" },
-    { "ref": "generic.faults" },
-    { "ref": "generic.apparatus_health" },
+    { "ref": "generic.data_quality" },
     { "ref": "free_feeding.reload_latency", "beta": true },
     { "ref": "free_feeding.meal_bouts", "options": { "meal_gap_s": 300 }, "beta": true }
   ],
@@ -23,7 +21,7 @@
     { "ref": "compare.quality_matrix" },
     { "ref": "compare.learning_curve", "options": { "metric": "take_rate" } },
     { "ref": "generic.retrieval_latency" },
-    { "ref": "generic.faults" },
+    { "ref": "generic.data_quality" },
     { "ref": "free_feeding.reload_latency", "beta": true },
     { "ref": "free_feeding.meal_bouts", "beta": true }
   ]

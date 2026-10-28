@@ -232,8 +232,8 @@ class TestActivityByDay:
         # 3 days apart guarantees distinct calendar dates regardless of
         # the test machine's own timezone.
         rows = [
-            input_changed_row(1_700_000_000_000, 1, 4, True, "MousePresence Detected"),
-            input_changed_row(1_700_000_000_000 + 3 * day_ms, 1, 4, True, "MousePresence Detected"),
+            can_event_row(1_700_000_000_000, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
+            can_event_row(1_700_000_000_000 + 3 * day_ms, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
         ]
         run = _run(tmp_path, rows)
         days = activity_by_day(run)
@@ -244,19 +244,21 @@ class TestActivityByDay:
         run = _run(tmp_path, [can_event_row(0, 1, CanEvent.Loaded)])
         assert activity_by_day(run) == []
 
-    def test_only_detected_not_cleared_counts_by_default(self, tmp_path):
+    def test_default_is_dome_opened_and_collapses_the_double_log(self, tmp_path):
         rows = [
+            can_event_row(0, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
+            input_changed_row(100, 1, 1, True, "Dome Opened"),  # same lift, 0.1 s later
+            can_event_row(2000, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
             input_changed_row(0, 1, 4, True, "MousePresence Detected"),
-            input_changed_row(5000, 1, 4, False, "MousePresence Cleared"),
         ]
         run = _run(tmp_path, rows)
         days = activity_by_day(run)
         assert len(days) == 1
-        assert len(days[0].times) == 1
+        assert len(days[0].times) == 2
 
     def test_event_names_override_selects_a_different_proxy(self, tmp_path):
         rows = [
-            input_changed_row(0, 1, 4, True, "MousePresence Detected"),
+            can_event_row(0, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
             can_event_row(1000, 1, CanEvent.PelletTaken, bytes([1, 0, 1])),
         ]
         run = _run(tmp_path, rows)
@@ -269,9 +271,9 @@ class TestActivityByDay:
 
     def test_times_within_a_day_are_sorted(self, tmp_path):
         rows = [
-            input_changed_row(5000, 1, 4, True, "MousePresence Detected"),
-            input_changed_row(1000, 1, 4, True, "MousePresence Detected"),
-            input_changed_row(3000, 1, 4, True, "MousePresence Detected"),
+            can_event_row(5000, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
+            can_event_row(1000, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
+            can_event_row(3000, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
         ]
         run = _run(tmp_path, rows)
         days = activity_by_day(run)
@@ -280,8 +282,8 @@ class TestActivityByDay:
 
     def test_pools_across_nodes(self, tmp_path):
         rows = [
-            input_changed_row(0, 1, 4, True, "MousePresence Detected"),
-            input_changed_row(1000, 2, 4, True, "MousePresence Detected"),
+            can_event_row(0, 1, CanEvent.DomeOpened, bytes([1, 0, 1])),
+            can_event_row(1000, 2, CanEvent.DomeOpened, bytes([1, 0, 1])),
         ]
         run = _run(tmp_path, rows)
         days = activity_by_day(run)

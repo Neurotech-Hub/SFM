@@ -1,7 +1,7 @@
 {
   "name": "actogram_takes",
   "label": "Generic Behavior Report — actogram from Pellet Taken",
-  "description": "Same sections as default.json, but the actogram ticks pellet takes instead of presence onsets. Opt-in only: pass --design actogram_takes (ships with pip install sfm-analysis). To plot a different CAN EVENT, copy this file next to your logs, edit event_names, and pass the path. Several names become one tick series.",
+  "description": "Same sections as default.json, but the actogram ticks pellet takes instead of dome openings. Opt-in only: pass --design actogram_takes (ships with pip install sfm-analysis). To plot a different CAN EVENT, copy this file next to your logs, edit event_names, and pass the path. Several names become one tick series.",
   "matches": [],
   "sections": [
     { "ref": "timeline.explorer" },
@@ -12,14 +12,12 @@
       }
     },
     { "ref": "generic.provenance" },
-    { "ref": "generic.data_quality" },
     { "ref": "generic.pellet_accounting" },
     { "ref": "generic.retrieval_latency" },
     { "ref": "generic.presence" },
     { "ref": "generic.interaction_funnel" },
     { "ref": "generic.throughput" },
-    { "ref": "generic.faults" },
-    { "ref": "generic.apparatus_health" }
+    { "ref": "generic.data_quality" }
   ],
   "combined_sections": [
     { "ref": "compare.cohort_table" },
@@ -29,6 +27,6 @@
     { "ref": "compare.cumulative_overlay" },
     { "ref": "compare.quality_matrix" },
     { "ref": "generic.retrieval_latency" },
-    { "ref": "generic.faults" }
+    { "ref": "generic.data_quality" }
   ]
 }

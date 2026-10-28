@@ -37,7 +37,7 @@ sfm-report --list
 # One session, opened in your browser when done:
 sfm-report EXP-Test-02 --open
 
-# Same report, but the actogram ticks pellet takes instead of presence:
+# Same report, but the actogram ticks pellet takes instead of dome openings:
 sfm-report EXP-Test-02 --design actogram_takes --open
 
 # Every session for a cohort, combined into one comparative report:
@@ -186,8 +186,9 @@ clock-time assumption rendered as though it were measured data. Time of
 day is on the axis; apply your own light cycle to it if you need one.
 
 The section heading and figure caption both name the plotted event
-(`Actogram — MousePresence Detected` by default) so a printed page is
-unambiguous about what each tick is. Ticks default to presence onsets.
+(`Actogram — dome opened` by default) so a printed page is
+unambiguous about what each tick is. Ticks default to dome openings,
+with a Ticks legend above the figure.
 You can remap them **without editing the installed package** — see
 [Customize the actogram](#customize-the-actogram) below.
 
@@ -202,7 +203,7 @@ colours. Nothing in `site-packages` needs to be edited.
 
 ### HTML report (no file copy)
 
-`actogram_takes` ships in the wheel — presence stays the default; this
+`actogram_takes` ships in the wheel — dome openings stay the default; this
 name is opt-in only (`sfm-report --list-designs`):
 
 ```bash

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from ..protocol import parse_pellet_reload, reload_reason_message
 from .charts import Mark, Span
 
 # Glyph + key + legend label per discrete node-level event, drawn on the
@@ -25,6 +26,8 @@ EVENT_GLYPH = {
     "Pellet Taken": ("circle", 5, "Pellet Taken"),
     "NoFeedPresented": ("circle", 3, "No-Feed Presented"),
     "FeedSkipped": ("diamond", 7, "Feed Skipped"),
+    "Retracting": ("square", 6, "Retracting"),
+    "Pellet Reload": ("cross", 1, "Pellet Reload"),
 }
 
 # Glyph + key + legend label per session-level mark, drawn on lane 0.
@@ -36,7 +39,9 @@ SESSION_MARK_STYLES = {
 
 # Span key + legend label per span type drawn (presence/dome/cycle bars, and
 # the hatched fault band inserted inline in panel_marks_spans).
-SPAN_LEGEND = [("presence", 0), ("dome open", 1), ("dispense cycle", 2), ("fault", 7)]
+SPAN_LEGEND = [
+    ("presence", 0), ("dome open", 1), ("dispense cycle", 2), ("dome hold", 4), ("fault", 7),
+]
 
 # A thin blank lane is inserted between each node's 4-lane group (see
 # build_lanes) purely for visual whitespace — otherwise n1's last lane and
@@ -61,6 +66,19 @@ def build_lanes(nodes: List[int]) -> List[str]:
 def node_lane_base(nodes: List[int], node: int) -> int:
     idx = nodes.index(node)
     return 1 + idx * (LANES_PER_NODE + 1)
+
+
+def _reload_hover(row) -> str:
+    """Hover text for a Pellet Reload mark: reason and attempt when known."""
+    parsed = parse_pellet_reload(row.raw_data, row.details)
+    if parsed is None:
+        return "Pellet Reload"
+    bits = ["Pellet Reload"]
+    if parsed.reason is not None:
+        bits.append(reload_reason_message(parsed.reason))
+    if parsed.attempt is not None:
+        bits.append(f"attempt {parsed.attempt} of 3")
+    return " · ".join(bits)
 
 
 def clip(t0: float, t1: float, w0: float, w1: float) -> Optional[Tuple[float, float]]:
@@ -130,10 +148,27 @@ def panel_marks_spans(run, m, nodes: List[int], w0: float, w1: float) -> Tuple[L
                     glyph, key, _ = EVENT_GLYPH[label]
                     marks.append(Mark(lane=base + 3, t=t, glyph=glyph, key=key, title=label))
 
+        # After the cycle spans so the hold band paints on top of them.
+        # Fault bands (below) are drawn later and stay on top of both.
+        for hold in m.holds:
+            if hold.node != node:
+                continue
+            clipped = clip(hold.t0, hold.t1 if hold.t1 is not None else w1, w0, w1)
+            if clipped:
+                spans.append(Span(lane=base + 2, t0=clipped[0], t1=clipped[1], key=4,
+                                   hatch=True, open_ended=hold.censored, title="dome hold"))
+
         for row in run.by_node(node):
             if row.frame_type == "EVENT" and row.event_name == "FeedSkipped" and w0 <= row.t <= w1:
                 glyph, key, _ = EVENT_GLYPH["FeedSkipped"]
                 marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key, title="FeedSkipped"))
+            if row.frame_type == "EVENT" and row.event_name == "Retracting" and w0 <= row.t <= w1:
+                glyph, key, _ = EVENT_GLYPH["Retracting"]
+                marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key, title="Retracting"))
+            if row.frame_type == "EVENT" and row.event_name == "Pellet Reload" and w0 <= row.t <= w1:
+                glyph, key, _ = EVENT_GLYPH["Pellet Reload"]
+                marks.append(Mark(lane=base + 3, t=row.t, glyph=glyph, key=key,
+                                   title=_reload_hover(row)))
             if row.frame_type == "EVENT" and row.event_name.startswith("Fault:") and w0 <= row.t <= w1:
                 # Filled (not hatched) — a solid red band reads unambiguously
                 # against the hatched orange dome-open band on the lane above.

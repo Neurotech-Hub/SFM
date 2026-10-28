@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Compare which CAN events count as actogram ticks.
 
-The printed report defaults to presence onsets (``MousePresence Detected``).
+The printed report defaults to dome openings (``Dome Opened``), one tick
+per physical lift, with a Ticks legend.
 The same helper the report uses — ``activity_by_day`` — accepts any GUI-log
 event name. After ``pip install sfm-analysis`` this runs with no source
 tree and no Pi::
@@ -47,7 +48,7 @@ def main(argv: list[str] | None = None) -> None:
     for names in PROXIES:
         _summarize(run, names)
     print(
-        "To plot takes on the HTML actogram instead of presence "
+        "To plot takes on the HTML actogram instead of dome openings "
         "(no file copy; ships with the package):\n"
         "  sfm-report MySession --design actogram_takes --open\n"
         "To plot a different event, copy that design next to your logs, "
