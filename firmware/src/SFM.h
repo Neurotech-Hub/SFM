@@ -1,22 +1,23 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// VFM – Spatial Foraging Platform module library
+// SFM – Spatial Foraging Platform module library
 //
 // Facade class that aggregates all services. Typical sketch usage:
 //
-//   #include <VFM.h>
-//   vfm::VFM vfm;
+//   #include <SFM.h>
+//   sfm::SFM sfm;
 //
 //   void setup() {
-//       vfm.begin();            // init all services + start discovery
+//       sfm.begin();            // init all services + start discovery
 //   }
 //   void loop() {
-//       vfm.update();           // drive FSMs, pump CAN, heartbeat
+//       sfm.update();           // drive FSMs, pump CAN, heartbeat
 //   }
 // ---------------------------------------------------------------------------
 
-#include "hardware/VFMPins.h"
+#include "SFMVersion.h"
+#include "hardware/SFMPins.h"
 #include "services/ServiceTypes.h"
 #include "services/DispenserService.h"
 #include "services/CanService.h"
@@ -24,11 +25,11 @@
 #include "services/LedService.h"
 #include "services/PresenceService.h"
 
-namespace vfm {
+namespace sfm {
 
-class VFM {
+class SFM {
 public:
-    VFM();
+    SFM();
 
     // Initialise all services in the correct order.
     // Returns false if any critical service fails to initialise.
@@ -56,7 +57,7 @@ public:
     bool startPresenceCalibration()   { return presence_.startCalibration(); }
     bool presenceCalibrating() const  { return presence_.calibrating(); }
 
-    // Calibration notifications, re-latched after VFM has driven the LEDs so a
+    // Calibration notifications, re-latched after SFM has driven the LEDs so a
     // sketch can report the result. Returns None when there is nothing new.
     PresenceEvent takePresenceEvent();
 
@@ -91,8 +92,13 @@ private:
     bool reportedPresence_ = false;
 
     // Last dispenser FSM state published as a phase event (Seeking / Lowering /
-    // Loading / Raising). Heartbeats still carry the full state snapshot.
+    // Loading / Raising / DomeHold / Retracting). Heartbeats still carry the
+    // full state snapshot.
     DispenseState lastReportedDispenseState_ = DispenseState::Idle;
+
+    // FirmwareInfo is sent once when the node becomes Enabled, and again
+    // after every Pong. Cleared if identity drops so the next enable repeats it.
+    bool firmwareAnnounced_ = false;
 
     // Button (PIN_BTN, active LOW): short click recalibrates presence, long
     // hold clears the NVS node ID.
@@ -143,6 +149,7 @@ private:
     void handleInputEvents();
     void sendInputChanged(InputId input, bool active);
     void sendPhaseEvent(CanEvent ev);
+    void sendFirmwareInfo();
     void sendHeartbeatIfDue();
     void updateCalConfirmBlink();
     void handlePresenceEvents();
@@ -153,4 +160,4 @@ private:
     void flashLedsClear();            // visual confirmation of NVS clear
 };
 
-} // namespace vfm
+} // namespace sfm

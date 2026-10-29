@@ -1,0 +1,47 @@
+{
+  "name": "troubleshooting",
+  "label": "Troubleshooting",
+  "template": "troubleshooting",
+  "description": "Actuator check: every interval, the selected nodes lower, hold, and raise an empty plate (M2 only, M1 never runs, no pellets). A faulted node is skipped until Recover; the rest keep cycling.",
+  "parameters": [
+    {
+      "key": "nodes",
+      "label": "Active nodes",
+      "type": "nodes",
+      "help": "Nodes to cycle; all of them move together"
+    },
+    {
+      "key": "interval_min",
+      "label": "Cycle every (min)",
+      "type": "float",
+      "default": 5.0,
+      "min": 0.1,
+      "max": 1440,
+      "help": "Start of one cycle to the start of the next"
+    },
+    {
+      "key": "hold_s",
+      "label": "Hold at bottom (s)",
+      "type": "float",
+      "default": 3.0,
+      "min": 0,
+      "max": 60,
+      "help": "Time at the drop position before raising (about a fed node's load time); 0 = raise as soon as every node is down"
+    },
+    {
+      "key": "max_cycles",
+      "label": "Max cycles",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "help": "0 = no cap"
+    },
+    {
+      "key": "minutes",
+      "label": "Duration (min)",
+      "type": "float",
+      "default": 0,
+      "help": "0 = no limit"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-node_simulator.py — Simulates N VFM nodes on a SocketCAN interface.
+node_simulator.py — Simulates N SFM nodes on a SocketCAN interface.
 
 Run alongside the GUI on vcan0 for hardware-free development and testing.
 
@@ -82,13 +82,15 @@ except ImportError:
         Pong=0x05; InputChanged=0x06; Lowering=0x07; Loading=0x08; Raising=0x09
         DomeOpenWarning=0x0A; PelletTaken=0x0B; FeedSkipped=0x0C; Seeking=0x0D
         NoFeedPresented=0x0E; Dwelling=0x0F; PresenceCalResult=0x10
+        ConfigApplied=0x11; DomeHold=0x12; Retracting=0x13
+        PelletReload=0x14; FirmwareInfo=0x15
 
     class InputId(IntEnum):
         Pellet=0x01; LoadPosition=0x02; Dome=0x03; MousePresence=0x04
 
     class DispenseState(IntEnum):
         Idle=0; Lowering=1; Loading=2; Raising=3; Loaded=4; Seeking=5
-        Fault=6; Dwelling=7
+        Fault=6; Dwelling=7; DomeHold=8; Retracting=9
 
     class ServiceStatus(IntEnum):
         Ok=0; NotInitialized=1; Jam=2; InvalidData=3; PelletLost=4
@@ -173,7 +175,7 @@ class SimNode:
     peer_raise_seen: bool = False
     cal_until: Optional[float] = None  # presence calibration in progress until this time
     presence_threshold: int = 35000    # mirrors firmware kDefaultPresenceThreshold
-    presence_factor: float = 3.0       # mirrors firmware kDefaultPresenceFactor
+    presence_factor: float = 60.0      # mirrors firmware kDefaultPresenceFactor
 
     # Timing
     last_heartbeat: float = field(default_factory=time.time)
@@ -204,7 +206,7 @@ class SimNode:
 # ---------------------------------------------------------------------------
 
 class NodeSimulator:
-    """Runs N simulated VFM nodes on a SocketCAN interface."""
+    """Runs N simulated SFM nodes on a SocketCAN interface."""
 
     # Dispense sequence timings (seconds after command received)
     LOWERING_DELAY = 1.0
@@ -328,6 +330,17 @@ class NodeSimulator:
                         break
             return
 
+        # Raising event from a node this process does not simulate (a real
+        # node, or the base station's trigger_peer_raise): every simulated
+        # node in a no-feed cycle latches it, as firmware's peer listener does.
+        if CAN_EVENT_BASE < arb_id < CAN_EVENT_BASE + 0x100 and data[:1] == bytes([CanEvent.Raising]):
+            src_id = arb_id - CAN_EVENT_BASE
+            if all(node.node_id != src_id for node in self._nodes.values()):
+                for node in self._nodes.values():
+                    if node.no_feed:
+                        node.peer_raise_seen = True
+            return
+
         # Command frames (broadcast or per-node)
         is_broadcast = (arb_id == CAN_CMD_BROADCAST)
         for node in self._nodes.values():
@@ -346,7 +359,9 @@ class NodeSimulator:
             if cmd == CanCmd.Ping:
                 # Pong carries the node's MAC — mirrors real firmware so the
                 # GUI can confirm/refresh its MAC<->ID mapping from a live node.
+                # FirmwareInfo follows every Pong (major, minor, patch).
                 self._send_event(node, CanEvent.Pong, node.mac)
+                self._send_event(node, CanEvent.FirmwareInfo, bytes([1, 6, 0]))
                 print(f"  [SIM] Node {node.node_id}: status LED blink (Ping)", flush=True)
 
             elif cmd == CanCmd.Dispense:
@@ -746,7 +761,7 @@ class NodeSimulator:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="VFM Node Simulator — fake VFM nodes on a SocketCAN interface",
+        description="SFM Node Simulator — fake SFM nodes on a SocketCAN interface",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--interface", "-i", default="vcan0",
@@ -769,7 +784,7 @@ def main() -> None:
         skip_discovery=args.skip_discovery,
     )
 
-    print(f"VFM Node Simulator — {args.nodes} node(s) on {args.interface}")
+    print(f"SFM Node Simulator — {args.nodes} node(s) on {args.interface}")
     print("Press Ctrl+C to stop.\n")
     try:
         sim.start()

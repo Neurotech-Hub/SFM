@@ -1,11 +1,10 @@
 """sections/timeline.py — the session raster: the centerpiece of the report.
 
 One lane group per node (presence / dome / dispense-cycle / discrete
-events), plus a session-scope lane for trial boundaries and script
-health. This is what actually shows an experimenter that a session
-stalled for 24 minutes before the first trial, or that an animal ignored
-one node for half the run — the summary sections elsewhere are all
-derived from what's drawn here.
+events), plus a session-scope lane for trial boundaries. This is what
+actually shows an experimenter that an animal ignored one node for half
+the run — the summary sections elsewhere are all derived from what's
+drawn here.
 
 Long runs auto-paginate: a whole-run overview strip, then stacked
 ``window_s``-second detail panels — the print-native substitute for pan/
@@ -142,6 +141,16 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
         page_break_before=True,
         uses_time_axis=has_clock,
     )
+
+
+def _actogram_tick_label(event_names: Sequence[str]) -> str:
+    """Short legend text for the events drawn as ticks."""
+    friendly = {
+        "Dome Opened": "dome opened",
+        "MousePresence Detected": "presence",
+        "Pellet Taken": "pellet taken",
+    }
+    return ", ".join(friendly.get(name, name) for name in event_names)
 
 
 def _actogram_tick_label(event_names: Sequence[str]) -> str:

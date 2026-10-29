@@ -10,7 +10,8 @@ The DearPyGui render callback fires every frame (~60 fps).  Each frame:
   2. Classify and dispatch each received frame.
   3. Tick the DiscoveryManager for timeout detection.
   4. Run staleness checks every second.
-  5. Refresh tile widgets and the log table.
+  5. Repaint status text a few times a second, and the event strip only
+     when a non-heartbeat row arrives.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from .experiment.schema import (
     ExperimentParam,
     param_visible,
 )
-from .pellet_ledger import PelletLedger
+from .pellet_ledger import NodeTally, PelletLedger
 from .protocol import (
     CanCmd,
     CanEvent,
@@ -63,6 +64,9 @@ from .protocol import (
     parse_discovery,
     parse_presence_cal,
     parse_config_applied,
+    parse_pellet_reload,
+    parse_firmware_info,
+    PELLET_RELOAD_MAX,
     config_applied_factor,
     build_setconfig_heartbeat,
     build_setconfig_presence_factor,
@@ -91,11 +95,12 @@ from .protocol import (
 WINDOW_W = 1500
 WINDOW_H = 1200        
 TILE_W   = 320
-TILE_H   = 320  # room for multi-line fault instructions
+TILE_H   = 340  # room for multi-line fault instructions + pellet counts
 FAULT_TEXT_WRAP = TILE_W - 24  # stay inside child_window padding/border
-LOG_ROWS = 18        # visible rows in the log table before scroll
-LOG_TABLE_HEIGHT = 220  
+LOG_VISIBLE_ROWS = 30  # fixed event-strip rows; created once, updated in place
+LOG_TABLE_HEIGHT = 220
 STALE_CHECK_INTERVAL = 1.0  # seconds between staleness sweeps
+UI_PAINT_INTERVAL = 0.5     # status line and pellet counters, not every frame
 DEFAULT_HEARTBEAT_INTERVAL_S = 60  # default node heartbeat interval (seconds)
 MAC_PING_RETRY_S = 3.0  # min seconds between MAC-resolution Pings to the same node
 DEFAULT_EXPERIMENT_NAME = "free_feeding"  # matches experiments/free_feeding.json "name"
@@ -241,6 +246,11 @@ class SFMApp:
         # report; node counters run from power-on and are read only as a
         # dropped-frame witness. Reset on every open_session().
         self._pellets = PelletLedger()
+        # What the Experiment panel and node tiles show: the ledger read live
+        # for the run's nodes while it runs, then frozen when it ends (the
+        # ledger keeps counting manual dispenses between runs).
+        self._pellet_run_nodes: List[int] = []
+        self._pellet_snapshot: Optional[Dict[int, NodeTally]] = None
 
         # Developer Menu values (presence factor) persisted across restarts —
         # see dev_settings.py.
@@ -264,7 +274,8 @@ class SFMApp:
         self._node_tiles: Dict[int, dict] = {}   # node_id → {tag dict}
         self._log_filter_node = 0                # 0 = all
         self._log_filter_type = "All"
-        self._show_heartbeats = False
+        self._last_panel_paint = 0.0
+        self._last_display_generation = -1
         self._hb_interval_s = float(DEFAULT_HEARTBEAT_INTERVAL_S)
         # Nodes that have already received (or been covered by) a SetConfig
         # HeartbeatInterval push this session. Cleared on Re-discover so a
@@ -566,6 +577,12 @@ class SFMApp:
         self._build_main_screen(num_nodes)
         self._screen = "main"
 
+        # Probe the bus immediately: every already-running node answers with a
+        # Pong carrying its live MAC (_handle_pong_mac), so tiles show MAC and
+        # online status now instead of waiting for heartbeats / the per-node
+        # MAC-resolution retry timer.
+        self._broadcast(CanCmd.Ping)
+
     # ------------------------------------------------------------------
     # Main Screen
     # ------------------------------------------------------------------
@@ -719,6 +736,10 @@ class SFMApp:
                 tags["load_position_text"] = dpg.add_text("Load: ○")
                 dpg.add_spacer(width=6)
                 tags["dome_text"] = dpg.add_text("Dome: ○")
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("Pellets:", color=(160,165,175,255))
+                tags["pellet_count_text"] = dpg.add_text("—", color=_COLOR_GREY)
 
             # Single wrapped line: "Status: Offline" until online, then
             # "Status: Healthy" or "Status: <fault instruction>" (wrapped)
@@ -900,6 +921,9 @@ class SFMApp:
                     callback=self._on_experiment_stop,
                 )
             dpg.add_text("Idle", tag="exp_status_text", color=(160, 165, 175, 255))
+            with dpg.group(horizontal=True):
+                dpg.add_text("Pellets:", color=(160, 165, 175, 255))
+                dpg.add_text("—", tag="exp_pellet_text", color=_COLOR_GREY)
             dpg.add_group(tag="exp_params_group")
             if self._exp_defs:
                 self._rebuild_experiment_params(default_def or self._exp_defs[0])
@@ -958,10 +982,17 @@ class SFMApp:
         if info["will_create"]:
             dpg.set_value("exp_session_hint", f"→ will create {info['path']}")
         else:
+            resume = info.get("resume") or {}
+            extra = ""
+            if resume.get("from_run"):
+                nxt = int(resume.get("trials") or 0) + 1
+                loaded = int(resume.get("pellets") or 0)
+                taken = sum(int(v) for v in (resume.get("node_taken") or {}).values())
+                extra = f", resuming at trial {nxt}, pellets {loaded} → {taken}"
             dpg.set_value(
                 "exp_session_hint",
                 f"→ appending to {info['path']} (run {info['next_run_id']}, "
-                f"{info['row_count']:,} existing row(s))",
+                f"{info['row_count']:,} existing row(s){extra})",
             )
 
     # ------------------------------------------------------------------
@@ -1197,13 +1228,28 @@ class SFMApp:
             run_id = self._log.open_session(sanitized, self._exp_log_dir)
             self._log.set_context(session=sanitized, run_id=run_id, trial=0, session_start_ts=time.time())
 
-        # Fresh run, fresh pellet numbers. Nodes keep counting from power-on;
-        # this is what makes the first pellet of the run pellet 1 in the log.
-        self._pellets.reset()
+        # Continue the pellet numbers when this session name already has a
+        # log. Nodes keep counting from power-on; the baseline is what makes
+        # the next pellet one past the last run instead of pellet 1 again.
+        resume = self._log.resume_state if self._log is not None else None
+        baseline = None
+        if resume is not None and resume.from_run:
+            nodes_seen = set(resume.node_pellets) | set(resume.node_taken)
+            baseline = {
+                n: (resume.node_pellets.get(n, 0), resume.node_taken.get(n, 0))
+                for n in nodes_seen
+            }
+        self._pellets.reset(baseline)
 
         # Re-push GUI heartbeat interval so experiment runs never inherit the
         # firmware 5s default, and align experiment offline detection to 3× HB.
         self._sync_heartbeat_policy(broadcast=True)
+        def _firmware_for(node_id: int) -> Optional[str]:
+            node = self._registry.get(node_id) if self._registry is not None else None
+            if node is None:
+                return None
+            return node.firmware_version
+
         ok = self._exp.start(
             exp_def,
             params=params,
@@ -1213,6 +1259,8 @@ class SFMApp:
             log=self._log,
             on_session_start=self._fire_sync_marker,
             online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
+            resume=resume if resume is not None and resume.from_run else None,
+            firmware_for=_firmware_for,
         )
         if ok:
             # One ledger for the run: the experiment callbacks see the same
@@ -1221,6 +1269,7 @@ class SFMApp:
             runner = self._exp.runner if self._exp is not None else None
             if runner is not None:
                 runner.normalizer.set_pellet_ledger(self._pellets)
+            self._pellet_run_nodes = list(nodes)
             self._set_experiment_inputs_enabled(False)  # lock config while running
             dpg.configure_item("exp_start_btn", enabled=False)
             self._refresh_experiment_status()
@@ -1231,6 +1280,9 @@ class SFMApp:
             self._resume_daily_log()
 
     def _on_experiment_stop(self, sender=None, app_data=None, user_data=None) -> None:
+        # Last live read before the runner goes away; frozen from here on.
+        self._refresh_pellet_counters()
+        self._pellet_run_nodes = []
         if self._exp.is_running:
             self._exp.stop()
         self._resume_daily_log()
@@ -1300,6 +1352,49 @@ class SFMApp:
             if self._exp_inputs_locked:
                 self._set_experiment_inputs_enabled(True)
 
+    def _experiment_pellet_tallies(self) -> Optional[Dict[int, NodeTally]]:
+        """
+        Per-node pellet totals for the current (or last) experiment run.
+
+        Read live from the ledger while the run is going, and once more on
+        the frame it ends so the final pellet is counted; frozen after that.
+        A session resumed under the same name starts from the ledger's
+        baseline, so the numbers carry on from the previous run. None
+        before the first run.
+        """
+        if self._pellet_run_nodes:
+            self._pellet_snapshot = {
+                n: self._pellets.tally(n) for n in self._pellet_run_nodes
+            }
+            if not self._exp.is_running:
+                self._pellet_run_nodes = []
+        return self._pellet_snapshot
+
+    def _refresh_pellet_counters(self) -> None:
+        """Experiment-panel total and per-node tile counts."""
+        tallies = self._experiment_pellet_tallies()
+        if dpg.does_item_exist("exp_pellet_text"):
+            if tallies is None:
+                dpg.configure_item("exp_pellet_text", default_value="—", color=_COLOR_GREY)
+            else:
+                presented = sum(t.presented for t in tallies.values())
+                taken = sum(t.taken for t in tallies.values())
+                dpg.configure_item(
+                    "exp_pellet_text",
+                    default_value=f"{presented} presented · {taken} taken",
+                    color=(200, 210, 220, 255),
+                )
+        for node_id, tags in self._node_tiles.items():
+            tally = tallies.get(node_id) if tallies is not None else None
+            if tally is None:
+                dpg.configure_item(tags["pellet_count_text"], default_value="—", color=_COLOR_GREY)
+            else:
+                dpg.configure_item(
+                    tags["pellet_count_text"],
+                    default_value=f"{tally.presented} presented / {tally.taken} taken",
+                    color=(200, 210, 220, 255),
+                )
+
     def _build_log_panel(self) -> None:
         dpg.add_text("Event Log", color=(100, 180, 255, 255))
         with dpg.group(horizontal=True):
@@ -1314,26 +1409,17 @@ class SFMApp:
             dpg.add_text("Type:", color=(160,165,175,255))
             dpg.add_combo(
                 tag="log_filter_type",
-                items=["All", "EVENT", "COMMAND", "HEARTBEAT", "DISCOVERY", "BNC", "SYNC", "WARNING", "EXPERIMENT"],
+                items=["All", "EVENT", "COMMAND", "DISCOVERY", "BNC", "SYNC", "WARNING", "EXPERIMENT"],
                 default_value="All",
                 width=120,
                 callback=self._refresh_log_table,
             )
-            dpg.add_checkbox(
-                tag="log_show_hb",
-                label="Show Heartbeats",
-                default_value=False,
-                callback=self._refresh_log_table,
-            )
-            dpg.add_button(label="Clear",  callback=self._on_log_clear)
-            dpg.add_button(label="Export", callback=self._on_log_export)
+            dpg.add_button(label="Clear", callback=self._on_log_clear)
             # TODO(report-gui-hook): a "Report" button belongs here, calling
             # base_station.report.build_session_report(self._log.csv_path, ...)
             # on a background threading.Thread (this render loop is single-
             # threaded — see _make_render_callback/_on_render — so report
-            # generation on a multi-hour session must not run inline) and
-            # surfacing the result path through the existing render-tick pump,
-            # the same way _on_log_export writes to log_count_text below.
+            # generation on a multi-hour session must not run inline).
             dpg.add_text("", tag="log_count_text", color=(160,165,175,255))
 
         with dpg.table(
@@ -1354,8 +1440,18 @@ class SFMApp:
             dpg.add_table_column(label="Type",      width_fixed=True, init_width_or_weight=90)
             dpg.add_table_column(label="Event",     width_fixed=True, init_width_or_weight=150)
             dpg.add_table_column(label="ID",        width_fixed=True, init_width_or_weight=55)
-            dpg.add_table_column(label="Data",      width_stretch=True)
-            dpg.add_table_column(label="Details",   width_stretch=True)
+            dpg.add_table_column(label="Data",      width_stretch=True, init_width_or_weight=0.4)
+            dpg.add_table_column(label="Details",   width_stretch=True, init_width_or_weight=1.6)
+            for i in range(LOG_VISIBLE_ROWS):
+                with dpg.table_row(tag=f"log_row_{i}", show=False):
+                    dpg.add_text("", tag=f"log_time_{i}")
+                    dpg.add_text("", tag=f"log_node_{i}")
+                    dpg.add_text("", tag=f"log_dir_{i}")
+                    dpg.add_text("", tag=f"log_type_{i}")
+                    dpg.add_text("", tag=f"log_event_{i}")
+                    dpg.add_text("", tag=f"log_id_{i}")
+                    dpg.add_text("", tag=f"log_data_{i}")
+                    dpg.add_text("", tag=f"log_details_{i}")
 
     # ------------------------------------------------------------------
     # Render callback (called every frame)
@@ -1387,7 +1483,14 @@ class SFMApp:
             self._exp.step(messages, now=now)
             if self._log and self._exp.runner is not None:
                 self._log.set_context(trial=self._exp.runner.ctx.trial)
-        self._refresh_experiment_status()
+        # Switch back to the daily CSV on the same frame a run ends.
+        # Widget repaints stay on UI_PAINT_INTERVAL.
+        if not self._exp.is_running:
+            self._resume_daily_log()
+        if now - self._last_panel_paint >= UI_PAINT_INTERVAL:
+            self._last_panel_paint = now
+            self._refresh_experiment_status()
+            self._refresh_pellet_counters()
 
         # 2. Tick discovery timeout
         if self._discovery:
@@ -1403,10 +1506,10 @@ class SFMApp:
         # 3b. Base-station dispense scheduler (interval + chained modes)
         self._tick_schedulers(now)
 
-        # 4. Refresh log table when CAN/BNC activity or new experiment log rows
-        log_count = self._log.total_count if self._log else 0
-        if messages or bnc_events or log_count != getattr(self, "_last_log_count", 0):
-            self._last_log_count = log_count
+        # 4. Repaint the event strip only when a non-heartbeat row arrived
+        #    or the operator changed a filter (that path calls refresh directly).
+        if self._log is not None and self._log.display_generation != self._last_display_generation:
+            self._last_display_generation = self._log.display_generation
             self._refresh_log_table()
 
     # ------------------------------------------------------------------
@@ -1509,6 +1612,34 @@ class SFMApp:
                             entry_name = f"Fault: {code}"
                         elif ev.event == CanEvent.DomeOpenWarning:
                             details = "dome sensor open >30s"
+                        elif ev.event == CanEvent.PelletReload:
+                            info = parse_pellet_reload(ev)
+                            if info is None:
+                                details = "malformed PelletReload payload"
+                            else:
+                                details = (
+                                    f"warning reason={info.reason_name} "
+                                    f"attempt {info.attempt}/{PELLET_RELOAD_MAX}"
+                                )
+                                ctx = {"pellet_count": info.pellet_count}
+                                rec = self._pellets.witness_event(
+                                    node_id, ev.event, info.pellet_count
+                                )
+                                details += " " + self._pellet_details(
+                                    node_id, ev.event, ctx, rec
+                                )
+                                log_fields.update(
+                                    self._pellet_fields(node_id, ev.event, ctx, rec)
+                                )
+                        elif ev.event == CanEvent.FirmwareInfo:
+                            version = parse_firmware_info(ev)
+                            if version is None:
+                                details = "malformed FirmwareInfo payload"
+                            else:
+                                details = f"version={version}"
+                                node = self._registry.get(node_id)
+                                if node is not None:
+                                    node.firmware_version = version
                         elif ev.event == CanEvent.PresenceCalResult:
                             cal = parse_presence_cal(ev)
                             if cal is None:
@@ -1873,39 +2004,43 @@ class SFMApp:
     # ------------------------------------------------------------------
 
     def _refresh_log_table(self, *_) -> None:
-        if not self._log:
+        if not self._log or not dpg.does_item_exist("log_row_0"):
             return
 
         node_filter = dpg.get_value("log_filter_node")
         type_filter = dpg.get_value("log_filter_type")
-        show_hb     = dpg.get_value("log_show_hb")
 
         node_id = None if node_filter == "All" else int(node_filter)
         ftype   = None if type_filter == "All" else type_filter
 
-        entries = self._log.get_filtered(
-            node_id=node_id,
-            frame_type=ftype,
-            show_heartbeats=show_hb,
+        matched = self._log.get_filtered(node_id=node_id, frame_type=ftype)
+        shown = matched[:LOG_VISIBLE_ROWS]
+
+        for i in range(LOG_VISIBLE_ROWS):
+            if i >= len(shown):
+                dpg.configure_item(f"log_row_{i}", show=False)
+                continue
+            entry = shown[i]
+            dir_color = (100, 220, 120, 255) if entry.direction == "RX" else (120, 160, 255, 255)
+            dpg.configure_item(f"log_row_{i}", show=True)
+            dpg.configure_item(f"log_time_{i}", default_value=entry.timestamp_str)
+            dpg.configure_item(
+                f"log_node_{i}",
+                default_value=str(entry.node_id) if entry.node_id else "—",
+            )
+            dpg.configure_item(f"log_dir_{i}", default_value=entry.direction, color=dir_color)
+            dpg.configure_item(f"log_type_{i}", default_value=entry.frame_type)
+            dpg.configure_item(f"log_event_{i}", default_value=entry.event_name)
+            dpg.configure_item(f"log_id_{i}", default_value=entry.raw_id_hex)
+            dpg.configure_item(f"log_data_{i}", default_value=entry.raw_data_hex)
+            dpg.configure_item(f"log_details_{i}", default_value=entry.details)
+
+        path = self._log.csv_path
+        where = f" · {path.name}" if path is not None else ""
+        dpg.set_value(
+            "log_count_text",
+            f"  {len(shown)}/{len(matched)} recent · {self._log.rows_written} on disk{where}",
         )
-
-        # Rebuild table rows
-        dpg.delete_item("log_table", children_only=True, slot=1)
-        for entry in entries:
-            with dpg.table_row(parent="log_table"):
-                dpg.add_text(entry.timestamp_str)
-                dpg.add_text(str(entry.node_id) if entry.node_id else "—")
-                dir_color = (100, 220, 120, 255) if entry.direction == "RX" else (120, 160, 255, 255)
-                dpg.add_text(entry.direction, color=dir_color)
-                dpg.add_text(entry.frame_type)
-                dpg.add_text(entry.event_name)
-                dpg.add_text(entry.raw_id_hex)
-                dpg.add_text(entry.raw_data_hex)
-                dpg.add_text(entry.details)
-
-        total = self._log.total_count
-        shown = len(entries)
-        dpg.set_value("log_count_text", f"  {shown} / {total} entries")
 
     # ------------------------------------------------------------------
     # Discovery UI
@@ -2233,6 +2368,10 @@ class SFMApp:
                     label="Apply to All Nodes", width=180,
                     callback=self._on_apply_presence_factor,
                 )
+            dpg.add_text(
+                "Note: a lower factor makes detection more sensitive.",
+                color=(160, 165, 175, 255), wrap=390,
+            )
 
     def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
         factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else self._dev_settings.presence_factor
@@ -2606,17 +2745,8 @@ class SFMApp:
     def _on_log_clear(self) -> None:
         if self._log:
             self._log.clear()
+        self._last_display_generation = self._log.display_generation if self._log else -1
         self._refresh_log_table()
-
-    def _on_log_export(self) -> None:
-        if not self._log:
-            return
-        log_dir = self._exp_log_dir or "~/sfm_logs"
-        stem = self._log.session_name or "session"
-        path = self._log.export(
-            str(Path(log_dir).expanduser() / f"{stem}_export_{time.strftime('%Y%m%d_%H%M%S')}.csv")
-        )
-        dpg.set_value("log_count_text", f"  Exported → {path.name}")
 
     # ------------------------------------------------------------------
     # Shutdown

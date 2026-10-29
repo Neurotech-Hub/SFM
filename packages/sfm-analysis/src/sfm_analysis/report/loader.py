@@ -1,7 +1,7 @@
 """loader.py — CSV → typed rows for report generation.
 
 Reads a session CSV (and its sibling ``_heartbeats.csv``) written by the
-VFM base station's ``LogManager`` (see ``sfm_analysis.logs.CSV_HEADER``
+SFM base station's ``LogManager`` (see ``sfm_analysis.logs.CSV_HEADER``
 for the canonical 15-column header) and turns each line into a ``LogRow``
 / ``HeartbeatRow``. Also sniffs older
 schemas still found on disk so a report tool can skip them cleanly instead

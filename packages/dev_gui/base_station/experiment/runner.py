@@ -200,6 +200,7 @@ class Experiment:
         io: Optional[IOManager] = None,
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
+        firmware_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> "ExperimentRunner":
         """Build a runner for GUI hosting or synthetic testing."""
         return ExperimentRunner(
@@ -208,6 +209,7 @@ class Experiment:
             io=io,
             wire_bnc=wire_bnc,
             online_timeout_s=online_timeout_s,
+            firmware_for=firmware_for,
         )
 
 
@@ -226,10 +228,12 @@ class ExperimentRunner:
         io: Optional[IOManager] = None,
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
+        firmware_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> None:
         self.experiment = experiment
         self.can = can
         self.io = io
+        self._firmware_for = firmware_for
         self.ctx = ExperimentControl(
             nodes=experiment.nodes,
             can=can,
@@ -247,6 +251,7 @@ class ExperimentRunner:
         self._active = False
         self._finished = False
         self._started = False
+        self._resume = None
         self._owns_can = False
         self._bnc_queue: List[NodeEvent] = []
 
@@ -277,16 +282,19 @@ class ExperimentRunner:
     def is_finished(self) -> bool:
         return self._finished
 
-    def start(self, now: Optional[float] = None) -> None:
+    def start(self, now: Optional[float] = None, resume: Any = None) -> None:
         """
         Begin watching start conditions (or activate immediately if none).
 
-        Call once before stepping. Does not open CAN — call ``open()`` first
-        if you need a live bus.
+        ``resume`` is a ``ResumeState`` (or anything with the same fields)
+        from the log of a previous run of this session name. When ``from_run``
+        is set, the trial and pellet counters continue from it and a
+        ``session_resumed`` row records the offsets.
         """
         if self._started:
             return
         self._started = True
+        self._resume = resume
         now = now if now is not None else time.time()
         self.ctx.set_now(now)
         # If no start_when, activate immediately.
@@ -443,18 +451,26 @@ class ExperimentRunner:
         # different timezone has no way to know what "local" meant here --
         # see sfm_analysis.report.timezones for how the SDK consumes it.
         utc_offset_s = datetime.now().astimezone().utcoffset()
+        # String keys: this dict is JSON-encoded into the session CSV.
+        firmware = {
+            str(n): (self._firmware_for(n) if self._firmware_for is not None else None) or "unknown"
+            for n in self.ctx.nodes
+        }
         self.ctx.log(
             "session_start",
             experiment=self.experiment.name,
             nodes=self.ctx.nodes,
             seed=self.ctx.seed,
             utc_offset_s=utc_offset_s.total_seconds() if utc_offset_s is not None else None,
+            firmware=firmware,
         )
         if self.ctx.on_session_start is not None:
             try:
                 self.ctx.on_session_start()
             except Exception as exc:  # noqa: BLE001
                 self.ctx.log("callback_error", error=str(exc))
+        if self._apply_resume(now):
+            return
         for cb in self.experiment._on_start:
             self._safe_call_start(cb)
         self._fire_handlers(start_ev)
@@ -485,6 +501,36 @@ class ExperimentRunner:
                 self._safe_call_start(cb)
             self.ctx.end()
 
+    def _apply_resume(self, now: float) -> bool:
+        """
+        Carry trial and pellet counters in from the previous run.
+
+        Returns True when the pellet cap is already met, in which case the
+        session has been ended and the caller must not start the script.
+        """
+        resume = self._resume
+        if resume is None or not int(getattr(resume, "from_run", 0) or 0):
+            return False
+        trials = int(getattr(resume, "trials", 0) or 0)
+        pellets = int(getattr(resume, "pellets", 0) or 0)
+        node_pellets = getattr(resume, "node_pellets", {}) or {}
+        node_taken = getattr(resume, "node_taken", {}) or {}
+        self.ctx.resume_from(trials=trials, pellets=pellets)
+        self.ctx.log(
+            "session_resumed",
+            from_run=int(resume.from_run),
+            trial_offset=trials,
+            pellets_offset=pellets,
+            node_pellets_offset={int(k): int(v) for k, v in node_pellets.items()},
+            node_taken_offset={int(k): int(v) for k, v in node_taken.items()},
+        )
+        cap = self.experiment._end_pellets
+        if cap is not None and self.ctx.counter("pellets") >= cap:
+            self.ctx.stop("pellet_cap_reached_on_resume")
+            self._deactivate(now)
+            return True
+        return False
+
     def _dispatch_all(self, events: List[NodeEvent], now: float) -> None:
         # Waiting for start_when?
         if self._started and not self._active and not self._finished:
@@ -509,9 +555,10 @@ class ExperimentRunner:
             # Auto-count Loaded milestones for end_after(pellets=...).
             if ev.kind == EventKind.LOADED:
                 self.ctx.incr("pellets")
-            # Sticky per-node fault: halt just this node (cancel its timers,
-            # make its dispenses no-ops) before user handlers run. The rest of
-            # the experiment keeps running until an operator recovers the node.
+            # Sticky per-node fault (PelletLost included): halt just this node
+            # (cancel its timers, make its dispenses no-ops) before user
+            # handlers run. Nothing here sends Recover or re-dispenses — the
+            # node stays halted until an operator recovers it.
             elif ev.kind == EventKind.FAULT:
                 self.ctx.halt_node(ev.node_id)
             self._fire_handlers(ev)

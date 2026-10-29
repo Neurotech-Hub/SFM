@@ -117,3 +117,14 @@ def test_tally_reports_gaps_and_totals_together() -> None:
     t = led.tally(1)
     assert (t.presented, t.missed_presented) == (3, 2)
     assert led.node_ids() == [1]
+
+
+def test_reset_baseline_continues_the_session_total() -> None:
+    led = PelletLedger()
+    led.reset({1: (5, 4)})
+    assert led.presented(1) == 5
+    assert led.taken(1) == 4
+    # The node's power-on counter is unrelated; the first Loaded of the new
+    # run adds one to the seeded total.
+    assert led.witness_event(1, CanEvent.Loaded, 20).total == 6
+    assert led.witness_event(1, CanEvent.PelletTaken, 9).total == 5

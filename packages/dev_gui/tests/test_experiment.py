@@ -667,8 +667,8 @@ def test_free_feeding_immediate_reload_when_delay_zero() -> None:
     assert dispenses == [(2, CanCmd.Dispense)]
 
 
-def test_fault_pauses_whole_free_feeding_session_until_recovered() -> None:
-    """A fault on any node pauses reloads on every node until Recover."""
+def test_healthy_node_reloads_while_another_is_faulted() -> None:
+    """A fault halts only that node. The other node still reloads on its delay."""
     exp = build_free_feeding(nodes=[1, 2], reload_delay_s=2.0, seconds=60)
     runner = exp.make_runner()
     runner.start(now=0.0)
@@ -695,20 +695,57 @@ def test_fault_pauses_whole_free_feeding_session_until_recovered() -> None:
     assert runner.ctx.is_halted(1)
     assert not runner.ctx.is_halted(2)
 
-    # Past node 2's reload delay — session is paused, so node 2 must not reload.
+    # Past node 2's reload delay — node 1 is still faulted, node 2 reloads.
     runner.ctx.commands_sent.clear()
     runner.step(now=3.5)
     dispenses = [
         n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
-    assert dispenses == []
+    assert dispenses == [2]
+    assert runner.ctx.is_halted(1)
 
+    runner.ctx.commands_sent.clear()
     runner.recover_node(1, now=4.0)
     runner.step(now=4.2)
     dispenses = [
         n for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
     ]
-    assert 2 in dispenses
+    assert dispenses == [1]
+    assert not runner.ctx.is_halted(1)
+
+
+def test_free_feeding_reload_waits_until_pellet_beam_clears() -> None:
+    """A beam still broken when the fixed reload delay elapses is retried, not dropped."""
+    exp = build_free_feeding(
+        nodes=[1], next_trial_wait="fixed_delay", reload_delay_s=2.0, seconds=60,
+    )
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=0.5))
+    runner.ctx.commands_sent.clear()
+
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=1.0))
+    # Fragment re-breaks the beam after the take.
+    runner.inject(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=1.1,
+        data={"gate": "pellet", "active": True},
+    ))
+
+    runner.step(now=3.5)  # delay elapsed; beam still occupied
+    dispenses = [
+        (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
+    ]
+    assert dispenses == []
+
+    runner.inject(NodeEvent(
+        EventKind.PG_CHANGED, node_id=1, timestamp=4.0,
+        data={"gate": "pellet", "active": False},
+    ))
+    runner.step(now=4.2)  # next 0.1 s poll after the beam clears
+    dispenses = [
+        (n, cmd) for (n, cmd, _) in runner.ctx.commands_sent if cmd == CanCmd.Dispense
+    ]
+    assert dispenses == [(1, CanCmd.Dispense)]
 
 
 def test_fault_cancels_faulted_nodes_pending_reload() -> None:
@@ -1370,3 +1407,85 @@ def test_experiment_commands_appear_under_command_filter() -> None:
     # It must NOT also appear as a generic EXPERIMENT row (no duplication).
     exp_rows = [e for e in log.all_entries() if e.frame_type == "EXPERIMENT"]
     assert not any(e.event_name == "command" for e in exp_rows)
+
+
+def test_free_feeding_pellet_lost_halts_without_auto_recovery() -> None:
+    """PelletLost is a normal fault: halt, no Recover, no re-dispense."""
+    exp = build_free_feeding(nodes=[1], reload_delay_s=2.0, seconds=60)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    runner.ctx.commands_sent.clear()
+
+    runner.inject(
+        NodeEvent(
+            EventKind.FAULT, node_id=1, timestamp=1.0,
+            data={"fault_code": ServiceStatus.PelletLost},
+        )
+    )
+    runner.step(now=10.0)
+    assert runner.ctx.is_halted(1)
+    assert not runner.is_finished
+    faults = [e for e in runner.ctx.log_entries if e.name == "fault"]
+    assert len(faults) == 1
+    sent = [cmd for (_, cmd, _) in runner.ctx.commands_sent]
+    assert CanCmd.Recover not in sent
+    assert CanCmd.Dispense not in sent
+    assert faults[0].node_id == 1
+
+
+def test_resume_continues_trial_and_pellet_counters() -> None:
+    from base_station.log_manager import ResumeState
+
+    exp = Experiment(nodes=[1], name="t")
+    started = []
+
+    @exp.on_start
+    def _s(ctx):
+        started.append(ctx.trial)
+
+    runner = exp.make_runner()
+    runner.start(now=0.0, resume=ResumeState(
+        trials=4, pellets=6, node_pellets={1: 6}, node_taken={1: 5}, from_run=2,
+    ))
+    assert started == [4]
+    assert runner.ctx.counter("pellets") == 6
+    resumed = [e for e in runner.ctx.log_entries if e.name == "session_resumed"]
+    assert len(resumed) == 1
+    assert resumed[0].fields["trial_offset"] == 4
+    assert resumed[0].fields["pellets_offset"] == 6
+    assert resumed[0].fields["from_run"] == 2
+    assert not runner.is_finished
+
+
+def test_resume_at_pellet_cap_ends_without_starting() -> None:
+    from base_station.log_manager import ResumeState
+
+    exp = Experiment(nodes=[1], name="t")
+    started = []
+
+    @exp.on_start
+    def _s(ctx):
+        started.append(True)
+
+    exp.end_after(pellets=6)
+    runner = exp.make_runner()
+    runner.start(now=0.0, resume=ResumeState(trials=4, pellets=6, from_run=1))
+    assert started == []
+    assert runner.is_finished
+    assert runner.ctx.stop_reason == "pellet_cap_reached_on_resume"
+
+
+def test_control_history_drops_the_oldest() -> None:
+    from base_station.experiment.context import _RETAINED_HISTORY
+
+    ctx = ExperimentContext(nodes=[1])
+    for i in range(_RETAINED_HISTORY + 5):
+        ctx.log("tick", i=i)
+    assert len(ctx.log_entries) == _RETAINED_HISTORY
+    assert ctx.log_entries[0].fields["i"] == 5
+    assert ctx.log_entries[-1].fields["i"] == _RETAINED_HISTORY + 4
+
+    ctx.commands_sent.clear()
+    for _ in range(_RETAINED_HISTORY + 5):
+        assert ctx._send(1, CanCmd.Dispense)
+    assert len(ctx.commands_sent) == _RETAINED_HISTORY

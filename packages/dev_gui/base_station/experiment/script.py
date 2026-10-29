@@ -48,9 +48,6 @@ ScriptFn = Callable[["ExperimentControl"], Generator[Any, Any, None]]
 # awaits which resolve immediately in a tight loop.
 MAX_ADVANCES_PER_TICK = 64
 
-# Minimum interval between repeated "still waiting" log rows for one await.
-STALL_WARN_S = 120.0
-
 
 class _AwaitKind(Enum):
     EVENT = auto()  # wait_for
@@ -123,7 +120,7 @@ def _until_label(
     label: Optional[str] = None,
 ) -> str:
     """
-    Human-readable wait name for ``script_stalled`` / ``script_timeout``.
+    Human-readable wait name for ``script_timeout`` / ``script_await_aborted``.
 
     Anonymous lambdas are named ``<lambda>`` in Python, which is useless in
     the log — pass ``label=`` at the call site. Unlabeled lambdas fall back
@@ -204,7 +201,6 @@ class ScriptScheduler:
         for _ in range(MAX_ADVANCES_PER_TICK):
             aw = self._pending
             if aw is not None and not self._resolve(aw, now):
-                self._maybe_warn_stalled(aw, now)
                 return
             self._pending = None
 
@@ -305,17 +301,6 @@ class ScriptScheduler:
             return True
 
         return False
-
-    def _maybe_warn_stalled(self, aw: _Await, now: float) -> None:
-        armed_at = aw.armed_at if aw.armed_at is not None else now
-        last_warn = getattr(aw, "_last_stall_warn", None)
-        elapsed = now - armed_at
-        if elapsed < STALL_WARN_S:
-            return
-        if last_warn is not None and (now - last_warn) < STALL_WARN_S:
-            return
-        aw._last_stall_warn = now  # type: ignore[attr-defined]
-        self._ctx.log("script_stalled", waiting_on=aw.label, elapsed_s=round(elapsed, 1))
 
     def _fail(self, exc: Exception) -> None:
         self._done = True

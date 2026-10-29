@@ -1,6 +1,6 @@
 """protocol.py — compatibility shim.
 
-The VFM CAN protocol now lives in the sfm-analysis SDK at
+The SFM CAN protocol now lives in the sfm-analysis SDK at
 ``sfm_analysis.protocol`` so that log-analysis tooling can decode frames
 without a base-station checkout. This module re-exports it unchanged so
 that every existing ``from base_station.protocol import X`` (and

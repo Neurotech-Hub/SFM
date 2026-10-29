@@ -1,4 +1,4 @@
-// LEDTest – hardware bring-up test for VFM module LEDs.
+// LEDTest – hardware bring-up test for SFM module LEDs.
 //
 // Pins:
 //   GPIO39 – Status LED
@@ -16,11 +16,11 @@
 //   3  – LED 10 only
 //   r  – resume auto cycle
 
-#include <VFM.h>
+#include <SFM.h>
 
 static constexpr uint32_t kStepMs = 500;
 
-vfm::LedService leds;
+sfm::LedService leds;
 
 enum class Mode { Auto, Manual };
 Mode mode = Mode::Auto;
@@ -56,11 +56,11 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000) {}
 
-    Serial.println(F("\n===== VFM LEDTest ====="));
+    Serial.println(F("\n===== SFM LEDTest ====="));
     Serial.println(F("GPIO39 = Status  |  GPIO9 = LED9  |  GPIO10 = LED10"));
     Serial.println(F("Auto cycle running. Commands: a=all on  o=all off  1/2/3=single  r=auto"));
 
-    if (leds.begin() != vfm::ServiceStatus::Ok) {
+    if (leds.begin() != sfm::ServiceStatus::Ok) {
         Serial.println(F("ERROR: LED init failed"));
     }
 

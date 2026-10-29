@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../hardware/VFMPins.h"
+#include "../hardware/SFMPins.h"
 #include "ServiceTypes.h"
 #include <Arduino.h>
 
-namespace vfm {
+namespace sfm {
 
 // LED service for the status LED and the two user IO LEDs.
 //
@@ -125,4 +125,4 @@ private:
   bool     led10On_         = false;
 };
 
-} // namespace vfm
+} // namespace sfm

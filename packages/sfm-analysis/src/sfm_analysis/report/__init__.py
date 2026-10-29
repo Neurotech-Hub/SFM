@@ -1,4 +1,4 @@
-"""report — turns VFM session CSV logs into printable HTML behavior reports.
+"""report — turns SFM session CSV logs into printable HTML behavior reports.
 
 Public entry points (used by run_report.py, sfm_analysis.analysis, and,
 later, a GUI hook):
@@ -11,7 +11,7 @@ later, a GUI hook):
 The package is stdlib-only (no jinja2/pandas/matplotlib) and produces a
 single self-contained HTML file, printable via Ctrl+P. See
 sfm_analysis/report/schema.py for how report "designs" (JSON) compose
-"sections" (Python) — the same split the VFM base station's experiment
+"sections" (Python) — the same split the SFM base station's experiment
 system uses for templates/parameters.
 
 Every report is exactly one HTML file, never a pair. The interactive

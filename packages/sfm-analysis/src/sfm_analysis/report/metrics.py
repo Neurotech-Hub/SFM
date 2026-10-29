@@ -39,6 +39,8 @@ _PHASE_FIELDS = {
     "Raising": "raising_t",
     "Seeking": "seeking_t",
     "Dwelling": "dwelling_t",
+    "Dome Hold": "dome_hold_t",
+    "Retracting": "retracting_t",
 }
 
 
@@ -76,6 +78,8 @@ class Cycle:
     raising_t: Optional[float] = None
     seeking_t: Optional[float] = None
     dwelling_t: Optional[float] = None
+    dome_hold_t: Optional[float] = None
+    retracting_t: Optional[float] = None
     ready_t: Optional[float] = None        # Loaded (fed) or NoFeedPresented (no-feed)
     first_presence_t: Optional[float] = None
     first_dome_t: Optional[float] = None
@@ -365,6 +369,7 @@ def fault_intervals(run: RunData) -> List[FaultInterval]:
     end_t = max((r.t for r in run.rows), default=run.duration_s)
 
     ordered = sorted(run.rows, key=lambda r: r.t)
+    reloaded = _reloaded_pellet_losses(run)
     for row in ordered:
         if row.frame_type == "EVENT" and row.event_name.startswith("Fault:"):
             code = ServiceStatus.Ok
@@ -373,6 +378,9 @@ def fault_intervals(run: RunData) -> List[FaultInterval]:
                     code = ServiceStatus(row.raw_data[1])
                 except ValueError:
                     pass
+            if code == ServiceStatus.PelletLost and _loss_was_reloaded(reloaded, row.node_id, row.t):
+                # Auto-reloaded. Not downtime — the trial continued.
+                continue
             open_faults[row.node_id] = (row.t, code)
             continue
         if row.source == "EXP" and row.event_name in ("fault", "node_halted"):
@@ -408,6 +416,25 @@ def fault_intervals(run: RunData) -> List[FaultInterval]:
 
     out.sort(key=lambda f: (f.node, f.t0))
     return out
+
+
+def _reloaded_pellet_losses(run: RunData) -> Dict[int, List[float]]:
+    """Timestamps of PelletLost events the base station reloaded instead of halting."""
+    out: Dict[int, List[float]] = {}
+    for row in run.exp("pellet_lost"):
+        if str(row.fields.get("action", "")) != "reload":
+            continue
+        node = row.fields.get("node", row.node_id)
+        try:
+            node_id = int(node)
+        except (TypeError, ValueError):
+            continue
+        out.setdefault(node_id, []).append(row.t)
+    return out
+
+
+def _loss_was_reloaded(reloaded: Dict[int, List[float]], node: int, t: float) -> bool:
+    return any(abs(t - rt) <= 1.0 for rt in reloaded.get(node, []))
 
 
 @dataclass
@@ -639,6 +666,17 @@ def pellet_accounting(run: RunData) -> Dict[int, PelletAccounting]:
             if row.fields.get("node_counter_restarted"):
                 a.counter_restarts += 1
 
+    # A resumed run's session_pellets / session_taken continue from the
+    # previous run. Subtract the offsets logged in session_resumed so this
+    # run's totals are what happened during the run; summing runs then
+    # gives the whole session.
+    pellets_off, taken_off = _resume_offsets(run)
+    for node, a in out.items():
+        if a.ledger_presented is not None:
+            a.ledger_presented = max(0, a.ledger_presented - pellets_off.get(node, 0))
+        if a.ledger_taken is not None:
+            a.ledger_taken = max(0, a.ledger_taken - taken_off.get(node, 0))
+
     hb_by_node: Dict[int, List] = {}
     for hb in run.heartbeats:
         hb_by_node.setdefault(hb.node_id, []).append(hb)
@@ -652,25 +690,60 @@ def pellet_accounting(run: RunData) -> Dict[int, PelletAccounting]:
     return out
 
 
+def _resume_offsets(run: RunData) -> Tuple[Dict[int, int], Dict[int, int]]:
+    """Per-node counts already accrued before this run, from ``session_resumed``."""
+    pellets: Dict[int, int] = {}
+    taken: Dict[int, int] = {}
+    for row in run.exp("session_resumed"):
+        pellets = _offset_map(row.fields.get("node_pellets_offset"))
+        taken = _offset_map(row.fields.get("node_taken_offset"))
+        break
+    return pellets, taken
+
+
+def _offset_map(value: object) -> Dict[int, int]:
+    if not isinstance(value, dict):
+        return {}
+    out: Dict[int, int] = {}
+    for key, item in value.items():
+        try:
+            node = int(key)
+            count = int(item)
+        except (TypeError, ValueError):
+            continue
+        if node > 0:
+            out[node] = count
+    return out
+
+
 @dataclass
 class InteractionFunnel:
     node: int
-    presented: int = 0
-    approached: int = 0          # cycles with a presence bout while ready
-    dome_opened: int = 0         # cycles where the dome opened while ready
+    loaded: int = 0             # fed cycles that reached Loaded
+    approached: int = 0         # fed cycles with a presence bout while ready
+    dome_opened: int = 0        # fed cycles where the dome opened while ready
     taken: int = 0
     approach_without_dome: int = 0
     dome_without_take: int = 0
+    no_feed_presented: int = 0  # empty-plate cycles, not part of the bars
 
 
 def interaction_funnel(cycles: Sequence[Cycle]) -> Dict[int, InteractionFunnel]:
-    """Per-node conversion funnel, built directly from the reconstructed cycles."""
+    """Per-node conversion funnel, built from the reconstructed cycles.
+
+    ``loaded`` counts fed cycles only. A mimic trial raises both plates, so
+    counting every ready cycle makes both nodes look equally baited. Empty
+    presentations are kept aside as ``no_feed_presented``.
+    """
     out: Dict[int, InteractionFunnel] = {}
     for c in cycles:
         if c.ready_t is None:
             continue  # never actually presented (dispense failed / vetoed)
         f = out.setdefault(c.node, InteractionFunnel(node=c.node))
-        f.presented += 1
+        if not c.fed:
+            f.no_feed_presented += 1
+            continue
+        f.loaded += 1
         if c.first_presence_t is not None:
             f.approached += 1
         if c.first_dome_t is not None:
@@ -717,7 +790,8 @@ APPARATUS_HEALTH_EVENTS = [
     "bandit_plate_occupied_wait",
     "paused_for_fault",
     "resumed_after_fault",
-    "script_stalled",
+    "pellet_lost",
+    "cycle_retry",
     "script_timeout",
     "callback_error",
     "timer_error",

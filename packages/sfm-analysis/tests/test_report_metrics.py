@@ -181,6 +181,20 @@ class TestPelletAccounting:
         assert acct[1].hb_presented_delta == 2
         assert acct[1].bus_loss_presented == 1   # firmware saw 2, we counted 1 EVENT row
 
+    def test_session_resumed_offsets_are_subtracted_from_the_ledger(self, tmp_path):
+        rows = [
+            exp_row(0, "session_resumed", {
+                "from_run": 1,
+                "node_pellets_offset": {"1": 5},
+                "node_taken_offset": {"1": 4},
+            }),
+            can_event_row(100, 1, CanEvent.Loaded, fields={"session_pellets": 8, "session_taken": 6}),
+        ]
+        run = _run(tmp_path, rows)
+        acct = pellet_accounting(run)
+        assert acct[1].ledger_presented == 3
+        assert acct[1].ledger_taken == 2
+
 
 class TestFaultIntervals:
     def test_pairs_fault_and_recovered_with_exact_downtime(self, tmp_path):
@@ -202,6 +216,22 @@ class TestFaultIntervals:
         assert len(faults) == 1
         assert faults[0].censored is True
 
+    def test_reloaded_pellet_lost_is_not_downtime(self, tmp_path):
+        rows = [
+            can_event_row(0, 1, CanEvent.Fault, bytes([ServiceStatus.PelletLost.value])),
+            exp_row(50, "pellet_lost", {"node": 1, "action": "reload", "attempt": 1}, node=1),
+            can_event_row(10_000, 1, CanEvent.Fault, bytes([ServiceStatus.PelletLost.value])),
+            exp_row(10_050, "pellet_lost", {"node": 1, "action": "halted", "attempt": 3}, node=1),
+            # A legacy loss with no reload row stays a fault.
+            can_event_row(20_000, 2, CanEvent.Fault, bytes([ServiceStatus.PelletLost.value])),
+        ]
+        run = _run(tmp_path, rows)
+        faults = fault_intervals(run)
+        assert len(faults) == 2
+        assert {f.node for f in faults} == {1, 2}
+        halted = next(f for f in faults if f.node == 1)
+        assert halted.code == ServiceStatus.PelletLost
+
 
 class TestInteractionFunnel:
     def test_conversion_counts(self, tmp_path):
@@ -218,12 +248,30 @@ class TestInteractionFunnel:
         cycles = build_cycles(run)
         funnel = interaction_funnel(cycles)
         f = funnel[1]
-        assert f.presented == 1
+        assert f.loaded == 1
         assert f.approached == 1
         assert f.dome_opened == 1
         assert f.taken == 1
         assert f.approach_without_dome == 0
         assert f.dome_without_take == 0
+        assert f.no_feed_presented == 0
+
+    def test_empty_plate_is_not_loaded(self, tmp_path):
+        from report_fixtures import row as row_
+        rows = [
+            row_(ts_ms=0, node_id=1, frame_type="COMMAND", source="EXP", direction="TX",
+                 event_name="Dispense", fields={"cmd": "Dispense"}),
+            can_event_row(100, 1, CanEvent.Loaded),
+            row_(ts_ms=200, node_id=2, frame_type="COMMAND", source="EXP", direction="TX",
+                 event_name="DispenseNoFeed", fields={"cmd": "DispenseNoFeed"}),
+            can_event_row(300, 2, CanEvent.NoFeedPresented),
+        ]
+        run = _run(tmp_path, rows)
+        funnel = interaction_funnel(build_cycles(run))
+        assert funnel[1].loaded == 1
+        assert funnel[1].no_feed_presented == 0
+        assert funnel[2].loaded == 0
+        assert funnel[2].no_feed_presented == 1
 
 
 class TestActivityByDay:

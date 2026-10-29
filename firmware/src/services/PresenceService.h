@@ -3,9 +3,9 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "ServiceTypes.h"
-#include "../hardware/VFMPins.h"
+#include "../hardware/SFMPins.h"
 
-namespace vfm {
+namespace sfm {
 
 // NVS keys (namespace kNvsNamespace)
 constexpr char kNvsKeyPresenceThr[]    = "presThr";
@@ -19,8 +19,8 @@ constexpr uint32_t kDefaultPresenceThreshold = 35000;
 
 // Calibration samples the idle pad (Welford online mean / variance), then sets
 //   threshold = mean + factor * std_dev
-// Factor default 3.0; pad must stay clear for the whole capture.
-constexpr float    kDefaultPresenceFactor = 3.0f;
+// Factor default 80; pad must stay clear for the whole capture.
+constexpr float    kDefaultPresenceFactor = 60.0f;
 constexpr float    kMinPresenceFactor     = 0.1f;
 constexpr float    kMaxPresenceFactor     = 100.0f;
 constexpr uint32_t kPresenceCalMs         = 5000;
@@ -132,4 +132,4 @@ private:
     void     loadFromNvs();
 };
 
-} // namespace vfm
+} // namespace sfm

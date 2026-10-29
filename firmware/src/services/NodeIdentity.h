@@ -4,9 +4,9 @@
 #include <Preferences.h>
 #include "ServiceTypes.h"
 #include "CanService.h"
-#include "../hardware/VFMPins.h"
+#include "../hardware/SFMPins.h"
 
-namespace vfm {
+namespace sfm {
 
 // NVS key used to persist the node ID (namespace kNvsNamespace)
 constexpr char kNvsKeyNodeId[] = "nodeId";
@@ -96,4 +96,4 @@ private:
     void     onDiscoveryFrame(uint32_t frameId, const uint8_t *payload, uint8_t len);
 };
 
-} // namespace vfm
+} // namespace sfm

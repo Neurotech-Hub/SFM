@@ -61,6 +61,8 @@ class ExperimentController:
         log: Optional[LogManager] = None,
         on_session_start: Optional[Callable[[], None]] = None,
         online_timeout_s: Optional[float] = None,
+        resume: Any = None,
+        firmware_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
@@ -82,13 +84,14 @@ class ExperimentController:
             io=io,
             wire_bnc=False,
             online_timeout_s=online_timeout_s,
+            firmware_for=firmware_for,
         )
         self._gui_log = log
         runner.ctx.on_log = self._on_experiment_log
         runner.ctx.on_session_start = on_session_start
         self._runner = runner
         self._exp_def = exp_def
-        runner.start()
+        runner.start(resume=resume)
         return True
 
     def stop(self) -> None:
@@ -148,14 +151,12 @@ class ExperimentController:
         if r.is_finished:
             reason = r.ctx.stop_reason or "ended"
             return (
-                f"Finished · pellets={r.ctx.counter('pellets')} "
-                f"elapsed={r.ctx.elapsed():.1f}s · {reason}"
+                f"Finished · elapsed={r.ctx.elapsed():.1f}s · {reason}"
             )
         if r.is_active:
             name = self._exp_def.label if self._exp_def else r.experiment.name
             return (
-                f"Running: {name} · pellets={r.ctx.counter('pellets')} "
-                f"elapsed={r.ctx.elapsed():.1f}s"
+                f"Running: {name} · elapsed={r.ctx.elapsed():.1f}s"
             )
         if r._started:
             return "Waiting for start condition…"

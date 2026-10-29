@@ -63,18 +63,21 @@ class TestLogManager:
         result = lm.get_filtered(frame_type="COMMAND", show_heartbeats=True)
         assert all(e.frame_type == "COMMAND" for e in result)
 
-    def test_heartbeats_hidden_by_default(self):
+    def test_heartbeats_are_not_in_the_display_ring(self):
         lm = LogManager(auto_save=False)
         lm.add(make_entry(frame_type="HEARTBEAT"))
         lm.add(make_entry(frame_type="EVENT"))
-        result = lm.get_filtered(show_heartbeats=False)
-        assert all(e.frame_type != "HEARTBEAT" for e in result)
+        result = lm.get_filtered()
+        assert [e.frame_type for e in result] == ["EVENT"]
+        assert all(e.frame_type != "HEARTBEAT" for e in lm.all_entries())
+        assert [e.frame_type for e in lm.recent_heartbeats()] == ["HEARTBEAT"]
 
     def test_heartbeats_shown_when_requested(self):
         lm = LogManager(auto_save=False)
         lm.add(make_entry(frame_type="HEARTBEAT"))
         result = lm.get_filtered(show_heartbeats=True)
-        assert len(result) == 1
+        assert result == []
+        assert len(lm.recent_heartbeats()) == 1
 
     def test_newest_first(self):
         lm = LogManager(auto_save=False)
@@ -135,8 +138,8 @@ class TestLogManager:
         assert [r["frame_type"] for r in main_rows] == ["EVENT"]
         assert [r["frame_type"] for r in hb_rows] == ["HEARTBEAT"]
         assert hb_rows[0]["node_id"] == "2"
-        # Still in the ring buffer for the GUI
-        assert any(e.frame_type == "HEARTBEAT" for e in lm.all_entries())
+        assert all(e.frame_type != "HEARTBEAT" for e in lm.all_entries())
+        assert lm.recent_heartbeats()[0].frame_type == "HEARTBEAT"
 
     def test_named_session_heartbeats_sibling(self, tmp_path):
         lm = LogManager(auto_save=False)
@@ -368,3 +371,93 @@ class TestResumeDaily:
         assert "Run1" in names and "Run2" in names
         assert rows[-1]["run_id"] == "2"
         assert all(r["event_name"] != "PostStopCommand" for r in rows)
+
+
+class TestAsyncCsv:
+    def test_burst_reaches_disk_on_close(self, tmp_path):
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        for i in range(40):
+            lm.add(make_entry(event_name=f"E{i}"))
+        lm.add(make_entry(frame_type="HEARTBEAT", node_id=3))
+        assert lm.display_generation == 40
+        lm.close()
+        today = datetime.now().strftime("%Y%m%d")
+        with open(tmp_path / f"session_{today}.csv") as f:
+            names = [r["event_name"] for r in csv.DictReader(f)]
+        assert names == [f"E{i}" for i in range(40)]
+        with open(tmp_path / f"session_{today}_heartbeats.csv") as f:
+            hb = list(csv.DictReader(f))
+        assert len(hb) == 1
+        assert hb[0]["node_id"] == "3"
+        assert lm.rows_written == 41
+
+
+def _pellet_row(node: int, pellets: int, taken: int, trial: int) -> LogEntry:
+    return make_entry(
+        node_id=node,
+        frame_type="EVENT",
+        event_name="Loaded",
+        trial=trial,
+        fields={"session_pellets": pellets, "session_taken": taken},
+    )
+
+
+def test_resume_scan_sums_legacy_runs_that_restarted_at_zero(tmp_path):
+    """A file written before resume existed: each run's own high-water mark adds up."""
+    lm = LogManager(auto_save=False)
+    lm.open_session("cohortA", str(tmp_path))
+    lm.set_context(trial=4)
+    lm.add(_pellet_row(1, 3, 2, 4))
+    lm.add(_pellet_row(2, 1, 1, 4))
+    lm.close()
+
+    lm2 = LogManager(auto_save=False)
+    lm2.open_session("cohortA", str(tmp_path))
+    lm2.set_context(trial=2)
+    lm2.add(_pellet_row(1, 2, 2, 2))
+    lm2.close()
+
+    info = LogManager(auto_save=False).preview_session_path("cohortA", str(tmp_path))
+    resume = info["resume"]
+    assert info["next_run_id"] == 3
+    assert resume["from_run"] == 2
+    assert resume["trials"] == 6
+    assert resume["node_pellets"] == {1: 5, 2: 1}
+    assert resume["node_taken"] == {1: 4, 2: 1}
+    assert resume["pellets"] == 6
+
+
+def test_resume_scan_subtracts_session_resumed_offsets(tmp_path):
+    """A continuous file must not count the carried-in total twice."""
+    lm = LogManager(auto_save=False)
+    lm.open_session("cohortA", str(tmp_path))
+    lm.set_context(trial=4)
+    lm.add(_pellet_row(1, 3, 2, 4))
+    lm.close()
+
+    lm2 = LogManager(auto_save=False)
+    assert lm2.open_session("cohortA", str(tmp_path)) == 2
+    state = lm2.resume_state
+    assert state.trials == 4
+    assert state.node_pellets == {1: 3}
+    lm2.add(make_entry(
+        source="EXP", frame_type="EXPERIMENT", event_name="session_resumed",
+        node_id=0, trial=4,
+        fields={
+            "from_run": 1,
+            "trial_offset": 4,
+            "pellets_offset": 3,
+            "node_pellets_offset": {1: 3},
+            "node_taken_offset": {1: 2},
+        },
+    ))
+    lm2.set_context(trial=7)
+    lm2.add(_pellet_row(1, 6, 5, 7))
+    lm2.close()
+
+    resume = LogManager(auto_save=False).preview_session_path("cohortA", str(tmp_path))["resume"]
+    assert resume["trials"] == 7
+    assert resume["node_pellets"] == {1: 6}
+    assert resume["node_taken"] == {1: 5}
+    assert resume["pellets"] == 6
+    assert resume["from_run"] == 2

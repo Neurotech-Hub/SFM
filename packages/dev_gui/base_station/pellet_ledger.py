@@ -22,7 +22,7 @@ event. A dropped ``Loaded`` frame is corrected by the next frame that carries
 the counter — the following ``DomeOpened``, ``PelletTaken``, or simply the next
 heartbeat — and the gap is reported so it lands in the log instead of vanishing.
 
-Which counter each frame carries (see ``VFM::sendDispenseEvent``):
+Which counter each frame carries (see ``SFM::sendDispenseEvent``):
 
 * ``PelletTaken`` carries ``takenCount_``; only it advances the taken counter.
 * Every other count-carrying event carries ``pelletCount_`` (pellets presented);
@@ -53,6 +53,7 @@ _PRESENTED_EVENTS = frozenset({
     CanEvent.OnPlate, CanEvent.Loaded, CanEvent.DomeOpened, CanEvent.FeedSkipped,
     CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading, CanEvent.Raising,
     CanEvent.NoFeedPresented, CanEvent.Dwelling,
+    CanEvent.DomeHold, CanEvent.Retracting, CanEvent.PelletReload,
 })
 
 
@@ -132,17 +133,35 @@ class PelletLedger:
     Per-run, per-node pellet accounting.
 
     ``reset()`` at the start of every run — the totals it hands out are what
-    the log and the report call "pellet 1", "pellet 2", and so on.
+    the log and the report call "pellet 1", "pellet 2", and so on. Pass a
+    baseline to continue a session that was closed and opened again under
+    the same name.
     """
 
     def __init__(self) -> None:
         self._presented: Dict[int, _Counter] = {}
         self._taken: Dict[int, _Counter] = {}
 
-    def reset(self) -> None:
-        """Start a fresh run. Every node's session count returns to zero."""
+    def reset(self, baseline: Optional[Dict[int, tuple]] = None) -> None:
+        """
+        Start a fresh run.
+
+        ``baseline`` seeds each node's session total ``(presented, taken)``
+        so a session reopened under the same name continues from where the
+        previous run stopped. Delta reconciliation is unchanged: the first
+        frame of the new run still re-baselines against the node's own
+        power-on counter.
+        """
         self._presented.clear()
         self._taken.clear()
+        if not baseline:
+            return
+        for node_id, counts in baseline.items():
+            presented, taken = counts
+            if int(presented) > 0:
+                self._presented[int(node_id)] = _Counter(total=int(presented))
+            if int(taken) > 0:
+                self._taken[int(node_id)] = _Counter(total=int(taken))
 
     # ------------------------------------------------------------------
     # Witnesses

@@ -532,3 +532,65 @@ class TestConfigApplied:
         extra = bytes([2, 1]) + (1092616192).to_bytes(4, "little")  # factor=10.0
         ev = parse_event(bytes([CanEvent.ConfigApplied]) + extra)
         assert parse_event_context(ev) is None
+
+
+class TestDomeSafeAndFirmware:
+    def test_new_phase_and_reload_opcodes(self):
+        from base_station.protocol import (
+            parse_event_context,
+            parse_pellet_reload,
+            PelletReloadReason,
+            PELLET_RELOAD_MAX,
+        )
+        assert CanEvent.DomeHold == 0x12
+        assert CanEvent.Retracting == 0x13
+        assert CanEvent.PelletReload == 0x14
+        assert CanEvent.FirmwareInfo == 0x15
+        assert DispenseState.DomeHold == 8
+        assert DispenseState.Retracting == 9
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.DomeHold] == "Dome Hold"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.Retracting] == "Retracting"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.PelletReload] == "Pellet Reload"
+        assert CAN_EVENT_DISPLAY_NAME[CanEvent.FirmwareInfo] == "Firmware Info"
+        assert PelletReloadReason.LostDuringRaise == 1
+        assert PelletReloadReason.MissingAfterRetract == 2
+        assert PELLET_RELOAD_MAX == 3
+
+        hold = parse_event(bytes([CanEvent.DomeHold, 0x04, 0x00]))
+        ctx = parse_event_context(hold)
+        assert ctx is not None
+        assert ctx["pellet_count"] == 4
+
+        reload = parse_event(bytes([
+            CanEvent.PelletReload, 0x02, 0x00,
+            PelletReloadReason.LostDuringRaise, 2,
+        ]))
+        info = parse_pellet_reload(reload)
+        assert info is not None
+        assert info.pellet_count == 2
+        assert info.reason_name == "LostDuringRaise"
+        assert info.attempt == 2
+
+    def test_parse_firmware_info(self):
+        from base_station.protocol import parse_firmware_info
+        ev = parse_event(bytes([CanEvent.FirmwareInfo, 1, 6, 0]))
+        assert parse_firmware_info(ev) == "1.6.0"
+        assert parse_firmware_info(parse_event(bytes([CanEvent.FirmwareInfo, 1]))) is None
+        assert parse_firmware_info(parse_event(bytes([CanEvent.Pong, 1, 6, 0]))) is None
+
+    def test_firmware_version_sources_match(self):
+        """SFMVersion.h and library.properties must name the same release."""
+        import re
+        root = Path(__file__).resolve().parents[3]
+        header = (root / "firmware" / "src" / "SFMVersion.h").read_text(encoding="utf-8")
+        props = (root / "firmware" / "library.properties").read_text(encoding="utf-8")
+        major = re.search(r"kFirmwareVersionMajor\s*=\s*(\d+)", header)
+        minor = re.search(r"kFirmwareVersionMinor\s*=\s*(\d+)", header)
+        patch = re.search(r"kFirmwareVersionPatch\s*=\s*(\d+)", header)
+        text = re.search(r'kFirmwareVersionStr\[\]\s*=\s*"([^"]+)"', header)
+        lib = re.search(r"^version=(.+)$", props, re.MULTILINE)
+        assert major and minor and patch and text and lib
+        composed = f"{major.group(1)}.{minor.group(1)}.{patch.group(1)}"
+        assert text.group(1) == composed
+        assert lib.group(1).strip() == composed
+        assert composed == "1.6.0"

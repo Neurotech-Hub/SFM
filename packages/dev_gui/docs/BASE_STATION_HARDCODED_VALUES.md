@@ -18,7 +18,6 @@ defaults those forms ship with, plus the ones that are *not* on a form.
 | Value      | Constant / key              | Location | Notes |
 | ---------- | --------------------------- | -------- | ----- |
 | **90 s**   | `PRESENTATION_TIMEOUT_S`    | `experiment/kit.py` | Mechanical safeguard on the feed/mimic raise-sync gate. Must sit above firmware's 30 s feed timeout plus travel. Not a behavioral ITI |
-| **120 s**  | `STALL_WARN_S`              | `experiment/script.py` | Repeat interval for `script_stalled` while a script wait has no timeout (presence-clear, plate-clear, take wait) |
 | **60 s**   | `DEFAULT_HEARTBEAT_INTERVAL_S` | `app.py` / `node_registry.py` | Interval the GUI pushes to nodes via `SetConfig`. Firmware boot default is 5 s until this lands |
 | **3×**     | `HEARTBEAT_OFFLINE_MULTIPLIER` | `node_registry.py` | Seconds without a heartbeat before OFFLINE = interval × 3 (180 s at the 60 s default) |
 | **30 s**   | `DISCOVERY_IDLE_TIMEOUT_S`  | `discovery_manager.py` | No new ANNOUNCE/REJOIN for this long → discovery complete |
@@ -72,7 +71,7 @@ the multiplier used in `threshold = mean + factor × σ`.
 
 | Value | Constant | Location | Notes |
 | ----- | -------- | -------- | ----- |
-| 3.0 | `DEFAULT_PRESENCE_FACTOR` | `dev_settings.py` | Dev-settings default; persisted under `~/.sfm/dev_settings.json` |
+| 60 | `DEFAULT_PRESENCE_FACTOR` | `dev_settings.py` | Dev-settings default; persisted under `~/.sfm/dev_settings.json`. A file that already stores a factor keeps that value |
 | 0.1–100 | `PRESENCE_FACTOR_MIN` / `MAX` | `protocol.py` | Clamp on `SetConfig` payload; mirrors firmware |
 
 
@@ -87,7 +86,6 @@ Shared by every `@exp.script` template (`kit.synchronized_cycle`,
 | Value | Constant | Location | Notes |
 | ----- | -------- | -------- | ----- |
 | 90 s | `PRESENTATION_TIMEOUT_S` | `kit.py` | Raise-sync gate; on timeout the unpresented arm is Recover'd |
-| 120 s | `STALL_WARN_S` | `script.py` | `script_stalled` cadence for unbounded waits |
 | 64 | `MAX_ADVANCES_PER_TICK` | `script.py` | Cap on consecutive yield-resolves in one `step()` so a tight loop cannot spin the GUI |
 | 100 ms | `_poll` / `_run` reschedule | `kit.after_advance` | Presence-clear / session-pause poll interval (free-feeding reloads) |
 | 5 s | `resolve_advance` `default_delay_s` | `kit.py` | Fallback ITI if a template does not pass its own default |
@@ -95,8 +93,8 @@ Shared by every `@exp.script` template (`kit.synchronized_cycle`,
 
 
 Pellet-taken and presence-clear waits have **no timeout by design**. An animal
-that parks on the pad stalls until `end_after` (duration / pellet cap) or Stop.
-That stall is visible via `script_stalled`.
+that parks on the pad holds the next trial until `end_after` (duration / pellet
+cap) or Stop. The wait itself is not written to the log.
 
 ---
 
@@ -164,7 +162,11 @@ fallbacks (kept in sync).
 | Value | Where | Notes |
 | ----- | ----- | ----- |
 | `~/sfm_logs` | `storage.py` | Fallback when no writable external drive is mounted under `/media/<user>/*` |
-| 1000 | `LogManager(max_entries=…)` | In-memory ring only; CSV is unbounded |
+| 1000 | `LogManager(max_entries=…)` | Display ring only. Heartbeats are excluded. CSV is unbounded and written off the GUI thread |
+| 30 | `LOG_VISIBLE_ROWS` | Fixed event-strip widgets in `app.py`. Filters rewrite these in place |
+| 0.5 s | `UI_PAINT_INTERVAL` | Status line and pellet counters |
+| 1 s | `_FLUSH_INTERVAL_S` | `log_manager.py` background CSV flush |
+| 50000 | `_RETAINED_HISTORY` | `experiment/context.py` in-memory command and experiment-log lists |
 | 64 chars | `sanitize_session_name` | Session-name filesystem cap |
 | `~/.sfm/mac_id_registry.json` | `mac_id_registry.py` | Persistent MAC ↔ Node ID map |
 | `~/.sfm/dev_settings.json` | `dev_settings.py` | Presence factor, etc. |

@@ -1,7 +1,7 @@
 """session.py — group LogRow/HeartbeatRow into per-run behavioral records.
 
 A single session CSV can hold multiple *runs*: reopening a session name
-appends to the same file and increments ``run_id`` (see the VFM base
+appends to the same file and increments ``run_id`` (see the SFM base
 station's ``LogManager.open_session``). Every timing computation must be
 scoped to one ``(session, run_id)`` — a cumulative count, an inter-trial
 interval, or a "time since session start" that crosses a run boundary is

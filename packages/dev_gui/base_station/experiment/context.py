@@ -15,9 +15,21 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar, Union
 
-from ..protocol import CanCmd, build_setconfig_heartbeat
+from ..protocol import CanCmd, CanEvent, build_event_frame, build_setconfig_heartbeat
 from .events import EventKind, NodeEvent
 from .script import _as_node_tuple, _Await, _AwaitKind, _node_suffix, _resolve_event_kind, _until_label
+
+# In-memory copies of rows that are already in the CSV. Bounds a runaway
+# poll loop across a multi-day session. Unit tests inspect shorter histories
+# than this, so a normal experiment run still sees every command it sent.
+_RETAINED_HISTORY = 50_000
+
+
+def _append_capped(buf: List[Any], item: Any, limit: int = _RETAINED_HISTORY) -> None:
+    buf.append(item)
+    overflow = len(buf) - limit
+    if overflow > 0:
+        del buf[:overflow]
 
 if TYPE_CHECKING:
     from ..can_manager import CanManager
@@ -26,6 +38,11 @@ if TYPE_CHECKING:
 
 TimerCallback = Callable[[], None]
 T = TypeVar("T")
+
+# Source id for the Raising frame trigger_peer_raise() puts on the bus. Node
+# ids stop at 254 (AssignId / mac_id_registry), so no real node ever sends
+# from 0x300 + 255.
+PEER_RAISE_SRC_ID = 0xFF
 
 # Events that count as "the animal did something" for quiet_for(). Deliberately
 # excludes HEARTBEAT (arrives on the configured interval; firmware boots at
@@ -134,6 +151,9 @@ class ExperimentControl:
         self.on_session_start: Optional[Callable[[], None]] = None
         # Commands issued during the session (for tests / inspection).
         self.commands_sent: List[tuple] = []
+        # Raw (arb_id, data) frames that are not node commands — see
+        # trigger_peer_raise().
+        self.raw_frames_sent: List[tuple] = []
         # Set by stop(); the runner ends the session on the next end-check.
         self._stop_requested: bool = False
         self._stop_reason: str = ""
@@ -280,6 +300,27 @@ class ExperimentControl:
     def recover(self, node: int) -> bool:
         """Send Recover to one node."""
         return self._send(node, CanCmd.Recover)
+
+    def trigger_peer_raise(self) -> bool:
+        """
+        Raise every node holding in a no-feed ``Dwelling``, with no fed peer.
+
+        Firmware has no raise command: a ``dispense(n, feed=False)`` node
+        lowers, then holds until it hears ANY other node's Raising event on
+        the bus. This puts one such frame on the bus from an id no node uses
+        (``PEER_RAISE_SRC_ID``), so a no-feed cycle can run on its own — the
+        actuator-only troubleshooting cycle relies on it.
+
+        The frame is bus-wide: every node dwelling at that moment raises,
+        not just one. A fed node ignores it. The base station does not
+        receive its own frames, so this never shows up as a node-255 event.
+        """
+        arb_id, data = build_event_frame(PEER_RAISE_SRC_ID, CanEvent.Raising)
+        _append_capped(self.raw_frames_sent, (arb_id, data))
+        self.log("peer_raise", src_id=PEER_RAISE_SRC_ID)
+        if self._can is None:
+            return True  # dry-run / test mode
+        return self._can.send_raw(arb_id, data)
 
     def broadcast_dispense(self) -> bool:
         """
@@ -444,6 +485,18 @@ class ExperimentControl:
     def set_counter(self, name: str, value: int) -> None:
         self._counters[name] = int(value)
 
+    def resume_from(self, *, trials: int = 0, pellets: int = 0) -> None:
+        """
+        Continue a session that was closed and opened again under the same name.
+
+        ``trials`` is the last trial number already used, so the next
+        ``next_trial()`` returns one past it. ``pellets`` is the loaded-pellet
+        total, and it counts toward ``end_after(pellets=...)``.
+        """
+        self._trial = max(0, int(trials))
+        self.set_counter("trials", self._trial)
+        self.set_counter("pellets", max(0, int(pellets)))
+
     def elapsed(self) -> float:
         """Seconds since session begin (uses runner clock). 0.0 before begin()."""
         if self._start_time is None:
@@ -494,8 +547,8 @@ class ExperimentControl:
         Pass ``node`` only if this condition should also abort when that node
         faults; otherwise it is purely time/state-driven.
 
-        ``label`` is what ``script_stalled`` / ``script_timeout`` /
-        ``script_await_aborted`` print as ``waiting_on``. Give lambdas a
+        ``label`` is what ``script_timeout`` / ``script_await_aborted`` print
+        as ``waiting_on``. Give lambdas a
         short name (``"plates_clear"``, ``"fault_recovery"``) — otherwise
         an unlabeled lambda is logged as ``condition``, not ``<lambda>``.
         Named helper functions keep their ``__name__`` if ``label`` is omitted.
@@ -579,14 +632,16 @@ class ExperimentControl:
         elif ev.kind in (
             EventKind.SEEKING, EventKind.LOWERING, EventKind.LOADING,
             EventKind.DWELLING, EventKind.RAISING,
+            EventKind.DOME_HOLD, EventKind.RETRACTING,
         ):
             # A new cycle starting means whatever was presented before is no
             # longer current. DOME_OPENED is deliberately NOT in this list —
             # a dome bout on an already-presented plate (pellet or empty)
-            # must not erase what was actually presented. `dispensing` is
-            # NOT cleared here — the cycle is still in flight through these
-            # phases; see LOADED/NO_FEED_PRESENTED/FEED_SKIPPED/FAULT.
+            # must not erase what was actually presented. These phases are
+            # still in flight, including a home-then-raise that started with
+            # FeedSkipped, so re-assert `dispensing` here.
             view.presented_pellet = view.presented_empty = False
+            view.dispensing = True
         elif ev.kind in (EventKind.FEED_SKIPPED, EventKind.FAULT):
             # Terminal without a normal raise: FeedSkipped means firmware
             # never ran a motion (plate already occupied), and a fault aborts
@@ -781,7 +836,7 @@ class ExperimentControl:
             node_id=node,
             fields=dict(fields),
         )
-        self._log_entries.append(entry)
+        _append_capped(self._log_entries, entry)
         if self.on_log is not None:
             try:
                 self.on_log(entry)
@@ -797,7 +852,7 @@ class ExperimentControl:
     # ------------------------------------------------------------------
 
     def _send(self, node_id: int, cmd: CanCmd, payload: bytes = b"") -> bool:
-        self.commands_sent.append((node_id, cmd, payload))
+        _append_capped(self.commands_sent, (node_id, cmd, payload))
         self.log(
             "command",
             node=node_id,

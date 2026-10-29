@@ -1,7 +1,7 @@
 # SFM Developer GUI
 
 Python desktop application (DearPyGui) for the **Spatial Foraging Module (SFM)** —
-a base station plus multiple **VFM** nodes on a Raspberry Pi 5. They share one
+a base station plus multiple **SFM** nodes on a Raspberry Pi 5. They share one
 **CAN** bus (Controller Area Network): the communication wire all nodes are
 connected to. A **CAN event** is a frame a node posted on that bus (Loaded,
 Pellet Taken, Fault, sensor edge, …), as opposed to an experiment-engine
@@ -311,7 +311,7 @@ packages/dev_gui/
 ├── run.py                    # GUI entry point
 ├── run_report.py             # Thin wrapper around sfm_analysis.cli.report
 │                              # (see packages/sfm-analysis/ below)
-├── node_simulator.py         # Fake VFM nodes for vcan0 testing
+├── node_simulator.py         # Fake SFM nodes for vcan0 testing
 ├── experiments/              # JSON parameter schemas (drives the GUI form)
 │   ├── free_feeding.json
 │   ├── fixed_and_random.json

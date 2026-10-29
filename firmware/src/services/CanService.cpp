@@ -1,6 +1,6 @@
 #include "CanService.h"
 
-namespace vfm {
+namespace sfm {
 
 CanService::CanService()
     : nodeId_(0),
@@ -172,4 +172,4 @@ void CanService::dispatchRx(const twai_message_t &msg) {
     }
 }
 
-} // namespace vfm
+} // namespace sfm

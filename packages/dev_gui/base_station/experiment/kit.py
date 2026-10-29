@@ -336,10 +336,9 @@ def next_trial_wait(
     one of them aborts the wait instead of hanging the trial loop forever —
     the same behavior ``control.wait_until(..., node=...)`` already gives
     you. It has **no timeout by design**: an animal that parks on the pad
-    stalls the trial loop until the session's own ``end_after()``
-    duration/pellet cap or an operator Stop ends things. That stall is
-    visible, not silent — the scheduler logs ``script_stalled`` every 120s
-    while it waits (``waiting_on=presence_clear``).
+    holds the trial loop until the session's own ``end_after()``
+    duration/pellet cap or an operator Stop ends things. The wait itself
+    writes nothing to the log.
     """
     mode, delay_s = resolve_advance(
         next_trial_wait=mode, fixed_delay_s=delay_s, default_delay_s=delay_s,
@@ -476,6 +475,10 @@ def synchronized_cycle(
     vetoed); ``on_presented`` fires after the sync gate, before the take
     wait — so a sequential template can log mid-trial without duplicating
     the wait logic.
+
+    A pellet that falls off the fed plate during the raise (PelletLost) is a
+    fault like any other: the cycle returns ``faulted`` and the node stays
+    halted until an operator recovers it. Nothing is re-dispensed here.
     """
     fed_t = _int_tuple(fed)
     mimic_t = tuple(n for n in _int_tuple(mimic_nodes) if n not in fed_t)
@@ -490,7 +493,7 @@ def synchronized_cycle(
     accepted: Dict[int, bool] = {}
     # Mimics go out FIRST. A no-feed node raises when it hears a peer's Raising
     # event, and it can only latch that event once its own cycle is running. A
-    # fed node whose plate is already occupied skips straight to the raise
+    # fed node whose plate is already at the top raises without homing
     # (firmware's beginOccupiedDispense), so commanding it first can put its
     # Raising frame on the bus before the mimic has been told to do anything —
     # the mimic would then hold at the drop position until Recover.
@@ -534,7 +537,7 @@ def synchronized_cycle(
         #
         # Both exits need this, and the faulted one is the common case: the fed
         # node's 30 s feed timeout fires well inside PRESENTATION_TIMEOUT_S, so
-        # a jam surfaces as `faulted`, not `timed_out`.
+        # a jam (or a PelletLost) surfaces as `faulted`, not `timed_out`.
         _recover_unpresented(control, commanded)
     if ready.faulted:
         result.faulted = True

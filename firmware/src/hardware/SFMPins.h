@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-namespace vfm {
+namespace sfm {
 
 // ---------------------------------------------------------------------------
 // CAN (TWAI)
@@ -70,4 +70,4 @@ constexpr uint8_t PIN_PGX        = PIN_USER_IO_6; // alternate load-sensor bring
 constexpr uint8_t PIN_USER_IO_7  = 7;  // User_IO_7
 constexpr uint8_t PIN_POWER_ST   = 15; // Power_ST
 
-} // namespace vfm
+} // namespace sfm

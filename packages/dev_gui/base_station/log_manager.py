@@ -20,24 +20,27 @@ Two kinds of CSV sink exist:
 
 HEARTBEAT rows are always diverted to a sibling file
 (``session_YYYYMMDD_heartbeats.csv`` / ``{session}_heartbeats.csv``) so the
-main CSV stays event/command/experiment traffic only. Heartbeats still
-enter the in-memory ring (hidden in the GUI by default).
+main CSV stays event/command/experiment traffic only. Heartbeats do not
+enter the in-memory display ring. The last few are kept only so a test or
+a diagnostic can inspect the row that was queued for the heartbeat file.
 
 ``open_session()`` closes whichever sink is currently open and switches to
 the named one; it is not a second, parallel writer, so daily traffic is
 never merged into the experiment file.
 
-Performance note:
-  At 9 nodes × ~1/60 Hz heartbeat + events the CSV load is light.
-  A 1,000-entry deque update is O(1) amortized.  CSV writes use line-buffered
-  IO so each append is a single fwrite — no performance concern.
+CSV bytes are written on a background thread. ``add()`` only enqueues a
+finished row, so the GUI render thread does not wait on the SD card.
+The writer flushes about once a second, and ``close()`` / session switches
+wait until the queue has reached disk.
 """
 
 from __future__ import annotations
 
 import csv
 import json
+import queue
 import re
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -47,6 +50,12 @@ from pathlib import Path
 from sfm_analysis.logs import CSV_HEADER as _CSV_HEADER
 from sfm_analysis.logs import heartbeat_path_for as _heartbeat_path_for
 from typing import Any, Deque, Dict, List, Optional
+
+# Last heartbeats retained for inspection. Not shown in the GUI.
+_RECENT_HEARTBEATS = 32
+# How long a non-empty write queue may sit before it is flushed.
+_FLUSH_INTERVAL_S = 1.0
+_DRAIN_TIMEOUT_S = 10.0
 
 
 def sanitize_session_name(name: str) -> str:
@@ -61,6 +70,34 @@ def sanitize_session_name(name: str) -> str:
     """
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
     return cleaned.strip("._-")[:64]
+
+
+@dataclass
+class ResumeState:
+    """
+    Counters carried into the next run of an existing session file.
+
+    Each value is the sum, across every earlier run, of that run's own
+    progress: its high-water mark minus the offset recorded in its
+    ``session_resumed`` row (0 when the row is absent, as in logs written
+    before resume existed). ``from_run`` is the highest ``run_id`` already
+    in the file, or 0 when there is nothing to continue.
+    """
+
+    trials: int = 0
+    pellets: int = 0
+    node_pellets: Dict[int, int] = field(default_factory=dict)
+    node_taken: Dict[int, int] = field(default_factory=dict)
+    from_run: int = 0
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "trials": self.trials,
+            "pellets": self.pellets,
+            "node_pellets": dict(self.node_pellets),
+            "node_taken": dict(self.node_taken),
+            "from_run": self.from_run,
+        }
 
 
 @dataclass
@@ -114,7 +151,7 @@ class LogManager:
         lm.set_context(session="cohortA_day3", run_id=run_id, session_start_ts=time.time())
         lm.add(LogEntry(...))                       # goes to the named sink, stamped with run_id
         lm.resume_daily()                           # close experiment file; back to daily
-        entries = lm.get_filtered(show_heartbeats=False)
+        entries = lm.get_filtered()
         lm.export("~/Desktop/my_session.csv")
     """
 
@@ -151,6 +188,20 @@ class LogManager:
         self._run_id: int = 0
         self._trial: int = 0
         self._session_start_ts: Optional[float] = None
+        self._resume_state: ResumeState = ResumeState()
+
+        # Bumped when the display ring changes. The GUI paints on change.
+        self._display_generation: int = 0
+        self._recent_heartbeats: Deque[LogEntry] = deque(maxlen=_RECENT_HEARTBEATS)
+        self._rows_written: int = 0
+        self._write_error: Optional[BaseException] = None
+
+        self._pending: "queue.Queue[tuple]" = queue.Queue()
+        self._io_lock = threading.Lock()
+        self._writer = threading.Thread(
+            target=self._write_loop, name="sfm-csv", daemon=True
+        )
+        self._writer.start()
 
         if auto_save:
             self._open_daily(log_dir)
@@ -161,29 +212,27 @@ class LogManager:
 
     def add(self, entry: LogEntry) -> None:
         """
-        Append an entry to the ring buffer and (optionally) CSV.
+        Queue an entry for CSV and, unless it is a heartbeat, the display ring.
 
         HEARTBEAT rows go only to the sibling ``*_heartbeats.csv`` sink.
-        All other types write to the main session CSV.
+        All other types are queued for the main session CSV.
 
-        Writes whenever a CSV sink is open — the constructor's ``auto_save``
-        flag only controls whether the daily sink opens at construction; an
-        explicit ``open_session()`` call always opens a writer, since naming
-        a session is an explicit request to record it regardless of that
-        constructor flag.
+        The row is built here, on the caller thread, so session/run/trial
+        stamps match the moment ``add`` was called. The background writer
+        owns the file objects. A sink must be open (constructor ``auto_save``
+        or ``open_session``) or the queued row is discarded when the writer
+        reaches it.
         """
         if self._sink_kind == "daily":
             self._rollover_daily_if_needed()
         self._stamp_context(entry)
-        self._buffer.append(entry)
-        if entry.frame_type == "HEARTBEAT":
-            if self._hb_csv_writer is not None:
-                self._hb_csv_writer.writerow(self._entry_to_row(entry))
-                self._hb_csv_file.flush()
-            return
-        if self._csv_writer is not None:
-            self._csv_writer.writerow(self._entry_to_row(entry))
-            self._csv_file.flush()
+        which = "hb" if entry.frame_type == "HEARTBEAT" else "main"
+        if which == "hb":
+            self._recent_heartbeats.append(entry)
+        else:
+            self._buffer.append(entry)
+            self._display_generation += 1
+        self._pending.put(("row", which, self._entry_to_row(entry)))
 
     def _stamp_context(self, entry: LogEntry) -> None:
         """Fill in run_id/trial from the current session context when unset."""
@@ -203,17 +252,18 @@ class LogManager:
         show_heartbeats: bool = False,
     ) -> List[LogEntry]:
         """
-        Return a filtered view of the buffer (newest-first).
+        Return a filtered view of the display ring (newest-first).
+
+        Heartbeats are never in this ring. ``show_heartbeats`` is accepted
+        so older callers keep working and does not change the result.
 
         Args:
-            node_id:        Filter to a specific node; None = all nodes.
-            frame_type:     Filter to a type ("EVENT", "COMMAND", etc.); None = all.
-            show_heartbeats: Include HEARTBEAT frames (hidden by default).
+            node_id:    Filter to a specific node; None = all nodes.
+            frame_type: Filter to a type ("EVENT", "COMMAND", etc.); None = all.
         """
+        del show_heartbeats
         result = []
         for entry in reversed(self._buffer):
-            if not show_heartbeats and entry.frame_type == "HEARTBEAT":
-                continue
             if node_id is not None and entry.node_id != node_id:
                 continue
             if frame_type is not None and entry.frame_type != frame_type:
@@ -222,12 +272,31 @@ class LogManager:
         return result
 
     def all_entries(self) -> List[LogEntry]:
-        """All buffered entries, oldest-first."""
+        """Display-ring entries, oldest-first. Heartbeats are not included."""
         return list(self._buffer)
+
+    def recent_heartbeats(self) -> List[LogEntry]:
+        """The last few heartbeat rows queued for the heartbeat CSV."""
+        return list(self._recent_heartbeats)
 
     @property
     def total_count(self) -> int:
         return len(self._buffer)
+
+    @property
+    def display_generation(self) -> int:
+        """Increments when the display ring gains or loses a row."""
+        return self._display_generation
+
+    @property
+    def rows_written(self) -> int:
+        """Rows the background writer has handed to a CSV file."""
+        return self._rows_written
+
+    @property
+    def write_error(self) -> Optional[BaseException]:
+        """Last background-writer failure, if a flush could not finish."""
+        return self._write_error
 
     @property
     def csv_path(self) -> Optional[Path]:
@@ -244,6 +313,11 @@ class LogManager:
     @property
     def run_id(self) -> int:
         return self._run_id
+
+    @property
+    def resume_state(self) -> ResumeState:
+        """Counters to carry into the run ``open_session`` just opened. Empty before that."""
+        return self._resume_state
 
     @property
     def is_named_session(self) -> bool:
@@ -284,23 +358,27 @@ class LogManager:
         """
         sanitized = sanitize_session_name(session_name)
         if not sanitized:
-            return {"valid": False, "path": None, "will_create": True, "next_run_id": 1, "row_count": 0}
+            return {"valid": False, "path": None, "will_create": True, "next_run_id": 1, "row_count": 0,
+                    "resume": ResumeState().as_dict()}
         dir_path = Path(log_dir).expanduser().resolve()
         path = dir_path / f"{sanitized}.csv"
         if not path.exists():
-            return {"valid": True, "path": path, "will_create": True, "next_run_id": 1, "row_count": 0}
+            return {"valid": True, "path": path, "will_create": True, "next_run_id": 1, "row_count": 0,
+                    "resume": ResumeState().as_dict()}
         max_run_id, row_count, header_ok = self._scan_existing(path)
         if not header_ok:
             # A stale-format file of the same name — preview_session_path
             # mirrors open_session()'s decision to divert rather than clobber.
             diverted = dir_path / f"{sanitized}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            return {"valid": True, "path": diverted, "will_create": True, "next_run_id": 1, "row_count": 0}
+            return {"valid": True, "path": diverted, "will_create": True, "next_run_id": 1, "row_count": 0,
+                    "resume": ResumeState().as_dict()}
         return {
             "valid": True,
             "path": path,
             "will_create": False,
             "next_run_id": max_run_id + 1,
             "row_count": row_count,
+            "resume": self._scan_resume(path).as_dict(),
         }
 
     def open_session(self, session_name: str, log_dir: str) -> int:
@@ -332,11 +410,13 @@ class LogManager:
 
         run_id = 1
         mode = "w"
+        resume = ResumeState()
         if path.exists():
             max_run_id, _row_count, header_ok = self._scan_existing(path)
             if header_ok:
                 mode = "a"
                 run_id = max_run_id + 1
+                resume = self._scan_resume(path)
             else:
                 path = dir_path / f"{sanitized}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                 mode = "w"
@@ -354,6 +434,7 @@ class LogManager:
         self._run_id = run_id
         self._trial = 0
         self._session_start_ts = time.time()
+        self._resume_state = resume
 
         self.add(LogEntry(
             timestamp=self._session_start_ts,
@@ -365,6 +446,8 @@ class LogManager:
             raw_data=b"",
             details=f"session={sanitized} run={run_id} mode={'append' if mode == 'a' else 'create'} path={path}",
         ))
+        # The open row should be on disk before the run proceeds.
+        self._drain()
         return run_id
 
     @staticmethod
@@ -398,6 +481,111 @@ class LogManager:
             return 0, 0, False
         return max_run_id, row_count, header_ok
 
+    @staticmethod
+    def _scan_resume(path: Path) -> ResumeState:
+        """
+        Totals to carry into the next run of ``path``.
+
+        A run contributes ``high_water - offset``. The offset comes from that
+        run's ``session_resumed`` row and is 0 for a legacy run that restarted
+        its counters, so re-opening one of those files still continues from
+        the sum of what each run actually recorded.
+        """
+        header = LogManager.CSV_HEADER
+        try:
+            with open(path, "r", newline="") as f:
+                reader = csv.reader(f)
+                got = next(reader, None)
+                if got != header:
+                    return ResumeState()
+                idx = {name: header.index(name) for name in
+                       ("run_id", "trial", "node_id", "event_name", "fields_json")}
+                runs: Dict[int, Dict[str, Any]] = {}
+                for row in reader:
+                    if len(row) <= idx["fields_json"]:
+                        continue
+                    try:
+                        run_id = int(row[idx["run_id"]])
+                    except ValueError:
+                        continue
+                    if run_id <= 0:
+                        continue
+                    acc = runs.setdefault(run_id, {
+                        "trial": 0,
+                        "trial_offset": 0,
+                        "pellets": {},
+                        "taken": {},
+                        "pellets_offset": {},
+                        "taken_offset": {},
+                    })
+                    try:
+                        acc["trial"] = max(acc["trial"], int(row[idx["trial"]] or 0))
+                    except ValueError:
+                        pass
+                    fields = LogManager._parse_fields(row[idx["fields_json"]])
+                    try:
+                        node_id = int(row[idx["node_id"]] or 0)
+                    except ValueError:
+                        node_id = 0
+                    if node_id > 0:
+                        LogManager._take_max(acc["pellets"], node_id, fields.get("session_pellets"))
+                        LogManager._take_max(acc["taken"], node_id, fields.get("session_taken"))
+                    if row[idx["event_name"]] == "session_resumed":
+                        acc["trial_offset"] = LogManager._as_int(fields.get("trial_offset"))
+                        acc["pellets_offset"] = LogManager._int_map(fields.get("node_pellets_offset"))
+                        acc["taken_offset"] = LogManager._int_map(fields.get("node_taken_offset"))
+        except OSError:
+            return ResumeState()
+
+        state = ResumeState(from_run=max(runs) if runs else 0)
+        for acc in runs.values():
+            state.trials += max(0, acc["trial"] - acc["trial_offset"])
+            LogManager._add_progress(state.node_pellets, acc["pellets"], acc["pellets_offset"])
+            LogManager._add_progress(state.node_taken, acc["taken"], acc["taken_offset"])
+        state.pellets = sum(state.node_pellets.values())
+        return state
+
+    @staticmethod
+    def _parse_fields(raw: str) -> Dict[str, Any]:
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _as_int(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return 0
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return 0
+
+    @staticmethod
+    def _int_map(value: Any) -> Dict[int, int]:
+        if not isinstance(value, dict):
+            return {}
+        out: Dict[int, int] = {}
+        for key, item in value.items():
+            node = LogManager._as_int(key)
+            if node > 0:
+                out[node] = LogManager._as_int(item)
+        return out
+
+    @staticmethod
+    def _take_max(into: Dict[int, int], node: int, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        into[node] = max(into.get(node, 0), int(value))
+
+    @staticmethod
+    def _add_progress(total: Dict[int, int], high: Dict[int, int], offset: Dict[int, int]) -> None:
+        for node, hi in high.items():
+            total[node] = total.get(node, 0) + max(0, hi - offset.get(node, 0))
+
     def resume_daily(self, log_dir: Optional[str] = None) -> None:
         """
         Close the named experiment sink (if open) and append to today's
@@ -429,6 +617,7 @@ class LogManager:
     def clear(self) -> None:
         """Clear the display buffer (CSV file is NOT truncated — it keeps growing)."""
         self._buffer.clear()
+        self._display_generation += 1
 
     def export(self, filepath: str) -> Path:
         """
@@ -446,17 +635,10 @@ class LogManager:
         return path
 
     def close(self) -> None:
-        """Flush and close the main and heartbeat CSV files."""
-        if self._csv_file is not None:
-            self._csv_file.flush()
-            self._csv_file.close()
-            self._csv_file = None
-            self._csv_writer = None
-        if self._hb_csv_file is not None:
-            self._hb_csv_file.flush()
-            self._hb_csv_file.close()
-            self._hb_csv_file = None
-            self._hb_csv_writer = None
+        """Drain queued rows to disk, then close the main and heartbeat CSV files."""
+        self._drain()
+        with self._io_lock:
+            self._close_files_locked()
 
     # ------------------------------------------------------------------
     # Internal
@@ -532,6 +714,95 @@ class LogManager:
         self._hb_csv_writer = csv.writer(self._hb_csv_file)
         if write_header:
             self._hb_csv_writer.writerow(self.CSV_HEADER)
+
+    def _drain(self) -> None:
+        """Block until every row queued so far has been written and flushed."""
+        if not self._writer.is_alive():
+            return
+        done = threading.Event()
+        self._pending.put(("flush", done))
+        if not done.wait(_DRAIN_TIMEOUT_S):
+            raise TimeoutError("CSV writer did not finish within 10s")
+
+    def _write_loop(self) -> None:
+        """Append queued rows and flush about once a second, or on demand.
+
+        The one-second window starts when the first unflushed row arrives
+        and is not pushed back by later rows, so a steady stream still
+        reaches disk once a second.
+        """
+        pending: List[tuple] = []
+        deadline: Optional[float] = None
+        while True:
+            timeout = None
+            if pending and deadline is not None:
+                timeout = max(0.0, deadline - time.monotonic())
+            try:
+                first = self._pending.get(timeout=timeout)
+                items = [first]
+                while True:
+                    try:
+                        items.append(self._pending.get_nowait())
+                    except queue.Empty:
+                        break
+            except queue.Empty:
+                items = []
+
+            flush_events: List[threading.Event] = []
+            stop = False
+            for item in items:
+                kind = item[0]
+                if kind == "row":
+                    if not pending:
+                        deadline = time.monotonic() + _FLUSH_INTERVAL_S
+                    pending.append(item)
+                elif kind == "flush":
+                    flush_events.append(item[1])
+                elif kind == "stop":
+                    flush_events.append(item[1])
+                    stop = True
+
+            due = deadline is not None and time.monotonic() >= deadline
+            if pending and (flush_events or due or not items):
+                self._commit(pending)
+                pending = []
+                deadline = None
+            for event in flush_events:
+                event.set()
+            if stop:
+                return
+
+    def _commit(self, rows: List[tuple]) -> None:
+        try:
+            with self._io_lock:
+                for _kind, which, row in rows:
+                    writer = self._hb_csv_writer if which == "hb" else self._csv_writer
+                    if writer is None:
+                        continue
+                    writer.writerow(row)
+                    self._rows_written += 1
+                self._flush_files_locked()
+        except Exception as exc:  # noqa: BLE001 — keep the writer alive
+            self._write_error = exc
+
+    def _flush_files_locked(self) -> None:
+        if self._csv_file is not None:
+            self._csv_file.flush()
+        if self._hb_csv_file is not None:
+            self._hb_csv_file.flush()
+
+    def _close_files_locked(self) -> None:
+        if self._csv_file is not None:
+            self._csv_file.flush()
+            self._csv_file.close()
+            self._csv_file = None
+            self._csv_writer = None
+        if self._hb_csv_file is not None:
+            self._hb_csv_file.flush()
+            self._hb_csv_file.close()
+            self._hb_csv_file = None
+            self._hb_csv_writer = None
+        self._sink_kind = None
 
     def _entry_to_row(self, entry: LogEntry) -> list:
         elapsed_s = ""
