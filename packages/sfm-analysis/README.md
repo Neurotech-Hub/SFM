@@ -12,6 +12,25 @@ This package is carved out of the SFM repository's `packages/dev_gui/`
 analysis doesn't have to happen on the Pi. The base station's own
 `run_report.py` is a thin wrapper around the CLI documented below.
 
+## What's new in 0.1.5
+
+Reports share one time axis. A **Relative / Absolute (rig clock)**
+control switches every chart and the interactive timeline together.
+Relative is time since the run started. Absolute is the recording rig's
+local clock, reconstructed from `timestamp_iso`, so the machine you
+view the report on never changes the labels.
+
+Data Quality now gathers the diagnostics that used to sit apart: pellet
+reloads (reason and attempt), mechanism counts (dome holds, retracts,
+dome-open warnings, feed skips), faults and downtime, and script or
+control events. Holds and retracts are listed as expected firmware
+behavior, not faults. A pellet loss that the station reloaded is marked
+as reloaded on the timeline instead of being counted as downtime.
+
+Actograms default to dome-opening ticks, and the figure includes a
+Ticks legend. `actogram_takes` is still the opt-in design for
+pellet-take ticks.
+
 ## Install
 
 ```bash
