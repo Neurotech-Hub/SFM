@@ -8,6 +8,7 @@ module imports a single source of truth.
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass
 from enum import IntEnum
@@ -73,9 +74,9 @@ class CanEvent(IntEnum):
     Dwelling          = 0x0F  # phase: holding at the drop position, M1 idle
     PresenceCalResult = 0x10  # raw_extra: ok(1), threshold LE32, samples LE16
     ConfigApplied     = 0x11  # raw_extra: configType(1), ok(1), value LE32
-    DomeHold          = 0x12  # phase: at the drop position, waiting for the dome to close
-    Retracting        = 0x13  # phase: M2 returning to the drop position
-    PelletReload      = 0x14  # raw_extra: count LE16, reason(1), attempt(1)
+    DomeHold          = 0x12  # at the drop position, motors off, waiting for the dome to stay closed
+    Retracting        = 0x13  # plate returning to the drop position (dome opened before 80% of the raise)
+    PelletReload      = 0x14  # raw_extra: count LE16, reason(1), attempt(1). Pellet missing; wheel loads again
     FirmwareInfo      = 0x15  # raw_extra: major(1), minor(1), patch(1)
 
 
@@ -207,6 +208,109 @@ def fault_user_message(code: Optional[ServiceStatus]) -> str:
     if code is None:
         return "Unknown fault"
     return SERVICE_STATUS_USER_MESSAGE.get(code, code.name)
+
+
+class PelletReloadReason(IntEnum):
+    """Why a dispense reloaded the wheel. Wire byte after the count LE16 on PelletReload.
+
+    Mirror of the firmware reload reasons: 1 = the pellet left the plate during
+    the raise, 2 = the pellet was gone after the plate came back down.
+    """
+
+    LostDuringRaise = 1
+    MissingAfterRetract = 2
+
+
+PELLET_RELOAD_REASON_MESSAGE = {
+    PelletReloadReason.LostDuringRaise: "pellet fell off during the raise",
+    PelletReloadReason.MissingAfterRetract: "pellet missing after a retract",
+}
+
+# details text on logs whose raw bytes were not stored: "reason=LostDuringRaise attempt 1/3"
+_RELOAD_REASON_TEXT = {
+    "lostduringraise": PelletReloadReason.LostDuringRaise,
+    "missingafterretract": PelletReloadReason.MissingAfterRetract,
+}
+_RELOAD_REASON_RE = re.compile(r"reason=([A-Za-z]+)")
+_RELOAD_ATTEMPT_RE = re.compile(r"attempt\s+(\d+)")
+
+
+def reload_reason_message(reason: Optional[PelletReloadReason]) -> str:
+    if reason is None:
+        return "unknown reason"
+    return PELLET_RELOAD_REASON_MESSAGE.get(reason, reason.name)
+
+
+@dataclass(frozen=True)
+class PelletReloadInfo:
+    """Decoded PelletReload payload. Any field is None when that byte (or the details text) is absent."""
+
+    count: Optional[int]
+    reason: Optional[PelletReloadReason]
+    attempt: Optional[int]
+
+    @property
+    def pellet_count(self) -> Optional[int]:
+        """Alias used by the base station, which reads the live EventPayload."""
+        return self.count
+
+    @property
+    def reason_name(self) -> str:
+        if isinstance(self.reason, PelletReloadReason):
+            return self.reason.name
+        if self.reason is None:
+            return "Unknown"
+        return str(self.reason)
+
+
+def parse_pellet_reload(
+    raw_data: Optional[bytes] = None,
+    details: str = "",
+) -> Optional[PelletReloadInfo]:
+    """
+    Decode a Pellet Reload frame.
+
+    Accepts either an ``EventPayload`` from a live CAN frame, or log bytes.
+    Wire layout: event byte ``0x14``, count LE16, reason, attempt (1-based,
+    stops at 3). ``raw_data`` may be the whole frame or just the bytes after
+    the event byte. When the bytes are missing or short, ``details`` is read
+    for ``reason=<Name>`` and ``attempt N/3`` — older logs sometimes carry
+    the meaning only in that text. A live frame shorter than four extra bytes
+    is rejected; the log path still falls back to ``details``.
+    """
+    if isinstance(raw_data, EventPayload):
+        event = raw_data
+        if event.event != CanEvent.PelletReload or len(event.raw_extra) < 4:
+            return None
+        raw_data = bytes([int(CanEvent.PelletReload)]) + bytes(event.raw_extra)
+        details = ""
+    data = bytes(raw_data or b"")
+    if data and data[0] == CanEvent.PelletReload:
+        data = data[1:]
+    count: Optional[int] = None
+    reason: Optional[PelletReloadReason] = None
+    attempt: Optional[int] = None
+    if len(data) >= 2:
+        count = data[0] | (data[1] << 8)
+    if len(data) >= 3:
+        try:
+            reason = PelletReloadReason(data[2])
+        except ValueError:
+            reason = None
+    if len(data) >= 4 and data[3]:
+        attempt = int(data[3])
+    text = details or ""
+    if reason is None:
+        match = _RELOAD_REASON_RE.search(text)
+        if match:
+            reason = _RELOAD_REASON_TEXT.get(match.group(1).lower())
+    if attempt is None:
+        match = _RELOAD_ATTEMPT_RE.search(text)
+        if match:
+            attempt = int(match.group(1))
+    if count is None and reason is None and attempt is None:
+        return None
+    return PelletReloadInfo(count=count, reason=reason, attempt=attempt)
 
 
 # ---------------------------------------------------------------------------
@@ -417,37 +521,6 @@ def parse_config_applied(event: EventPayload) -> Optional[ConfigAppliedPayload]:
 # Mirror of firmware kMaxPelletReloads. The attempt byte on the wire is 1-based
 # and stops at this value; the next miss is a PelletLost fault instead.
 PELLET_RELOAD_MAX = 3
-
-
-class PelletReloadReason(IntEnum):
-    """Wire byte on CanEvent.PelletReload. Mirror of firmware PelletReloadReason."""
-    LostDuringRaise = 1
-    MissingAfterRetract = 2
-
-
-@dataclass
-class PelletReloadPayload:
-    pellet_count: int
-    reason: int
-    attempt: int
-
-    @property
-    def reason_name(self) -> str:
-        try:
-            return PelletReloadReason(self.reason).name
-        except ValueError:
-            return f"Unknown({self.reason})"
-
-
-def parse_pellet_reload(event: EventPayload) -> Optional[PelletReloadPayload]:
-    """Decode PelletReload extra bytes: count LE16, reason(1), attempt(1)."""
-    if event.event != CanEvent.PelletReload or len(event.raw_extra) < 4:
-        return None
-    return PelletReloadPayload(
-        pellet_count=event.raw_extra[0] | (event.raw_extra[1] << 8),
-        reason=event.raw_extra[2],
-        attempt=event.raw_extra[3],
-    )
 
 
 def parse_firmware_info(event: EventPayload) -> Optional[str]:

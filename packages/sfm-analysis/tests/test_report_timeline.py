@@ -76,6 +76,25 @@ class TestSessionRaster:
         result = session_raster_section(ctx)
         assert result.page_break_before is True
 
+    def test_detail_panel_axis_is_session_time_not_restarted(self, tmp_path):
+        """A panel covering 2h–4h used to label its axis from 0:00, because
+        ticks were built from the panel width and then drawn at the panel's
+        left edge. Labels are session time now, so that panel starts at 2:00.
+        """
+        ctx = _duration_ctx(tmp_path, duration_s=86400, opts={"window_s": 7200})
+        result = session_raster_section(ctx)
+        assert result.uses_time_axis is True
+        svgs = re.findall(r'<svg class="chart".*?</svg>', result.html, re.DOTALL)
+        # overview, then [0, 7200], then [7200, 14400].
+        assert len(svgs) >= 3
+        detail = svgs[2]
+        ET.fromstring(detail)
+        assert ">2:00<" in detail
+        assert ">0:00<" not in detail
+        # The caption offers both readings; the date line is the absolute one.
+        assert 'class="tx tx-rel"' in result.html
+        assert 'class="tx tx-abs"' in result.html
+
     def test_no_nodes_yields_empty_result(self, tmp_path):
         from sfm_analysis.report.session import RunData
         empty_run = RunData(session="Empty", run_id=1, source_path=tmp_path / "e.csv")

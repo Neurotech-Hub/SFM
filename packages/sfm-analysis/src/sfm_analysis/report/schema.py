@@ -72,6 +72,9 @@ class SectionResult:
     empty: bool = False                                 # nothing to say; section is omitted
     extra_css: str = ""            # appended once to the document's single <style>
     extra_js: str = ""             # emitted once in a single inline <script> before </body>
+    uses_time_axis: bool = False   # render.py emits the Relative/Absolute control
+                                   # when any rendered section sets this. The
+                                   # control is CSS-only; it does not add a script.
 
 
 @dataclass

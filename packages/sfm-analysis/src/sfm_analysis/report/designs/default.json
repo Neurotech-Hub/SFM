@@ -1,21 +1,19 @@
 {
   "name": "default",
   "label": "Generic Behavior Report",
-  "description": "Applies to any session regardless of experiment template: provenance, pellet accounting, retrieval timing, presence/occupancy, interaction funnel, throughput, faults, and apparatus health.",
+  "description": "Applies to any session regardless of experiment template: provenance, pellet accounting, retrieval timing, presence/occupancy, interaction funnel, throughput, and data quality.",
   "matches": [],
   "sections": [
     { "ref": "timeline.explorer" },
     { "ref": "timeline.session_raster" },
     { "ref": "timeline.actogram" },
     { "ref": "generic.provenance" },
-    { "ref": "generic.data_quality" },
     { "ref": "generic.pellet_accounting" },
     { "ref": "generic.retrieval_latency" },
     { "ref": "generic.presence" },
     { "ref": "generic.interaction_funnel" },
     { "ref": "generic.throughput" },
-    { "ref": "generic.faults" },
-    { "ref": "generic.apparatus_health" }
+    { "ref": "generic.data_quality" }
   ],
   "combined_sections": [
     { "ref": "compare.cohort_table" },
@@ -25,6 +23,6 @@
     { "ref": "compare.cumulative_overlay" },
     { "ref": "compare.quality_matrix" },
     { "ref": "generic.retrieval_latency" },
-    { "ref": "generic.faults" }
+    { "ref": "generic.data_quality" }
   ]
 }

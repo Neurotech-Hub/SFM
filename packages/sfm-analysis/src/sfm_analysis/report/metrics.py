@@ -17,7 +17,12 @@ from dataclasses import dataclass, field
 from datetime import date as _date
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from ..protocol import CanEvent, ServiceStatus
+from ..protocol import (
+    CanEvent,
+    PelletReloadReason,
+    ServiceStatus,
+    parse_pellet_reload,
+)
 from .loader import LogRow
 from .session import RunData
 from .stats import iqr, median, safe_ratio
@@ -305,6 +310,17 @@ def dome_bouts(run: RunData, dedup_window_s: float = 0.25) -> Tuple[List[Bout], 
     return bouts(deduped + closes, "Dome Opened", "Dome closed", end_t)
 
 
+# A Recover command and the EXP "recovered" row are written in the same
+# breath. A second of slack covers a row that lands a few milliseconds off
+# without pairing a Recover from a different fault on a long run.
+_RECOVER_MATCH_S = 1.0
+
+# A Dome Hold ends when the plate leaves the drop position again, or when
+# the node faults. Anything else (another dome edge, a retract) is still
+# the same wait.
+_HOLD_END_EVENTS = frozenset({"Raising", "Loaded", "NoFeedPresented", "Lowering"})
+
+
 @dataclass
 class FaultInterval:
     node: int
@@ -313,6 +329,9 @@ class FaultInterval:
     t1: Optional[float]
     censored: bool = False
     inferred_close: bool = False
+    # How the interval ended: "Recover command", "auto-recovered",
+    # "inferred at next Loaded", or "still open at run end".
+    cleared_by: str = ""
 
     @property
     def dur(self) -> Optional[float]:
@@ -326,7 +345,25 @@ def fault_intervals(run: RunData) -> List[FaultInterval]:
     Pair Fault events with the next Recovered/node_recovered for that node,
     or infer a close at the node's next successful Loaded if no explicit
     recovery is logged.
+
+    ``cleared_by`` records which of those happened, and whether a Recover
+    *command* was logged at the close (an operator cleared it) or the
+    experiment recovered on its own.
     """
+    recover_at: Dict[int, List[float]] = {}
+    for row in run.rows:
+        if row.frame_type == "COMMAND" and row.event_name == "Recover":
+            recover_at.setdefault(row.node_id, []).append(row.t)
+
+    def cleared_by(node: int, t_close: float, *, inferred: bool = False, censored: bool = False) -> str:
+        if censored:
+            return "still open at run end"
+        if inferred:
+            return "inferred at next Loaded"
+        if any(abs(t - t_close) <= _RECOVER_MATCH_S for t in recover_at.get(node, ())):
+            return "Recover command"
+        return "auto-recovered"
+
     open_faults: Dict[int, Tuple[float, ServiceStatus]] = {}
     out: List[FaultInterval] = []
     end_t = max((r.t for r in run.rows), default=run.duration_s)
@@ -359,14 +396,23 @@ def fault_intervals(run: RunData) -> List[FaultInterval]:
             node = int(row.fields.get("node", row.node_id) or row.node_id)
             if node in open_faults:
                 t0, code = open_faults.pop(node)
-                out.append(FaultInterval(node=node, code=code, t0=t0, t1=row.t))
+                out.append(FaultInterval(
+                    node=node, code=code, t0=t0, t1=row.t,
+                    cleared_by=cleared_by(node, row.t),
+                ))
             continue
         if row.frame_type == "EVENT" and row.event_name == "Loaded" and row.node_id in open_faults:
             t0, code = open_faults.pop(row.node_id)
-            out.append(FaultInterval(node=row.node_id, code=code, t0=t0, t1=row.t, inferred_close=True))
+            out.append(FaultInterval(
+                node=row.node_id, code=code, t0=t0, t1=row.t, inferred_close=True,
+                cleared_by=cleared_by(row.node_id, row.t, inferred=True),
+            ))
 
     for node, (t0, code) in open_faults.items():
-        out.append(FaultInterval(node=node, code=code, t0=t0, t1=end_t, censored=True))
+        out.append(FaultInterval(
+            node=node, code=code, t0=t0, t1=end_t, censored=True,
+            cleared_by=cleared_by(node, end_t, censored=True),
+        ))
 
     out.sort(key=lambda f: (f.node, f.t0))
     return out
@@ -389,6 +435,152 @@ def _reloaded_pellet_losses(run: RunData) -> Dict[int, List[float]]:
 
 def _loss_was_reloaded(reloaded: Dict[int, List[float]], node: int, t: float) -> bool:
     return any(abs(t - rt) <= 1.0 for rt in reloaded.get(node, []))
+
+
+@dataclass
+class HoldInterval:
+    """One Dome Hold: the plate waiting at the drop position, motors off.
+
+    Closes at the node's next Raising, Loaded, NoFeedPresented, Lowering,
+    or Fault. ``censored`` means the wait was still open when the run ended.
+    """
+
+    node: int
+    t0: float
+    t1: Optional[float]
+    censored: bool = False
+
+    @property
+    def dur(self) -> Optional[float]:
+        if self.t1 is None:
+            return None
+        return self.t1 - self.t0
+
+
+def hold_intervals(run: RunData) -> List[HoldInterval]:
+    open_holds: Dict[int, float] = {}
+    out: List[HoldInterval] = []
+    end_t = max((r.t for r in run.rows), default=run.duration_s)
+
+    for row in sorted(run.rows, key=lambda r: r.t):
+        if row.frame_type != "EVENT":
+            continue
+        name = row.event_name
+        node = row.node_id
+        if name == "Dome Hold":
+            # A second hold with the first still open: close the first at
+            # this instant so its time is not dropped.
+            if node in open_holds:
+                t0 = open_holds.pop(node)
+                out.append(HoldInterval(node=node, t0=t0, t1=row.t))
+            open_holds[node] = row.t
+            continue
+        ends = name in _HOLD_END_EVENTS or name.startswith("Fault:")
+        if node in open_holds and ends:
+            t0 = open_holds.pop(node)
+            out.append(HoldInterval(node=node, t0=t0, t1=row.t))
+
+    for node, t0 in open_holds.items():
+        out.append(HoldInterval(node=node, t0=t0, t1=end_t, censored=True))
+
+    out.sort(key=lambda h: (h.t0, h.node))
+    return out
+
+
+@dataclass
+class RetractEvent:
+    node: int
+    t: float
+
+
+@dataclass
+class ReloadEvent:
+    node: int
+    t: float
+    reason: Optional[PelletReloadReason]
+    attempt: Optional[int]
+
+
+def retract_events(run: RunData) -> List[RetractEvent]:
+    return [
+        RetractEvent(node=r.node_id, t=r.t)
+        for r in run.by_event("Retracting")
+        if r.frame_type == "EVENT"
+    ]
+
+
+def pellet_reloads(run: RunData) -> List[ReloadEvent]:
+    """One entry per Pellet Reload row. Reason and attempt come from the
+    raw frame, or from the details text when the bytes were not stored."""
+    out: List[ReloadEvent] = []
+    for row in run.by_event("Pellet Reload"):
+        if row.frame_type != "EVENT":
+            continue
+        parsed = parse_pellet_reload(row.raw_data, row.details)
+        out.append(ReloadEvent(
+            node=row.node_id,
+            t=row.t,
+            reason=parsed.reason if parsed else None,
+            attempt=parsed.attempt if parsed else None,
+        ))
+    return out
+
+
+@dataclass
+class MechanismSummary:
+    """Per-node counts of the dispense-protection events.
+
+    Holds and retracts are the firmware keeping a pellet out of reach while
+    the dome is open — expected, not a fault. A reload is a step toward a
+    PelletLost fault (the node stops after three in one dispense).
+    """
+
+    node: int
+    retracts: int = 0
+    holds: int = 0
+    hold_total_s: float = 0.0
+    hold_longest_s: Optional[float] = None
+    reloads_by_reason: Dict[str, int] = field(default_factory=dict)
+    dome_open_warnings: int = 0
+    feed_skips: int = 0
+
+    @property
+    def reload_count(self) -> int:
+        return sum(self.reloads_by_reason.values())
+
+
+def mechanism_summary(
+    run: RunData,
+    holds: Sequence[HoldInterval],
+    retracts: Sequence[RetractEvent],
+    reloads: Sequence[ReloadEvent],
+) -> Dict[int, MechanismSummary]:
+    out: Dict[int, MechanismSummary] = {}
+
+    def slot(node: int) -> MechanismSummary:
+        return out.setdefault(node, MechanismSummary(node=node))
+
+    for event in retracts:
+        slot(event.node).retracts += 1
+    for hold in holds:
+        summary = slot(hold.node)
+        summary.holds += 1
+        if hold.dur is not None:
+            summary.hold_total_s += hold.dur
+            if summary.hold_longest_s is None or hold.dur > summary.hold_longest_s:
+                summary.hold_longest_s = hold.dur
+    for reload in reloads:
+        summary = slot(reload.node)
+        key = reload.reason.name if reload.reason is not None else "unknown"
+        summary.reloads_by_reason[key] = summary.reloads_by_reason.get(key, 0) + 1
+    for row in run.rows:
+        if row.frame_type != "EVENT" or row.node_id == 0:
+            continue
+        if row.event_name == "DomeOpenWarning":
+            slot(row.node_id).dome_open_warnings += 1
+        elif row.event_name == "FeedSkipped":
+            slot(row.node_id).feed_skips += 1
+    return out
 
 
 @dataclass
@@ -729,6 +921,10 @@ class RunMetrics:
     presence: Tuple[List[Bout], BoutIssues]
     dome: Tuple[List[Bout], BoutIssues]
     faults: List[FaultInterval]
+    holds: List[HoldInterval]
+    retracts: List[RetractEvent]
+    reloads: List[ReloadEvent]
+    mechanism: Dict[int, MechanismSummary]
     funnel: Dict[int, InteractionFunnel]
     health: Dict[str, List[LogRow]]
     throughput: List[ThroughputPoint]
@@ -737,6 +933,9 @@ class RunMetrics:
 
 def compute_run_metrics(run: RunData) -> RunMetrics:
     cycles = build_cycles(run)
+    holds = hold_intervals(run)
+    retracts = retract_events(run)
+    reloads = pellet_reloads(run)
     return RunMetrics(
         run=run,
         cycles=cycles,
@@ -744,6 +943,10 @@ def compute_run_metrics(run: RunData) -> RunMetrics:
         presence=presence_bouts(run),
         dome=dome_bouts(run),
         faults=fault_intervals(run),
+        holds=holds,
+        retracts=retracts,
+        reloads=reloads,
+        mechanism=mechanism_summary(run, holds, retracts, reloads),
         funnel=interaction_funnel(cycles),
         health=apparatus_health(run),
         throughput=cumulative_throughput(run),

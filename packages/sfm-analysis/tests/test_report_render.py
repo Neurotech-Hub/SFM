@@ -57,6 +57,32 @@ class TestRenderReportHtml:
             url = m.group(1).strip().lower()
             assert not url.startswith(_REMOTE_SCHEMES), f"external resource: {url!r}"
 
+    def test_time_toggle_present_for_a_time_chart_and_still_script_free(self, tmp_path):
+        """The Relative/Absolute control is CSS (radios + labels), so a
+        report that opts out of the explorer stays script-free and still
+        gets the toggle whenever a section plotted time."""
+        runs = _runs(tmp_path)
+        html = render_report_html(runs, resolve_design("default"), include_explorer=False)
+        assert 'id="sfm-tf-rel"' in html
+        assert 'id="sfm-tf-abs"' in html
+        assert "Absolute (rig clock)" in html
+        assert "<script" not in html.lower()
+        # Radios precede .report so the sibling selector can reach the charts.
+        assert html.index('id="sfm-tf-abs"') < html.index('<div class="report">')
+
+    def test_time_toggle_absent_when_no_section_plots_time(self, tmp_path):
+        runs = _runs(tmp_path)
+        design = ReportDef(
+            name="provenance-only",
+            label="Provenance only",
+            sections=[SectionSpec(ref="generic.provenance")],
+        )
+        html = render_report_html(runs, design)
+        # The selectors live in the shared stylesheet either way; the
+        # control itself is the radio and the toolbar, and those stay out.
+        assert 'id="sfm-tf-rel"' not in html
+        assert "Absolute (rig clock)" not in html
+
     def test_no_explorer_yields_zero_script_and_zero_links(self, tmp_path):
         """With include_explorer=False, the report reverts to the fully
         script-free, link-free document this used to always be -- the
