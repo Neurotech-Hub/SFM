@@ -17,11 +17,11 @@
 // there — so find the grab depth first, then zero, then jog up.
 //   1. home     – drive DOWN until the load sensor triggers → loading position (pos=0)
 //   2. d <n>    – jog DOWN n steps (IGNORES load sensor) until M1 can drop a pellet
-//                 cleanly; that n is kDefaultGrabSteps (bench value: 280)
+//                 cleanly; that n is kDefaultGrabSteps (bench value: 350)
 //   3. z        – zero here, at the pellet-drop position
 //   4. u <n>    – jog UP n steps toward the presentation dome, repeating until
 //                 the height looks right; 's' then reads out kDefaultRaiseSteps
-//                 measured from the DROP position (bench value: 1480)
+//                 measured from the DROP position (bench value: 1650)
 //   5. home     – return to the load position when done
 //
 // Commands (line-based; Enter required):

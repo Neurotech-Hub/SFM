@@ -24,11 +24,11 @@ constexpr long     kDefaultFeedBurstSteps  = 500;
 constexpr uint32_t kDefaultFeedPauseMs     = 1000;
 // Approach budget. Worst case is an approach that starts from a seek-away taken
 // at presentation height: (kDefaultRaiseSteps - kDefaultGrabSteps) +
-// kDefaultSeekAwaySteps ≈ 2000 steps. 2048 left almost no margin for that path.
+// kDefaultSeekAwaySteps ≈ 2100 steps. 2048 left almost no margin for that path.
 constexpr long     kDefaultLowerSteps      = 3072;   // max approach budget toward load position
 constexpr long     kDefaultSeekAwaySteps   = 800;    // M2 up cap to clear load sensor (stop early when clear)
-constexpr long     kDefaultGrabSteps       = 280;    // M2 down past load sensor to drop position
-constexpr long     kDefaultRaiseSteps      = 1480;   // M2 up travel from the drop position
+constexpr long     kDefaultGrabSteps       = 350;    // M2 down past load sensor to drop position
+constexpr long     kDefaultRaiseSteps      = 1650;   // M2 up travel from the drop position
 constexpr uint32_t kDefaultLowerTimeoutMs  = 8000;   // M2 lower / seek-away
 constexpr uint32_t kDefaultFeedTimeoutMs   = 30000;  // M1 pellet load (30 s)
 constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)

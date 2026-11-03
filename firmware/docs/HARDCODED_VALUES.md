@@ -28,8 +28,8 @@ These are the ones called out most often during bring-up.
 | **80%**       | `kRaiseCommitPct`       | `DispenserService.h` | Below this fraction of the raise, a dome opening or a lost pellet retracts the plate. At or above it, a lost pellet with the dome open counts as a take |
 | **500 ms**    | `kDomeCloseSettleMs`    | `DispenserService.h` | Dome must stay closed this long before a raise starts or resumes |
 | **3**         | `kMaxPelletReloads`     | `DispenserService.h` | Automatic reloads in one dispense. The next miss faults `PelletLost` |
-| **280 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past the raw PG2 break** by this much before M1 turns. The debounced sensor is not the datum — the edge is latched the instant the beam breaks, and the 100 ms debounce only confirms it |
-| **1480 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (raw PG2 break minus `kDefaultGrabSteps`). Bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from that drop position |
+| **350 steps** | `kDefaultGrabSteps`     | `DispenserService.h` | M2 continues **down past the raw PG2 break** by this much before M1 turns. The debounced sensor is not the datum — the edge is latched the instant the beam breaks, and the 100 ms debounce only confirms it |
+| **1650 steps**| `kDefaultRaiseSteps`    | `DispenserService.h` | M2 raise travel **from the drop position** (raw PG2 break minus `kDefaultGrabSteps`). Bench default for 28BYJ-48. Measure it with `ActuatorCalTest` from that drop position |
 | **800 steps** | `kDefaultSeekAwaySteps` | `DispenserService.h` | M2 up travel cap before the approach. On an asserted load sensor, motion stops at sensor-clear or this count. From a known drop depth the seek runs until the beam breaks and then clears, and faults if the cap arrives first |
 
 
@@ -52,10 +52,10 @@ drop height. Changing `kDefaultGrabSteps` moves the raise datum with it, so re-c
 | 0.5×        | `kDefaultFeedSpeedScale` | M1 feed speed as a fraction of `motorSpeed_`. Kept as a scale, not an absolute, so `setMotorSpeed()` and the bench `+`/`-` keys move both motors together |
 | 500 steps   | `kDefaultFeedBurstSteps` | M1 steps per burst during `Loading`, then pause |
 | 1 s         | `kDefaultFeedPauseMs`    | Coils-off settle pause between M1 feed bursts |
-| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2000 steps. Exhausting it retries only when the load sensor is asserted or the plate is already known to be at drop depth; otherwise it faults (a blind seek-up after `PelletLost` can drive into the stop) |
+| 3072 steps  | `kDefaultLowerSteps`     | Max approach budget for M2 toward the load sensor. Must cover the longest legitimate approach — one that starts from a seek-away taken at presentation height, ≈ (`kDefaultRaiseSteps` − `kDefaultGrabSteps`) + `kDefaultSeekAwaySteps` ≈ 2100 steps. Exhausting it retries only when the load sensor is asserted or the plate is already known to be at drop depth; otherwise it faults (a blind seek-up after `PelletLost` can drive into the stop) |
 | 800 steps   | `kDefaultSeekAwaySteps`  | M2 up travel cap to clear the load sensor (sensor-clear or this many steps, whichever first, when seek starts on the sensor) |
-| 280 steps   | `kDefaultGrabSteps`      | M2 down past the raw PG2 break to the pellet-drop position |
-| 1480 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
+| 350 steps   | `kDefaultGrabSteps`      | M2 down past the raw PG2 break to the pellet-drop position |
+| 1650 steps  | `kDefaultRaiseSteps`     | M2 up travel from the pellet-drop position |
 | 80%         | `kRaiseCommitPct`        | Raise fraction below which a dome open or pellet loss retracts |
 | 500 ms      | `kDomeCloseSettleMs`     | Dome-closed settle before a raise starts or resumes |
 | 3           | `kMaxPelletReloads`      | Reloads per dispense before Fault/`PelletLost` |
