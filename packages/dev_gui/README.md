@@ -348,7 +348,9 @@ node, pulsed straight from the CAN receive thread), or `periodic`. The default,
 the `trigger` pulses above. Settings are saved in `~/.sfm/bnc_settings.json`
 once a front-end calls `engine.enable_bnc_persistence()`.
 
-To measure the real numbers on a Pi, cable BNC OUT to BNC IN 0 and run
+The timing has **not yet been measured on real hardware**. The steps to confirm
+it, with the proposed limits and what to do if one is missed, are in
+[bench/README.md](bench/README.md). In short: cable BNC OUT to BNC IN 0 and run
 `python -m bench.bnc_loopback pulses` (output accuracy) or
 `python -m bench.bnc_loopback event --can vcan0` (event to pulse).
 
