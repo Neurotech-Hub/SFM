@@ -28,6 +28,9 @@ class ExperimentController:
         self._runner: Optional[ExperimentRunner] = None
         self._exp_def: Optional[ExperimentDef] = None
         self._gui_log: Optional[LogManager] = None
+        # Called with (name, fields) for every experiment log event, e.g.
+        # "trial" or "session_end", so a host can react to them (BNC OUT).
+        self.on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -63,10 +66,14 @@ class ExperimentController:
         online_timeout_s: Optional[float] = None,
         resume: Any = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
+        session_fields: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
         Does not open CAN — the GUI session already owns the bus.
+
+        ``session_fields`` are extra keys written into the ``session_start``
+        row, e.g. how the timestamps in this log were taken.
 
         ``on_session_start``, if given, fires once at true session activation
         (immediately if the template has no start_when, later otherwise) —
@@ -89,6 +96,7 @@ class ExperimentController:
         self._gui_log = log
         runner.ctx.on_log = self._on_experiment_log
         runner.ctx.on_session_start = on_session_start
+        runner.ctx.session_fields = dict(session_fields or {})
         self._runner = runner
         self._exp_def = exp_def
         runner.start(resume=resume)
@@ -167,6 +175,11 @@ class ExperimentController:
     # ------------------------------------------------------------------
 
     def _on_experiment_log(self, entry: ExperimentLogEntry) -> None:
+        if self.on_event is not None:
+            try:
+                self.on_event(entry.name, dict(entry.fields))
+            except Exception:  # noqa: BLE001 — a host's reaction must not break the experiment
+                pass
         if self._gui_log is None:
             return
         if entry.name == "command":

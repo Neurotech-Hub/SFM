@@ -149,6 +149,9 @@ class ExperimentControl:
         # side effect (e.g. the camera sync flash) at the true start moment
         # rather than at the operator's click.
         self.on_session_start: Optional[Callable[[], None]] = None
+        # Extra keys the host wants in the "session_start" row (e.g. how the
+        # log's timestamps were taken). Never override the runner's own keys.
+        self.session_fields: Dict[str, Any] = {}
         # Commands issued during the session (for tests / inspection).
         self.commands_sent: List[tuple] = []
         # Raw (arb_id, data) frames that are not node commands — see
@@ -362,9 +365,14 @@ class ExperimentControl:
 
     def bnc_pulse(self, duration_us: int = 100) -> None:
         """Pulse BNC OUT. No-op when no IOManager is bound."""
+        accepted = None
         if self._io is not None:
-            self._io.pulse_bnc_out(duration_us)
-        self.log("bnc_pulse", duration_us=duration_us)
+            accepted = self._io.pulse_bnc_out(duration_us, purpose="experiment")
+        if accepted is False:
+            # The pulse thread was busy with another pulse; say so in the log.
+            self.log("bnc_pulse", duration_us=duration_us, refused=True)
+        else:
+            self.log("bnc_pulse", duration_us=duration_us)
 
     # ------------------------------------------------------------------
     # Per-node fault handling (sticky)

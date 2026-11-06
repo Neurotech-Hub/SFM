@@ -286,21 +286,71 @@ for the full picture, including the Python API for custom analysis.
 The main screen includes a **BNC / Sync I/O** panel between the node grid and
 the event log:
 
-- **BNC IN 1 / BNC IN 2** — configurable label, edge (rising/falling/both),
-  and a free-text "action" placeholder. A handful of convenience keywords
-  (`dispense_all`, `recover_all`, `ping_all`, `reqstatus_all`) are dispatched
-  automatically when enabled; any other value is just logged, ready to be
-  wired to real behaviour later.
-- **BNC OUT** — configurable label, pulse width (microseconds), and a
-  free-text "trigger" placeholder matched against incoming CAN event names
-  (or `any_event` to match all events). A "Manual Pulse" button fires a
-  one-shot pulse for bench testing regardless of the enable state.
+- **BNC IN 1 / BNC IN 2** — a label, an enable, and one action per edge
+  (`dispense_all`, `recover_all`, `ping_all`, `reqstatus_all`,
+  `start_experiment`, `stop_experiment`).
+- **BNC OUT** — a label, a pulse width, and a trigger matched against incoming
+  CAN event names (or `any_event` to match all events). A "Manual Pulse"
+  button fires a one-shot pulse for bench testing regardless of the enable
+  state.
 
 All GPIO for BNC I/O, the user button, and AEO (daisy-chain discovery enable)
 is centralized in [base_station/io_manager.py](base_station/io_manager.py). It degrades
 to a harmless simulation mode automatically when no GPIO backend
 (`gpiod`/`RPi.GPIO`) or hardware is available — e.g. when developing against
 `vcan0` on a non-Pi machine.
+
+### Timing and sync with other equipment
+
+The engine ([base_station/engine.py](base_station/engine.py)) timestamps things
+when they happen, not when it gets round to them:
+
+- **BNC IN** edges carry their direction and the kernel's capture time
+  (libgpiod). A 10 ms pulse is measured as 10 ms even if two edges are read
+  together, and a gap in the kernel's sequence numbers is logged as
+  `missed_edges`. With the `RPi.GPIO` fallback there is no edge timestamp;
+  rows say `capture: software`.
+- **CAN** rows carry the kernel's arrival time of the frame.
+- **BNC OUT** has one thread that owns the line. A pulse asked for while
+  another is running is refused and logged (`BNC OUT pulse refused`), never
+  allowed to cut the first short. Each pulse is logged once, when it ends, with
+  the measured width and the delay from the request.
+- BNC rows have `source="BNC"`. Each session's `session_start` row records
+  `timebase` (`capture-v1`), `bnc_backend`, `bnc_edge_capture` and
+  `clock_offset_s`; a log without `timebase` was written before this and its
+  rows carry the time each frame was processed. A `ClockStep` row marks any
+  jump of the wall clock.
+
+BNC inputs have a `mode` (the default, `edge`, is the behaviour above):
+
+| mode | meaning |
+|---|---|
+| `pulse` | a signal active for at least `min_width_ms` is one pulse and runs `action`; a shorter one is logged as `IN1 pulse rejected` |
+| `level` | going active runs `action`, going inactive runs `release_action` |
+| `log_only` | edges are logged and given to a running experiment; nothing else happens |
+
+`active_high` says which BNC level counts as active.
+
+**An input can only start a session that was armed by hand** (`arm_start`).
+Arming checks the setup first (session name, nodes, that the experiment builds
+with them, that an enabled input is set to start one, and that a `level`
+input is not already active). It is used up by the start, and never carries
+over a run or a restart. A start is refused, logged (`BNC Start Rejected`) and
+shown to the operator when it is not armed, a session is already running, a
+node in the task is offline or in fault, or Re-discover is changing IDs.
+Pulse starts that were refused for a node problem stay armed.
+
+BNC OUT signals **one** thing at a time (`mapping`): `off`, `session_start_sync`,
+`session_start_stop` (the end pulse is twice as wide), `trial` (a pulse per
+trial, and a double-width one at the end), `node_event` (a named event from any
+node, pulsed straight from the CAN receive thread), or `periodic`. The default,
+`legacy`, is the original behaviour: a 500 ms pulse at session start, plus
+the `trigger` pulses above. Settings are saved in `~/.sfm/bnc_settings.json`
+once a front-end calls `engine.enable_bnc_persistence()`.
+
+To measure the real numbers on a Pi, cable BNC OUT to BNC IN 0 and run
+`python -m bench.bnc_loopback pulses` (output accuracy) or
+`python -m bench.bnc_loopback event --can vcan0` (event to pulse).
 
 ## File structure
 

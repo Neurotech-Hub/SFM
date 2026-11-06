@@ -46,4 +46,7 @@ jobs:
             tests/test_pellet_ledger.py tests/test_mac_id_registry.py \
             tests/test_discovery_manager.py tests/test_experiment.py \
             tests/test_experiment_schema.py tests/test_script.py \
-            tests/test_two_armed_bandit.py tests/test_engine.py
+            tests/test_two_armed_bandit.py tests/test_engine.py \
+            tests/test_io_manager.py tests/test_bnc_input.py \
+            tests/test_bnc_output.py tests/test_bnc_settings.py \
+            tests/test_bench_stats.py

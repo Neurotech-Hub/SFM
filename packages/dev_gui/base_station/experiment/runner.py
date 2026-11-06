@@ -456,6 +456,10 @@ class ExperimentRunner:
             str(n): (self._firmware_for(n) if self._firmware_for is not None else None) or "unknown"
             for n in self.ctx.nodes
         }
+        host_fields = {
+            k: v for k, v in self.ctx.session_fields.items()
+            if k not in ("experiment", "nodes", "seed", "utc_offset_s", "firmware")
+        }
         self.ctx.log(
             "session_start",
             experiment=self.experiment.name,
@@ -463,6 +467,7 @@ class ExperimentRunner:
             seed=self.ctx.seed,
             utc_offset_s=utc_offset_s.total_seconds() if utc_offset_s is not None else None,
             firmware=firmware,
+            **host_fields,
         )
         if self.ctx.on_session_start is not None:
             try:

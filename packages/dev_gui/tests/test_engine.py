@@ -11,12 +11,14 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from base_station.engine import BaseStationEngine
+from base_station.io_manager import BncEdgeEvent, PulseRecord
 from base_station.log_manager import LogManager
 from base_station.node_registry import NodeRegistry
 from base_station.protocol import (
@@ -299,6 +301,8 @@ class _FakeIo:
     def __init__(self, high: bool) -> None:
         self.high = high
         self.pulses: list = []
+        self.purposes: list = []
+        self.accept = True
 
     def read_bnc_in1(self):
         return self.high
@@ -306,8 +310,10 @@ class _FakeIo:
     def read_bnc_in2(self):
         return self.high
 
-    def pulse_bnc_out(self, width_us):
+    def pulse_bnc_out(self, width_us, purpose=""):
         self.pulses.append(width_us)
+        self.purposes.append(purpose)
+        return self.accept
 
 
 def test_bnc_edge_is_logged_and_shown(engine) -> None:
@@ -343,9 +349,8 @@ def test_bnc_out_fires_on_a_matching_event_only(engine) -> None:
 
     engine._maybe_fire_bnc_out("Pellet Taken")
     assert engine._io.pulses == [5000]
+    assert engine._io.purposes == ["event:Pellet Taken"]
     assert ("bnc_out",) in engine.seen
-    rows = [e for e in engine._log.all_entries() if e.event_name == "BNC OUT pulse"]
-    assert len(rows) == 1
 
 
 def test_manual_pulse_ignores_enabled(engine) -> None:
@@ -354,7 +359,211 @@ def test_manual_pulse_ignores_enabled(engine) -> None:
     engine._bnc_out_cfg.pulse_width_us = 7000
     engine.manual_bnc_pulse()
     assert engine._io.pulses == [7000]
+    assert engine._io.purposes == ["manual"]
     assert ("bnc_out",) in engine.seen
+
+
+def _record(purpose="event:Dome Opened", requested_us=10_000, width_us=10_050.0, latency_us=120.0):
+    return PulseRecord(
+        purpose=purpose, requested_us=requested_us, t_request=100.0,
+        t_rise=100.0 + latency_us / 1e6, t_fall=100.0 + (latency_us + width_us) / 1e6,
+        wall_rise=1_760_000_000.5,
+    )
+
+
+def test_a_finished_pulse_is_logged_once_with_what_it_actually_did(engine) -> None:
+    engine._pulse_records.put(_record())
+    engine._log_finished_pulses()
+    rows = [e for e in engine._log.all_entries() if e.event_name == "BNC OUT pulse"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.timestamp == 1_760_000_000.5          # when the line went high
+    assert row.source == "BNC"
+    assert row.fields["purpose"] == "event:Dome Opened"
+    assert row.fields["width_us"] == pytest.approx(10_050.0, abs=1)
+    assert row.fields["latency_us"] == pytest.approx(120.0, abs=1)
+    assert "measured=10.050ms" in row.details
+    engine._log_finished_pulses()                    # nothing new to write
+    assert len([e for e in engine._log.all_entries() if e.event_name == "BNC OUT pulse"]) == 1
+
+
+def test_a_refused_pulse_is_logged_and_not_shown_as_fired(engine) -> None:
+    engine._io = _FakeIo(high=False)
+    engine._io.accept = False
+    assert engine._pulse_out(5000, "event:Loaded") is False
+    rows = [e for e in engine._log.all_entries() if e.event_name == "BNC OUT pulse refused"]
+    assert len(rows) == 1 and rows[0].source == "BNC"
+    assert rows[0].fields == {"purpose": "event:Loaded", "requested_us": 5000}
+    assert ("bnc_out",) not in engine.seen
+
+
+# ---------------------------------------------------------------------------
+# BNC input edges carry their own direction and time
+# ---------------------------------------------------------------------------
+
+def _edge_event(rising: bool, t: float, **kw) -> BncEdgeEvent:
+    return BncEdgeEvent(
+        channel=kw.pop("channel", 0), which=kw.pop("which", "IN1"), rising=rising,
+        t_mono=t, t_wall=1_760_000_000.0 + t, **kw,
+    )
+
+
+def test_edges_of_a_ten_ms_pulse_keep_their_direction_and_time(engine) -> None:
+    """The pin reads 'low' by the time the engine looks. The edges still say what happened."""
+    engine._io = _FakeIo(high=False)
+    engine._can = _FakeCan()
+    engine._on_bnc_edge_event(_edge_event(True, 5.000, seqno=1))
+    engine._on_bnc_edge_event(_edge_event(False, 5.010, seqno=2))
+    engine.tick()
+
+    rows = [e for e in engine._log.all_entries() if e.frame_type == "BNC"]
+    assert [r.event_name for r in rows] == ["IN1 rising", "IN1 falling"]
+    assert rows[1].timestamp - rows[0].timestamp == pytest.approx(0.010, abs=1e-6)
+    assert all(r.source == "BNC" for r in rows)
+    assert rows[0].fields == {"channel": 0, "level": 1, "capture": "kernel", "t_mono": 5.0, "seqno": 1}
+    assert [e[:3] for e in engine.seen if e[0] == "bnc_edge"] == [
+        ("bnc_edge", "IN1", "rising"), ("bnc_edge", "IN1", "falling")
+    ]
+
+
+def test_missed_edges_are_reported_on_the_row(engine) -> None:
+    engine._handle_bnc_event(_edge_event(True, 1.0, seqno=9, missed=3))
+    row = [e for e in engine._log.all_entries() if e.frame_type == "BNC"][0]
+    assert row.fields["missed_edges"] == 3
+    assert "missed_edges=3" in row.details
+
+
+def test_the_edge_queue_never_blocks_and_counts_what_it_drops(engine) -> None:
+    engine._can = _FakeCan()
+    for i in range(300):
+        engine._on_bnc_edge_event(_edge_event(i % 2 == 0, float(i)))   # returns at once
+    assert engine._bnc_edge_dropped == 300 - 256
+    engine.tick()
+    warnings = [e for e in engine._log.all_entries() if e.event_name == "BNC Edges Dropped"]
+    assert len(warnings) == 1 and warnings[0].fields == {"dropped_total": 44}
+    engine.tick()
+    assert len([e for e in engine._log.all_entries() if e.event_name == "BNC Edges Dropped"]) == 1
+
+
+def test_older_callers_can_still_queue_a_tuple(engine) -> None:
+    engine._io = _FakeIo(high=True)
+    engine._bnc_edge_queue.put(("IN2", 1234.5))
+    engine._can = _FakeCan()
+    engine.tick()
+    row = [e for e in engine._log.all_entries() if e.frame_type == "BNC"][0]
+    assert (row.event_name, row.timestamp, row.source) == ("IN2 rising", 1234.5, "BNC")
+
+
+# ---------------------------------------------------------------------------
+# One fault must not stop the engine
+# ---------------------------------------------------------------------------
+
+def test_a_bad_frame_does_not_cost_the_rest_of_the_batch(engine) -> None:
+    engine._can = _FakeCan([_loaded_frame(1), _loaded_frame(2)])
+    real = engine._dispatch_rx
+    calls = []
+
+    def flaky(msg):
+        calls.append(msg)
+        if len(calls) == 1:
+            raise ValueError("bad frame")
+        real(msg)
+
+    engine._dispatch_rx = flaky
+    engine.tick()
+
+    assert len(calls) == 2
+    assert [e.event_name for e in engine._log.all_entries() if e.event_name == "Loaded"] == ["Loaded"]
+    errors = [e for e in engine._log.all_entries() if e.event_name == "EngineError"]
+    assert len(errors) == 1
+    assert errors[0].fields["phase"] == "rx frame" and errors[0].fields["error"] == "ValueError"
+    assert "bad frame" in errors[0].fields["message"]
+
+
+def test_a_repeating_fault_is_logged_once_with_a_count(engine) -> None:
+    engine._can = _FakeCan()
+    engine._refresh_experiment_status = lambda: (_ for _ in ()).throw(RuntimeError("display gone"))
+    for _ in range(5):
+        engine._last_panel_paint = 0.0     # make the status hook run on every tick
+        engine.tick()
+    errors = [e for e in engine._log.all_entries() if e.event_name == "EngineError"]
+    assert len(errors) == 1
+    assert engine._error_counts[("status display", "RuntimeError")] == 5
+
+
+def test_other_steps_still_run_after_one_fails(engine) -> None:
+    engine._can = _FakeCan([_loaded_frame(1)])
+    engine._refresh_bnc_dots = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    engine.tick()
+    assert ("log_table",) in engine.seen        # a later step still ran
+
+
+# ---------------------------------------------------------------------------
+# Time
+# ---------------------------------------------------------------------------
+
+def _stamped(stamp):
+    arb, data = build_event_frame(1, CanEvent.Loaded, bytes([5, 0]))
+    return SimpleNamespace(arbitration_id=arb, data=bytes(data), timestamp=stamp)
+
+
+def test_a_can_row_carries_the_frames_arrival_time(engine) -> None:
+    arrived = time.time() - 120.0       # the engine was busy for two minutes
+    engine._dispatch_rx(_stamped(arrived))
+    row = [e for e in engine._log.all_entries() if e.event_name == "Loaded"][0]
+    assert row.timestamp == arrived
+
+
+@pytest.mark.parametrize("stamp", [None, 0, 0.0, -1.0, "junk", time.time() - 7 * 3600, time.time() + 3600])
+def test_an_unusable_arrival_stamp_falls_back_to_now(engine, stamp) -> None:
+    before = time.time()
+    engine._dispatch_rx(_stamped(stamp))
+    row = [e for e in engine._log.all_entries() if e.event_name == "Loaded"][0]
+    assert before <= row.timestamp <= time.time()
+
+
+def test_a_wall_clock_step_is_logged_once(engine, monkeypatch) -> None:
+    real = time.time
+    engine._clock_offset = real() - time.monotonic()
+    monkeypatch.setattr("base_station.engine.time.time", lambda: real() + 30.0)
+    engine._check_clock()
+    engine._check_clock()               # the new offset is the baseline now
+    steps = [e for e in engine._log.all_entries() if e.event_name == "ClockStep"]
+    assert len(steps) == 1
+    assert steps[0].fields["step_s"] == pytest.approx(30.0, abs=0.5)
+
+
+def test_a_slewed_clock_is_not_a_step(engine) -> None:
+    engine._clock_offset = time.time() - time.monotonic() - 0.005   # 5 ms of drift
+    engine._check_clock()
+    assert [e for e in engine._log.all_entries() if e.event_name == "ClockStep"] == []
+
+
+def test_the_clock_check_can_be_switched_off(engine, monkeypatch) -> None:
+    engine._clock_check_enabled = False
+    engine._clock_offset = 0.0
+    engine._check_clock()
+    assert [e for e in engine._log.all_entries() if e.event_name == "ClockStep"] == []
+
+
+def test_session_start_says_how_the_timestamps_were_taken(engine, tmp_path) -> None:
+    engine._can = _FakeCan()
+    engine._io = _FakeIo(high=False)
+    engine._log = LogManager(log_dir=str(tmp_path), auto_save=True)
+    engine._exp_log_dir = str(tmp_path)
+    started, _ = engine.start_experiment(engine._default_experiment_def(), "unit_test", lambda: ({}, [1, 2]))
+    try:
+        assert started
+        row = [e for e in engine._log.all_entries() if e.event_name == "session_start"][0]
+        assert row.fields["timebase"] == "capture-v1"
+        assert row.fields["bnc_backend"] == "none"
+        assert row.fields["bnc_edge_capture"] == "none"
+        assert row.fields["clock_offset_s"] == pytest.approx(time.time() - time.monotonic(), abs=1.0)
+        # The runner's own keys are untouched.
+        assert row.fields["experiment"] == "free_feeding" and row.fields["nodes"] == [1, 2]
+    finally:
+        engine.stop_experiment()
+        engine._log.close()
 
 
 def test_bnc_start_and_stop_actions_reach_the_front_end(engine) -> None:

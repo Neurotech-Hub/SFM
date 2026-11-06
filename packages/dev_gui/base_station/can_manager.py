@@ -51,6 +51,7 @@ class CanManager:
         self._rx_thread: Optional[threading.Thread] = None
         self._running = False
         self._error_callback: Optional[Callable[[Exception], None]] = None
+        self._rx_tap: Optional[Callable[[can.Message], None]] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -106,6 +107,19 @@ class CanManager:
     def on_error(self, callback: Callable[[Exception], None]) -> None:
         """Register a callback for RX thread errors."""
         self._error_callback = callback
+
+    def set_rx_tap(self, tap: Optional[Callable[[can.Message], None]]) -> None:
+        """
+        Register a function called, on the RX thread, for every received frame
+        before it is queued, or pass None to remove it.
+
+        It exists for work that can't wait for the next poll, such as pulsing
+        BNC OUT the moment a node event arrives. It runs on a thread that must
+        keep reading the bus, so it has to be fast, must not block and must not
+        touch state the polling thread owns. An exception in it is swallowed
+        and never costs the frame.
+        """
+        self._rx_tap = tap
 
     # ------------------------------------------------------------------
     # Transmit helpers
@@ -176,6 +190,12 @@ class CanManager:
                 msg = self._bus.recv(timeout=0.1)  # 100 ms poll
                 failures = 0
                 if msg is not None:
+                    tap = self._rx_tap
+                    if tap is not None:
+                        try:
+                            tap(msg)
+                        except Exception:
+                            pass
                     try:
                         self._rx_queue.put_nowait(msg)
                     except queue.Full:
