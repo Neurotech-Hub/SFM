@@ -21,12 +21,13 @@ concurrency:
 jobs:
   subset:
     # Runs only the base-station tests that need no display and no
-    # RPi-only hardware library (dearpygui / RPi.GPIO / gpiod). Those live
-    # only in base_station/app.py and base_station/io_manager.py, so
-    # everything else is importable and testable on a plain Linux runner.
-    # The remaining ~26 tests (test_app.py, test_app_pellet_counting.py,
-    # test_schedule.py, test_hat.py) are Pi-only and run manually — see
-    # packages/dev_gui/README.md.
+    # RPi-only hardware library (dearpygui / RPi.GPIO / gpiod). dearpygui is
+    # imported only by base_station/app.py, and the GPIO libraries only inside
+    # IOManager.begin(), so the engine (base_station/engine.py) and everything
+    # else is importable and testable on a plain Linux runner.
+    # The remaining tests (test_app.py, test_app_pellet_counting.py,
+    # test_schedule.py, test_hat.py) need dearpygui or a Pi and run manually —
+    # see packages/dev_gui/README.md.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,4 +46,4 @@ jobs:
             tests/test_pellet_ledger.py tests/test_mac_id_registry.py \
             tests/test_discovery_manager.py tests/test_experiment.py \
             tests/test_experiment_schema.py tests/test_script.py \
-            tests/test_two_armed_bandit.py
+            tests/test_two_armed_bandit.py tests/test_engine.py

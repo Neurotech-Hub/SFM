@@ -334,8 +334,10 @@ packages/dev_gui/
     ├── node_registry.py      # Per-node live state (session)
     ├── log_manager.py        # Ring buffer + CSV auto-save (schema from sfm_analysis.logs)
     ├── storage.py            # Writer-side log-dir resolution (no dearpygui import)
-    ├── app.py                # DearPyGui screens + render loop
-    └── experiment/           # Event-driven task engine (GUI-hosted)
+    ├── engine.py             # Everything that must keep running: CAN, logging, discovery,
+    │                         #   BNC, pellets, experiment host (no GUI import, tick()-driven)
+    ├── app.py                # DearPyGui screens + render loop; calls engine.tick()
+    └── experiment/           # Event-driven task engine (hosted by the engine)
         ├── README.md         # How to author a custom template
         ├── events.py         # EventKind + CAN → NodeEvent normalizer
         ├── context.py        # ExperimentControl: actions, timers, counters
