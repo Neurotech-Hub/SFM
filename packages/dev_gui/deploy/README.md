@@ -103,7 +103,72 @@ With at least one SFM node powered and connected, `candump can0` should show
 `080` (ANNOUNCE) or `083` (REJOIN) discovery frames, followed by `2xx`
 heartbeat frames at 1 Hz once the node is assigned an ID.
 
-## Run the GUI
+## Run the Rig Map as services
+
+The Rig Map has two parts that run as separate programs, so that one can restart
+without disturbing the other and a browser that closes or crashes never stops a
+session:
+
+| Program | What it does | Restarts |
+|---|---|---|
+| `sfm-engine` | Owns the CAN bus and the BNC lines, runs experiments, writes the log | by systemd after a crash |
+| `sfm-gateway` | The web page at `http://127.0.0.1:8080/` (this Pi only) | always |
+| `sfm-kiosk` (optional) | Opens the page full screen and restarts the browser if it dies or grows past 1 GB | by itself |
+
+```bash
+cd packages/dev_gui/deploy
+./install-gui.sh                 # writes the two units for your user (no sudo); changes nothing else
+systemctl --user start sfm-engine sfm-gateway
+# open http://127.0.0.1:8080/
+```
+
+`./install-gui.sh --help` lists the options. Nothing starts at boot and nothing is
+added to the desktop unless you ask:
+
+| Option | Effect |
+|---|---|
+| `--enable` | start both services at login. Add `loginctl enable-linger $USER` to start them at boot |
+| `--kiosk` | open the page full screen when the desktop starts (writes `~/.config/autostart/sfm-kiosk.desktop`) |
+| `--system` | install system-wide instead of for your user (needs sudo) |
+| `--python PATH` | the Python to run (default: `python3` on the PATH). It needs `aiohttp` and `python-can` |
+| `--port N` | the page's port (default 8080) |
+| `--uninstall` | stop, disable and remove what this script installed. Logs and `~/.sfm` are not touched |
+| `--dry-run` | show what would happen, change nothing |
+
+**The old GUI and the engine cannot run together.** They share the CAN bus and the
+BNC lines, and the second one to start refuses and says who has them. To use the
+old DearPyGui app: `systemctl --user stop sfm-engine`, then `python run.py`.
+
+### What happens when something stops
+
+| What stops | What you see | The session |
+|---|---|---|
+| The browser closes or crashes | Nothing on the rig. Open it again and it is on the running session | keeps running |
+| The gateway crashes | Back in about 3 s. An open page shows "engine not running" briefly, then reconnects | keeps running |
+| The engine crashes | Back in about 4 s. The page returns to Connect. Connect again (your choices are remembered) and start the same session name to continue it as the next run | **ends**. Everything logged is on disk; at most the last second of rows can be missing |
+| `systemctl stop sfm-engine` | The session is closed properly with a `session_end` row | ends cleanly |
+
+### Logs and settings
+
+```bash
+journalctl --user -u sfm-engine -u sfm-gateway -f      # system install: drop --user
+```
+
+Settings live in `~/.sfm/` (`mac_id_registry.json`, `bnc_settings.json`,
+`node_layout.json`, `gui_settings.json`). Session logs go to the folder chosen on the
+Connect step.
+
+### Measuring the load
+
+`bench/load_monitor.py` reports CPU (as a share of the whole machine) and real memory
+(PSS) per service and for the browser. Leave it running for a day to look for leaks:
+
+```bash
+python -m bench.load_monitor --group engine=unit:sfm-engine --group gateway=unit:sfm-gateway \
+    --group browser=match:--user-data-dir=$HOME/.config/sfm-kiosk --interval 30 --duration 0 --out soak.csv
+```
+
+## Run the old GUI
 
 Once `can0` is up, the SFM Developer GUI works exactly as documented in
 [packages/dev_gui/README.md](../README.md) — no additional configuration is

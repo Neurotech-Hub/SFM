@@ -9,16 +9,16 @@ const TYPES = ["EVENT", "COMMAND", "DISCOVERY", "BNC", "SYNC", "WARNING", "EXPER
 const COLS = ["Time", "Node", "Dir", "Type", "Event", "ID", "Data", "Details"];
 
 export function createLog(ctx) {
-  const m = { rows: [], lastSeq: 0, fetching: false, filterNode: "all", filterType: "all", heartbeats: false, hb: [], hbTimer: null, drawn: new Set(), dirty: true };
+  const m = { rows: [], lastSeq: 0, fetching: false, filterNode: "all", filterType: "all", heartbeats: false, hb: [], hbTimer: null, lastKey: null, full: true };
 
-  const nodeSel = h("select", { class: "select", "aria-label": "Show node", onChange: (e) => { m.filterNode = e.target.value; m.dirty = true; draw(); } });
-  const typeSel = h("select", { class: "select", "aria-label": "Show event type", onChange: (e) => { m.filterType = e.target.value; m.dirty = true; draw(); } },
+  const nodeSel = h("select", { class: "select", "aria-label": "Show node", onChange: (e) => { m.filterNode = e.target.value; m.full = true; draw(); } });
+  const typeSel = h("select", { class: "select", "aria-label": "Show event type", onChange: (e) => { m.filterType = e.target.value; m.full = true; draw(); } },
     h("option", { value: "all" }, "All types"), ...TYPES.map((t) => h("option", { value: t }, t)));
-  const hbBox = h("input", { type: "checkbox", id: "log-hb", onChange: (e) => { m.heartbeats = e.target.checked; m.dirty = true; if (m.heartbeats) pollHeartbeats(); draw(); } });
+  const hbBox = h("input", { type: "checkbox", id: "log-hb", onChange: (e) => { m.heartbeats = e.target.checked; m.full = true; if (m.heartbeats) pollHeartbeats(); draw(); } });
   const count = h("span", { class: "small muted", role: "status" });
   const tbody = h("tbody", {});
   const latest = h("span", { class: "muted", style: { fontWeight: 400 } });
-  const el = h("details", { class: "logbox", onToggle: () => { if (el.open) { m.dirty = true; draw(); } } },
+  const el = h("details", { class: "logbox", onToggle: () => { if (el.open) { m.full = true; draw(); } } },
     h("summary", {}, h("span", {}, "Event log"), latest),
     h("div", { class: "logtools" },
       h("label", { class: "small" }, "Node "), nodeSel, typeSel,
@@ -32,7 +32,7 @@ export function createLog(ctx) {
   async function clear() {
     const r = await ctx.command("log_clear");
     if (!r.ok) { ctx.toast(r.error, "error"); return; }
-    m.rows = []; m.hb = []; m.dirty = true; draw();
+    m.rows = []; m.hb = []; m.full = true; draw();
   }
 
   async function exportRows() {
@@ -52,7 +52,6 @@ export function createLog(ctx) {
           m.rows.push(...r.rows);
           if (m.rows.length > KEEP) m.rows.splice(0, m.rows.length - KEEP);
           m.lastSeq = r.rows[r.rows.length - 1].seq;
-          m.dirty = true;
         } else if (r.last_seq < m.lastSeq) { m.lastSeq = r.last_seq; }
         if (r.rows.length < 500) break;
       }
@@ -64,7 +63,7 @@ export function createLog(ctx) {
     clearTimeout(m.hbTimer);
     if (!m.heartbeats) return;
     const r = await ctx.command("heartbeat_rows");
-    if (r.ok) { m.hb = r.rows; m.dirty = true; draw(); }
+    if (r.ok) { m.hb = r.rows; m.full = true; draw(); }
     m.hbTimer = setTimeout(pollHeartbeats, 2000);
   }
 
@@ -84,17 +83,30 @@ export function createLog(ctx) {
   }
   const nodeNameById = (id) => { const n = ctx.engine.get().state?.nodes.find((x) => x.id === id); return n ? nodeName(n) : `Node ${id}`; };
 
+  const keyOf = (r) => (r.seq ? r.seq : `hb${r.ts}`);
+
+  // New rows are added at the top and the bottom is trimmed, so a busy log costs a few elements per
+  // update, not a rebuild of every row. A full rebuild happens only when the view itself changes.
   function draw() {
     const rows = visibleRows();
     const last = m.rows[m.rows.length - 1];
-    setText(latest, last ? `${last.time} · ${last.event}` : "");
+    setText(latest, last ? `${last.time} \u00b7 ${last.event}` : "");
     if (!el.open) return;
-    if (m.dirty) {
-      m.dirty = false;
+    let at = -1;
+    if (!m.full && m.lastKey !== null) at = rows.findLastIndex((r) => keyOf(r) === m.lastKey);
+    if (m.full || m.lastKey === null || at === -1) {
       const shown = rows.slice(-DRAW).reverse();       // newest first
       tbody.replaceChildren(...shown.map(rowEl));
-      setText(count, `Showing ${shown.length} of ${rows.length}${m.rows.length >= KEEP ? " (older rows are in the CSV)" : ""}`);
+    } else {
+      const fresh = rows.slice(at + 1);
+      if (fresh.length) {
+        tbody.prepend(...fresh.slice(-DRAW).reverse().map(rowEl));
+        while (tbody.children.length > DRAW) tbody.lastElementChild.remove();
+      }
     }
+    m.full = false;
+    m.lastKey = rows.length ? keyOf(rows[rows.length - 1]) : null;
+    setText(count, `Showing ${tbody.children.length} of ${rows.length}${m.rows.length >= KEEP ? " (older rows are in the CSV)" : ""}`);
   }
 
   function update() {

@@ -1,0 +1,23 @@
+[Unit]
+Description=SFM gateway (Rig Map web interface, 127.0.0.1 only)
+Documentation=file://@WORKDIR@/deploy/README.md
+After=sfm-engine.service
+# Wants, not Requires: the gateway keeps running (and shows "engine not running")
+# if the engine restarts, and reconnects by itself.
+Wants=sfm-engine.service
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKDIR@
+ExecStart=@PYTHON@ -m base_station.gateway --port @PORT@ --engine-socket %t/sfm/engine.sock
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+@SYSTEM_USER@
+
+[Install]
+WantedBy=@WANTED_BY@

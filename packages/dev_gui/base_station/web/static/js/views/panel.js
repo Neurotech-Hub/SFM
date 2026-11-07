@@ -297,6 +297,9 @@ export function createPanel(ctx, rs, log) {
       h("div", { class: "sep" }),
       h("div", { class: "col tight" }, h("h3", {}, "Assign node ID"), ids));
     let seeded = false;
+    // A late answer from the engine must not replace something the operator has already typed.
+    const touched = new Set();
+    for (const [name, c] of [["factor", factorNum], ["factor", factorRange], ["hb", hbInput]]) c.addEventListener("input", () => touched.add(name));
     hbInput.addEventListener("input", () => refresh());
 
     return { el, update() {
@@ -306,7 +309,12 @@ export function createPanel(ctx, rs, log) {
         seeded = true;
         const [lo, hi] = defaults.presence_factor_range;
         for (const c of [factorNum, factorRange]) { setAttr(c, "min", lo); setAttr(c, "max", hi); }
-        ctx.command("get_dev_settings").then((r) => { if (r.ok) { factorNum.value = factorRange.value = r.presence_factor; hbInput.value = r.heartbeat_interval_s; refresh(); } });
+        ctx.command("get_dev_settings").then((r) => {
+          if (!r.ok) return;
+          if (!touched.has("factor")) factorNum.value = factorRange.value = r.presence_factor;
+          if (!touched.has("hb")) hbInput.value = r.heartbeat_interval_s;
+          refresh();
+        });
         setText(rangeHint, `Range ${lo} to ${hi}.`);
       }
       refresh();

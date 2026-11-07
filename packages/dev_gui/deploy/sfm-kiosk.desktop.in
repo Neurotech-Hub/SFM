@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=SFM Rig Map kiosk
+Comment=Keeps the Rig Map open full screen on the base station's monitor
+Exec=sh -c 'cd @WORKDIR@ && exec @PYTHON@ -m base_station.kiosk --url http://127.0.0.1:@PORT@/'
+Terminal=false
+X-GNOME-Autostart-enabled=true

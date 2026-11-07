@@ -119,6 +119,11 @@ engine.subscribe(({ up, state }) => {
     ui.set({ step: state.connected ? (state.session.running ? "run" : "experiment") : "connect" });
   }
   if (!state || !state.connected) lastNodeCount = -1;
+  // The engine is up but no longer on the bus (it restarted): the later steps mean nothing, so go back to Connect.
+  if (up && state && !state.connected && ui.get().step && ui.get().step !== "connect") {
+    toast("The engine is not connected to the bus. It may have restarted, so connect again.", "warning");
+    ui.set({ step: "connect" });
+  }
   render();
 });
 ui.subscribe(render);

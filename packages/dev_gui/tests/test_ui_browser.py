@@ -480,6 +480,8 @@ def test_arming_without_a_start_input_says_why(tmp_path) -> None:
 async def open_dev(p):
     await p.click_text("Developer", RUN_HEAD)
     await p.wait("document.querySelector('#dev-hb') && !document.querySelector('#dev-hb').closest('[hidden]')")
+    # The current values arrive a moment after the tab opens.
+    await p.wait("document.querySelector('#dev-hb').value !== '' && document.querySelector('#dev-factor').value !== ''")
 
 
 def test_heartbeat_uses_the_real_range_and_has_no_off_switch(tmp_path) -> None:
@@ -684,4 +686,74 @@ def test_a_bnc_input_can_be_renamed(tmp_path) -> None:
             await asyncio.sleep(0.05)
         assert rig.engine._bnc_in1_cfg.label == "Camera frame clock"
         await p.wait("document.querySelector('[aria-label=\"BNC input 0\"] .label').textContent === 'Camera frame clock'")
+    run_ui(body, tmp_path)
+
+
+def test_an_engine_that_lost_the_bus_sends_the_page_back_to_connect(tmp_path) -> None:
+    async def body(rig, p):
+        await go_run(rig, p)
+        # The engine restarted and is not connected to the bus any more.
+        await rig.on_engine(lambda e: (setattr(e, "_can", None), setattr(e, "_registry", None)))
+        await p.wait("document.querySelector('.step[aria-current=step]').textContent.includes('Connect')", 10)
+        await p.wait("[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('not connected to the bus'))")
+        assert await p.eval("[...document.querySelectorAll('.step')].map(b => b.disabled).join()") == "false,true,true"
+    run_ui(body, tmp_path)
+
+
+def test_new_log_rows_are_added_without_rebuilding_the_ones_already_drawn(tmp_path) -> None:
+    async def body(rig, p):
+        await go_run(rig, p)
+        from base_station.log_manager import LogEntry
+        import time as _t
+
+        def add(engine, names):
+            for n in names:
+                engine._log.add(LogEntry(timestamp=_t.time(), direction="RX", node_id=1, frame_type="EVENT",
+                                         event_name=n, raw_id=1, raw_data=b""))
+        await p.eval("document.querySelector('details.logbox').open = true")
+        await rig.on_engine(lambda e: add(e, ["first", "second"]))
+        await p.wait("document.querySelector('table.log tbody tr td:nth-child(5)').textContent === 'second'")
+        # Tag the rows that are on screen, then add more.
+        await p.eval("[...document.querySelectorAll('table.log tbody tr')].forEach(tr => { tr.dataset.mine = '1'; })")
+        await rig.on_engine(lambda e: add(e, ["third", "fourth"]))
+        await p.wait("document.querySelector('table.log tbody tr td:nth-child(5)').textContent === 'fourth'")
+        order = await p.eval("[...document.querySelectorAll('table.log tbody tr')].map(tr => tr.children[4].textContent + (tr.dataset.mine ? '*' : ''))")
+        top4 = [x for x in order if x.rstrip('*') in ("first", "second", "third", "fourth")]
+        assert top4 == ["fourth", "third", "second*", "first*"], f"older rows must be the same elements: {top4}"
+    run_ui(body, tmp_path)
+
+
+def test_the_log_window_is_trimmed_at_the_bottom_as_rows_arrive(tmp_path) -> None:
+    async def body(rig, p):
+        await go_run(rig, p)
+        from base_station.log_manager import LogEntry
+        import time as _t
+
+        def burst(engine, start, n):
+            for i in range(start, start + n):
+                engine._log.add(LogEntry(timestamp=_t.time(), direction="RX", node_id=1, frame_type="EVENT",
+                                         event_name=f"row {i}", raw_id=1, raw_data=b""))
+        await p.eval("document.querySelector('details.logbox').open = true")
+        for start in (0, 150, 300):
+            await rig.on_engine(lambda e, s=start: burst(e, s, 150))
+            await p.wait(f"document.querySelector('table.log tbody tr td:nth-child(5)').textContent === 'row {start + 149}'", 10)
+        assert await p.eval("document.querySelectorAll('table.log tbody tr').length") == 200
+        newest, oldest = await p.eval("(() => { const t = [...document.querySelectorAll('table.log tbody tr')]; return [t[0].children[4].textContent, t[t.length-1].children[4].textContent]; })()")
+        assert newest == "row 449" and oldest == "row 250", (newest, oldest)
+    run_ui(body, tmp_path)
+
+
+def test_a_late_answer_does_not_overwrite_what_the_operator_typed(tmp_path) -> None:
+    async def body(rig, p):
+        await go_run(rig, p)
+        # Type into the heartbeat field the moment the tab opens, before the engine's values arrive.
+        await p.eval("""(() => {
+            const real = window.fetch;
+            window.fetch = (...a) => String(a[0]).endsWith('/get_dev_settings') ? new Promise((ok) => setTimeout(() => ok(real(...a)), 800)) : real(...a);
+        })()""")
+        await p.click_text("Developer", RUN_HEAD)
+        await p.wait("document.querySelector('#dev-hb') && !document.querySelector('#dev-hb').closest('[hidden]')")
+        await p.fill("#dev-hb", "7")
+        await asyncio.sleep(1.5)                       # the delayed answer has now arrived
+        assert await p.eval("document.querySelector('#dev-hb').value") == "7"
     run_ui(body, tmp_path)

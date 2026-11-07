@@ -1,0 +1,32 @@
+[Unit]
+Description=SFM base-station engine (CAN bus, BNC lines, experiments, log)
+Documentation=file://@WORKDIR@/deploy/README.md
+# The engine and the gateway are separate on purpose: restarting either one must not
+# stop the other, and a browser that closes or crashes must never stop a session.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKDIR@
+ExecStart=@PYTHON@ -m base_station.service --socket %t/sfm/engine.sock
+# A crash comes back by itself. A clean stop (systemctl stop) does not.
+Restart=on-failure
+RestartSec=3
+# SIGTERM lets the engine stop the session and close the CSV files properly.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+RuntimeDirectory=sfm
+RuntimeDirectoryPreserve=restart
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+@SYSTEM_USER@
+# Real-time scheduling. Leave these off unless the BNC timing bench (bench/README.md)
+# shows the engine needs them, then measure again after turning them on.
+#CPUSchedulingPolicy=fifo
+#CPUSchedulingPriority=50
+#CPUAffinity=3
+
+[Install]
+WantedBy=@WANTED_BY@
