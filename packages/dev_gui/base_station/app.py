@@ -16,6 +16,7 @@ repainted through the engine's ``_refresh_*`` hooks.
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -35,6 +36,7 @@ from .protocol import (
     PRESENCE_FACTOR_MIN,
     PRESENCE_FACTOR_MAX,
 )
+from .process_lock import AlreadyRunning, ProcessLock
 from .engine import (
     BNC_IN_ACTIONS,
     COMMAND_PURPOSE,
@@ -1507,5 +1509,14 @@ class SFMApp(BaseStationEngine):
 # ---------------------------------------------------------------------------
 
 def main(args: argparse.Namespace) -> None:
-    app = SFMApp(args)
-    app.run()
+    # The engine service and this app both open the CAN bus and the BNC lines.
+    try:
+        lock = ProcessLock(name="dearpygui-gui").acquire()
+    except AlreadyRunning as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        app = SFMApp(args)
+        app.run()
+    finally:
+        lock.release()

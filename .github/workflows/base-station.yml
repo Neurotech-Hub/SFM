@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e packages/sfm-analysis pytest python-can
+      - run: pip install -e packages/sfm-analysis pytest python-can aiohttp
       - name: syntax-check everything, including the GUI modules we cannot import
         run: python -m compileall -q packages/dev_gui/base_station packages/dev_gui/*.py
       - name: run the hardware-free base-station tests
@@ -49,4 +49,8 @@ jobs:
             tests/test_two_armed_bandit.py tests/test_engine.py \
             tests/test_io_manager.py tests/test_bnc_input.py \
             tests/test_bnc_output.py tests/test_bnc_settings.py \
-            tests/test_bench_stats.py
+            tests/test_bench_stats.py tests/test_troubleshooting.py \
+            tests/test_host.py tests/test_commands.py \
+            tests/test_experiment_form.py tests/test_process_lock.py \
+            tests/test_service.py tests/test_gateway.py \
+            tests/test_node_layout.py tests/test_gui_settings.py tests/test_ui_browser.py

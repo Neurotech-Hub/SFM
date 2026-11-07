@@ -32,6 +32,12 @@ DEFAULT_OFFLINE_TIMEOUT_S: float = (
 )
 
 
+# What a node can be told: SetConfig 0x05 sub-type 0x01 carries a uint16 in
+# milliseconds. There is no "off" state; the firmware always sends heartbeats.
+HEARTBEAT_MIN_S: float = 0.1
+HEARTBEAT_MAX_S: float = 65.535
+
+
 def offline_timeout_for_heartbeat(hb_interval_s: float) -> float:
     """Seconds without a heartbeat before a node is considered offline."""
     return max(float(hb_interval_s), 0.1) * HEARTBEAT_OFFLINE_MULTIPLIER

@@ -116,6 +116,7 @@ class LogEntry:
     trial: int = 0                  # Experiment trial number at the time this row was written (0 = none)
     source: str = "CAN"             # "CAN", "EXP", "BNC", "SYS"
     fields: Dict[str, Any] = field(default_factory=dict)  # Structured payload (e.g. experiment log fields)
+    seq: int = 0                    # Display-ring order, set by LogManager.add. Never written to the CSV.
 
     @property
     def timestamp_str(self) -> str:
@@ -192,6 +193,9 @@ class LogManager:
 
         # Bumped when the display ring changes. The GUI paints on change.
         self._display_generation: int = 0
+        # Number of the newest display-ring row (heartbeats are not numbered).
+        # Never reset, so a client can ask for "rows after N" across a clear().
+        self._row_seq: int = 0
         self._recent_heartbeats: Deque[LogEntry] = deque(maxlen=_RECENT_HEARTBEATS)
         self._rows_written: int = 0
         self._write_error: Optional[BaseException] = None
@@ -230,6 +234,8 @@ class LogManager:
         if which == "hb":
             self._recent_heartbeats.append(entry)
         else:
+            self._row_seq += 1
+            entry.seq = self._row_seq
             self._buffer.append(entry)
             self._display_generation += 1
         self._pending.put(("row", which, self._entry_to_row(entry)))
@@ -270,6 +276,39 @@ class LogManager:
                 continue
             result.append(entry)
         return result
+
+    def rows_after(
+        self,
+        seq: int,
+        limit: int = 200,
+        node_id: Optional[int] = None,
+        frame_type: Optional[str] = None,
+    ) -> List[LogEntry]:
+        """
+        Display-ring rows numbered above ``seq``, oldest-first, at most ``limit``.
+
+        A client keeps the ``seq`` of the last row it has and asks again. When
+        more than ``limit`` rows are waiting, the oldest ``limit`` come back,
+        so repeated calls walk forward without skipping. Rows that have left
+        the ring are gone. The CSV still has them.
+        """
+        out: List[LogEntry] = []
+        for entry in self._buffer:
+            if entry.seq <= seq:
+                continue
+            if node_id is not None and entry.node_id != node_id:
+                continue
+            if frame_type is not None and entry.frame_type != frame_type:
+                continue
+            out.append(entry)
+            if len(out) >= limit:
+                break
+        return out
+
+    @property
+    def last_seq(self) -> int:
+        """Number of the newest display-ring row (0 before the first)."""
+        return self._row_seq
 
     def all_entries(self) -> List[LogEntry]:
         """Display-ring entries, oldest-first. Heartbeats are not included."""

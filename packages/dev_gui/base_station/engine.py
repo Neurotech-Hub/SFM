@@ -44,7 +44,14 @@ from .io_manager import (
 from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .dev_settings import DevSettings
-from .node_registry import NodeRegistry, offline_timeout_for_heartbeat
+from .gui_settings import GuiSettings
+from .node_layout import NodeLayout
+from .node_registry import (
+    HEARTBEAT_MAX_S,
+    HEARTBEAT_MIN_S,
+    NodeRegistry,
+    offline_timeout_for_heartbeat,
+)
 from .experiment import ExperimentController, load_experiment_defs
 from .experiment.schema import DEFAULT_EXPERIMENTS_DIR, ExperimentDef, build_experiment
 from .pellet_ledger import NodeTally, PelletLedger
@@ -255,6 +262,10 @@ class BaseStationEngine:
         self._armed: Optional[_ArmedStart] = None
         # The latest message meant for the operator: (level, text).
         self.last_notice: Optional[Tuple[str, str]] = None
+        # Counts notices, so a front-end can tell a repeat of the same text from no news.
+        self.notice_seq = 0
+        # What the running (or last) session was set up with; see commands._remember_setup.
+        self.session_setup: Optional[Dict[str, Any]] = None
 
         # Wall minus monotonic clock. Both move together while the clock is
         # slewed; a jump means the wall clock was stepped (NTP, manual set).
@@ -297,6 +308,11 @@ class BaseStationEngine:
         # Where the BNC configuration is saved. None until a front-end asks for
         # persistence with ``enable_bnc_persistence``.
         self._bnc_settings: Optional[BncSettings] = None
+        # Where the operator put each node on the map, by MAC. None until a
+        # front-end asks for it with ``enable_node_layout``.
+        self._layout: Optional[NodeLayout] = None
+        # The operator's last Connect-step choices. Loaded the first time it is asked for.
+        self._gui_settings: Optional[GuiSettings] = None
         # Pulses the receive thread asked for and the pulse thread refused.
         self._pulse_refusals: "queue.Queue[Tuple[str, int, float]]" = queue.Queue()
         self._next_periodic: Optional[float] = None
@@ -1008,6 +1024,7 @@ class BaseStationEngine:
         self._notice(level, f"BNC start rejected ({which}): {reason}.")
 
     def _notice(self, level: str, text: str) -> None:
+        self.notice_seq += 1
         self.last_notice = (level, text)
         self._ui_notice(level, text)
 
@@ -1235,6 +1252,20 @@ class BaseStationEngine:
                 source="BNC", fields={"skipped": skipped},
             ))
         return skipped
+
+    def gui_settings(self) -> GuiSettings:
+        """The remembered Connect-step values, loaded on first use."""
+        if self._gui_settings is None:
+            self._gui_settings = GuiSettings()
+            if self._gui_settings.load_problem:
+                self._notice("warning", self._gui_settings.load_problem)
+        return self._gui_settings
+
+    def enable_node_layout(self, path: Optional[str] = None) -> None:
+        """Load the saved node positions and keep them for ``state``. See ``node_layout.py``."""
+        self._layout = NodeLayout(path)
+        if self._layout.load_problem:
+            self._notice("warning", self._layout.load_problem)
 
     def _save_bnc_settings(self) -> None:
         if self._bnc_settings is None:
@@ -2006,7 +2037,7 @@ class BaseStationEngine:
 
     def _sync_heartbeat_policy(
         self,
-        seconds: Optional[int] = None,
+        seconds: Optional[float] = None,
         *,
         broadcast: bool = True,
     ) -> None:
@@ -2017,9 +2048,11 @@ class BaseStationEngine:
         """
         if seconds is None:
             seconds = self._read_hb_interval_input_s()
-        else:
-            seconds = max(1, int(seconds))
-        self._hb_interval_s = float(seconds)
+        # What nodes can be told is 100 ms to 65.535 s. Keep the interval the
+        # offline timers use equal to what is sent, so a larger request can't
+        # leave the timers waiting for beats the nodes will never skip.
+        interval_ms = int(round(min(max(float(seconds), HEARTBEAT_MIN_S), HEARTBEAT_MAX_S) * 1000))
+        self._hb_interval_s = interval_ms / 1000.0
         timeout_s = offline_timeout_for_heartbeat(self._hb_interval_s)
         if self._registry is not None:
             self._registry.set_offline_timeout(timeout_s)
@@ -2027,7 +2060,7 @@ class BaseStationEngine:
         if runner is not None:
             runner.normalizer.set_online_timeout(timeout_s)
         if broadcast and self._can is not None:
-            payload = build_setconfig_heartbeat(seconds * 1000)
+            payload = build_setconfig_heartbeat(interval_ms)
             self._broadcast(CanCmd.SetConfig, payload)
             self._hb_last_push_ts = time.time()
 

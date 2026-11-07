@@ -4,5 +4,8 @@ python-can>=4.4
 RPi.GPIO>=0.7
 gpiod>=2.1
 
+# Web gateway for the Rig Map interface (packages/dev_gui/base_station/gateway.py).
+aiohttp>=3.9
+
 # Follow the published PyPI package on this base-station host.
 sfm-analysis>=0.1.2

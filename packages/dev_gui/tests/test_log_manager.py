@@ -461,3 +461,41 @@ def test_resume_scan_subtracts_session_resumed_offsets(tmp_path):
     assert resume["node_taken"] == {1: 5}
     assert resume["pellets"] == 6
     assert resume["from_run"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Row numbers ("rows after N")
+# ---------------------------------------------------------------------------
+
+def _numbered(text, frame_type="EVENT", node=1):
+    return LogEntry(timestamp=1.0, direction="RX", node_id=node, frame_type=frame_type,
+                    event_name=text, raw_id=0, raw_data=b"")
+
+
+def test_display_rows_are_numbered_and_heartbeats_are_not(tmp_path):
+    lm = LogManager(log_dir=str(tmp_path), auto_save=False)
+    lm.add(_numbered("a"))
+    lm.add(_numbered("hb", frame_type="HEARTBEAT"))
+    lm.add(_numbered("b"))
+    assert [e.seq for e in lm.all_entries()] == [1, 2]
+    assert lm.last_seq == 2
+    lm.close()
+
+
+def test_rows_after_respects_limit_and_ring_size(tmp_path):
+    lm = LogManager(max_entries=3, log_dir=str(tmp_path), auto_save=False)
+    for i in range(6):
+        lm.add(_numbered(f"r{i}"))
+    # Ring holds rows 4..6; asking from 0 returns what is left, oldest first.
+    assert [e.seq for e in lm.rows_after(0)] == [4, 5, 6]
+    assert [e.seq for e in lm.rows_after(4, limit=1)] == [5]
+    assert lm.rows_after(6) == []
+    lm.close()
+
+
+def test_row_number_is_not_in_the_csv(tmp_path):
+    lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+    lm.add(_numbered("a"))
+    lm.close()
+    header = lm.csv_path.read_text(encoding="utf-8").splitlines()[0]
+    assert "seq" not in header
