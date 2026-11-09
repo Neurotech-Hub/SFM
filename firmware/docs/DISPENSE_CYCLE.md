@@ -83,7 +83,8 @@ always knows whether the plate is occupied — before a dispense, during travel,
 
 **Occupancy check.** On `Dispense` the node reads the pellet sensor first. If a pellet is already on the
 plate it does not run the feed wheel: it reports `FeedSkipped`. If the plate is already at presentation
-height it stays `Loaded` with no motion. Anywhere else it homes — the same seek, approach, and grab
+height it stays `Loaded` with no motion, and `FeedSkipped` carries `presented = 1` — it is the only event
+for that cycle, so it doubles as the completion (no `Loaded` follows). Otherwise `presented = 0`. Anywhere else it homes — the same seek, approach, and grab
 descent, with M1 skipped — and then raises `kDefaultRaiseSteps` from the drop position. A node never
 stacks a second pellet on an occupied plate, and it never raises from an unmeasured height.
 
@@ -158,8 +159,14 @@ spring return guarantees each bout is a distinct edge.
 fault: the node keeps operating.
 
 **Taken.** When the pellet sensor clears for `kPelletTakenConfirmMs`, the pellet is gone. The node reports
-`PelletTaken` and returns to `Idle` — the cycle is complete. The confirm window rejects momentary sensor
-flicker as the mouse reaches past the beam.
+`PelletTaken` and returns to `Idle` — the cycle is complete. The confirm window (1 s) rejects momentary
+sensor flicker and a mouse nudging the pellet out of the beam.
+
+**Returned.** If, after a take, the pellet sensor is blocked again for `kPelletReturnConfirmMs` while the plate
+is still at the top, the mouse put the pellet back (nothing else can feed an `Idle` plate). The node reports
+`PelletReturned` and goes back to `Loaded`; the real take later reports `PelletTaken` again without advancing
+`takenCount_`. The watch ends on the next `Dispense`/`DispenseNoFeed`, `Recover`, a fault, or the plate
+leaving the top.
 
 A node never reloads on its own. Deciding when the next `Dispense` goes out belongs to the base station or the
 running experiment.
@@ -245,7 +252,7 @@ communication wire every node is connected to). Node → base on CAN ID
 | `0x09` | `Raising`         | count LE16                 | Phase entered: lifting the plate                                        |
 | `0x0A` | `DomeOpenWarning` | count LE16                 | The dome has been open for `kDomeOpenWarnMs`                            |
 | `0x0B` | `PelletTaken`     | count LE16, dome open      | The pellet left the plate; retrieval confirmed                          |
-| `0x0C` | `FeedSkipped`     | count LE16                 | A dispense arrived with the plate occupied; the feed wheel was skipped. The plate still homes unless it is already at the top |
+| `0x0C` | `FeedSkipped`     | count LE16, presented      | A dispense arrived with the plate occupied; the feed wheel was skipped. The plate still homes unless it is already at the top |
 | `0x0D` | `Seeking`         | count LE16                 | Conditional phase: clear load sensor (or step cap) before `Lowering`    |
 | `0x0E` | `NoFeedPresented` | count LE16 (unchanged)     | A no-feed raise finished; empty plate at the top. `count` does NOT increment |
 | `0x0F` | `Dwelling`        | count LE16                 | Phase entered: holding at the drop position, M1 idle (no-feed cycle)   |
@@ -255,6 +262,7 @@ communication wire every node is connected to). Node → base on CAN ID
 | `0x13` | `Retracting`      | count LE16                 | M2 returning to the drop position |
 | `0x14` | `PelletReload`    | count LE16, reason, attempt | Warning: pellet missing; M1 is loading again. Reason 1 = lost during raise, 2 = missing after retract. `attempt` is 1-based and stops at 3 |
 | `0x15` | `FirmwareInfo`    | major, minor, patch        | Firmware version. Sent when the node is enabled and after every `Pong` |
+| `0x16` | `PelletReturned`  | count LE16                 | The pellet reappeared on the raised plate after `PelletTaken`; that take was false. Node is `Loaded` again |
 
 
 `count` is the node's running total of `Loaded` milestones — `NoFeedPresented` deliberately does not advance

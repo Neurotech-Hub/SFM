@@ -425,3 +425,131 @@ def test_pellet_lost_is_a_normal_fault_with_no_auto_recovery() -> None:
     runner.step(now=30.0)
     assert len(_dispense_cmds(runner)) + len(_no_feed_cmds(runner)) == dispensed_before
     assert runner.ctx.trial == 1
+
+
+# ---------------------------------------------------------------------------
+# Regressions from session 110426_1.2F
+# ---------------------------------------------------------------------------
+
+
+def test_take_before_slow_arm_presents_still_ends_the_trial() -> None:
+    """Trial 121: the empty arm retracted (mouse nudged its dome mid-raise), so
+    it presented ~4 s late. The mouse took the fed pellet in between. The take
+    arrived while the script was still in the arms_presented gate; the old
+    wait_for("pellet_taken") only saw takes after it was armed and hung
+    forever with both nodes Idle."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50,
+                       next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    runner.inject([
+        NodeEvent(EventKind.RAISING, node_id=1, timestamp=1.0),
+        NodeEvent(EventKind.RAISING, node_id=2, timestamp=1.0),
+        NodeEvent(EventKind.RETRACTING, node_id=2, timestamp=1.5),
+        NodeEvent(EventKind.LOADED, node_id=1, timestamp=3.0),
+    ])
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=5.4))
+    assert [e for e in runner.ctx.log_entries if e.name == "bandit_trial_end"] == []
+
+    runner.inject([
+        NodeEvent(EventKind.RAISING, node_id=2, timestamp=5.5),
+        NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=6.7),
+    ])
+    ended = [e for e in runner.ctx.log_entries if e.name == "bandit_trial_end"]
+    assert len(ended) == 1
+    assert ended[0].fields.get("taken_node") == 1
+    assert ended[0].fields.get("valid") == 1
+
+    runner.step(now=7.0)
+    assert runner.ctx.trial == 2
+
+
+def test_take_latch_does_not_leak_into_the_next_trial() -> None:
+    """A take from trial N must not end trial N+1 the moment it presents."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50,
+                       next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+    _present_both_arms(runner, fed=1, empty=2, ts=1.0)
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0))
+    runner.step(now=2.2)
+    assert runner.ctx.trial == 2
+
+    _present_both_arms(runner, fed=1, empty=2, ts=3.0)
+    assert len([e for e in runner.ctx.log_entries if e.name == "bandit_trial_end"]) == 1
+
+
+def test_feed_skipped_already_presented_completes_the_sync_gate() -> None:
+    """Trial 1: leftover pellets on both raised plates. Firmware answers
+    FeedSkipped and goes straight to Loaded with no Loaded event; with
+    presented=1 (fw 1.7) the gate resolves instead of timing out at 90 s."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    runner.inject([
+        NodeEvent(EventKind.FEED_SKIPPED, node_id=2, timestamp=0.1, data={"presented": True}),
+        NodeEvent(EventKind.FEED_SKIPPED, node_id=1, timestamp=0.1, data={"presented": True}),
+    ])
+    presented = {e.node_id: e.fields for e in runner.ctx.log_entries if e.name == "arm_presented"}
+    assert presented[1]["presented"] == "pellet"
+    # The "empty" arm presented a real pellet: flagged, not silently counted empty.
+    assert any(
+        e.name == "bandit_trial_invalid" and e.fields.get("invalid_reason") == "both_arms_baited"
+        for e in runner.ctx.log_entries
+    )
+    assert not any(e.name == "script_timeout" for e in runner.ctx.log_entries)
+
+
+def test_feed_skipped_that_still_has_to_raise_waits_for_loaded() -> None:
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+
+    runner.inject([
+        NodeEvent(EventKind.FEED_SKIPPED, node_id=1, timestamp=0.1, data={"presented": False}),
+        NodeEvent(EventKind.SEEKING, node_id=1, timestamp=0.1),
+        NodeEvent(EventKind.NO_FEED_PRESENTED, node_id=2, timestamp=3.0),
+    ])
+    assert [e for e in runner.ctx.log_entries if e.name == "arm_presented"] == []
+    assert runner.ctx.is_dispensing(1)
+    runner.inject(NodeEvent(EventKind.LOADED, node_id=1, timestamp=4.0))
+    assert len([e for e in runner.ctx.log_entries if e.name == "arm_presented"]) == 2
+
+
+def test_pellet_returned_blocks_next_trial_until_real_take() -> None:
+    """Trials 51/57/96: the pellet came back after PelletTaken. Firmware 1.7
+    reports PelletReturned and goes back to Loaded; the next trial waits for
+    the real take."""
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50,
+                       next_trial_wait="fixed_delay", fixed_delay_s=0.1, seed=1)
+    runner = exp.make_runner()
+    runner.start(now=0.0)
+    _bring_online(runner, [1, 2])
+    _present_both_arms(runner, fed=1, empty=2, ts=1.0)
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=2.0))
+    runner.inject(NodeEvent(EventKind.PELLET_RETURNED, node_id=1, timestamp=2.05))
+    runner.step(now=3.0)
+    assert runner.ctx.trial == 1
+    assert runner.ctx.pellet_on_plate(1)
+    assert any(e.name == "plate_occupied_wait" for e in runner.ctx.log_entries)
+
+    runner.inject(NodeEvent(EventKind.PELLET_TAKEN, node_id=1, timestamp=10.0))
+    runner.step(now=10.2)
+    assert runner.ctx.trial == 2
+
+
+def test_session_start_requests_status_and_logs_macs() -> None:
+    exp = build_bandit(nodes=[1, 2], p_high=1.0, block_size=50, seed=1)
+    macs = {1: "AA:BB:CC:00:00:01"}
+    runner = exp.make_runner(mac_for=macs.get)
+    runner.start(now=0.0)
+
+    start = next(e for e in runner.ctx.log_entries if e.name == "session_start")
+    assert start.fields["macs"] == {"1": "AA:BB:CC:00:00:01", "2": "unknown"}
+    assert (0, CanCmd.ReqStatus, b"") in runner.ctx.commands_sent

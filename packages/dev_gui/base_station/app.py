@@ -1250,6 +1250,12 @@ class SFMApp:
                 return None
             return node.firmware_version
 
+        def _mac_for(node_id: int) -> Optional[str]:
+            node = self._registry.get(node_id) if self._registry is not None else None
+            if node is None or not node.mac:
+                return None
+            return format_mac(node.mac)
+
         ok = self._exp.start(
             exp_def,
             params=params,
@@ -1261,6 +1267,7 @@ class SFMApp:
             online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
             resume=resume if resume is not None and resume.from_run else None,
             firmware_for=_firmware_for,
+            mac_for=_mac_for,
         )
         if ok:
             # One ledger for the run: the experiment callbacks see the same
@@ -1604,7 +1611,14 @@ class SFMApp:
                             details = "InputChanged payload must contain input ID and state"
                     else:
                         fault_code = parse_fault_code(ev) if ev.event == CanEvent.Fault else None
-                        self._registry.update_from_event(node_id, ev.event, fault_code=fault_code)
+                        skip_ctx = (
+                            parse_event_context(ev)
+                            if ev.event == CanEvent.FeedSkipped else None
+                        )
+                        self._registry.update_from_event(
+                            node_id, ev.event, fault_code=fault_code,
+                            presented=(skip_ctx or {}).get("presented"),
+                        )
                         entry_name = CAN_EVENT_DISPLAY_NAME.get(ev.event, ev.event.name)
                         if ev.event == CanEvent.Fault:
                             code = fault_code.name if fault_code is not None else "unknown"
@@ -1702,6 +1716,9 @@ class SFMApp:
                                 if "dome_open" in ctx:
                                     details += f" dome_open={int(ctx['dome_open'])}"
                                     log_fields["dome_open"] = bool(ctx["dome_open"])
+                                if "presented" in ctx:
+                                    details += f" presented={int(ctx['presented'])}"
+                                    log_fields["presented"] = bool(ctx["presented"])
                                 if rec is not None and (rec.had_gap or rec.restarted):
                                     self._log_pellet_gap(node_id, entry_name, rec)
                         # Distinguish a real delivery from a no-feed (mimic)
@@ -1715,6 +1732,11 @@ class SFMApp:
                             details += " delivery=EMPTY — holding at drop position, M1 idle"
                         elif ev.event == CanEvent.Loaded:
                             details += " delivery=PELLET"
+                        elif ev.event == CanEvent.PelletReturned:
+                            details += (
+                                " warning — pellet back on the plate after Pellet Taken;"
+                                " that take was false, node is Loaded again"
+                            )
                     self._refresh_tile(node_id)
                     if not skip_log:
                         self._maybe_fire_bnc_out(entry_name)

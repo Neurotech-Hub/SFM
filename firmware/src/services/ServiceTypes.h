@@ -69,6 +69,7 @@ enum class DispenseEvent : uint8_t {
     FeedSkipped,      // Dispense with plate already occupied
     NoFeedPresented,  // no-feed raise complete; empty plate at the top (pelletCount NOT incremented)
     PelletReload,     // warning: pellet missing at the drop position; M1 is loading again
+    PelletReturned,   // pellet reappeared on the raised plate after PelletTaken → back to Loaded
 };
 
 // Why a PelletReload warning was emitted. Wire byte on CanEvent::PelletReload.
@@ -112,7 +113,9 @@ enum class CanEvent : uint8_t {
     Raising           = 0x09, // M2 raising plate
     DomeOpenWarning   = 0x0A, // dome open > kDomeOpenWarnMs
     PelletTaken       = 0x0B, // extra: count LE16 + dome_open
-    FeedSkipped       = 0x0C, // plate occupied on Dispense; lower/load skipped
+    FeedSkipped       = 0x0C, // plate occupied on Dispense; extra: count LE16 + presented
+                              // (1 = already at the top, now Loaded, no motion follows;
+                              //  0 = homing then raising, Loaded follows)
     Seeking           = 0x0D, // M2 clearing the load sensor before Lowering (clear or step cap)
     NoFeedPresented   = 0x0E, // no-feed raise complete; extra: count LE16 (NOT incremented)
     Dwelling          = 0x0F, // phase: holding at the drop position, M1 idle
@@ -122,6 +125,7 @@ enum class CanEvent : uint8_t {
     Retracting        = 0x13, // phase: M2 returning to the drop position
     PelletReload      = 0x14, // extra: count LE16, PelletReloadReason(1), attempt(1)
     FirmwareInfo      = 0x15, // extra: major(1), minor(1), patch(1)
+    PelletReturned    = 0x16, // pellet back on the raised plate after a PelletTaken; extra: count LE16 (pellets, NOT incremented)
 };
 
 // Input IDs carried by CanEvent::InputChanged.

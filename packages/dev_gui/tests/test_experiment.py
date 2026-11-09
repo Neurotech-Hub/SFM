@@ -1396,8 +1396,11 @@ def test_experiment_commands_appear_under_command_filter() -> None:
     ctrl.step(messages=[], now=0.0)  # let on_start's initial dispense flush through
 
     command_rows = [e for e in log.all_entries() if e.frame_type == "COMMAND"]
-    assert len(command_rows) == 1
-    row = command_rows[0]
+    # Session start broadcasts ReqStatus (fresh node state before trial 1),
+    # then on_start's initial dispense.
+    assert [e.event_name.split(" (")[0] for e in command_rows] == ["ReqStatus", "Dispense"]
+    assert command_rows[0].raw_id == 0x100
+    row = command_rows[1]
     assert row.event_name == "Dispense"
     assert row.node_id == 3
     assert row.raw_id == 0x103

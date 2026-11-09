@@ -201,6 +201,7 @@ class Experiment:
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
+        mac_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> "ExperimentRunner":
         """Build a runner for GUI hosting or synthetic testing."""
         return ExperimentRunner(
@@ -210,6 +211,7 @@ class Experiment:
             wire_bnc=wire_bnc,
             online_timeout_s=online_timeout_s,
             firmware_for=firmware_for,
+            mac_for=mac_for,
         )
 
 
@@ -229,11 +231,13 @@ class ExperimentRunner:
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
+        mac_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> None:
         self.experiment = experiment
         self.can = can
         self.io = io
         self._firmware_for = firmware_for
+        self._mac_for = mac_for
         self.ctx = ExperimentControl(
             nodes=experiment.nodes,
             can=can,
@@ -456,6 +460,11 @@ class ExperimentRunner:
             str(n): (self._firmware_for(n) if self._firmware_for is not None else None) or "unknown"
             for n in self.ctx.nodes
         }
+        # Hardware identity: which physical board was node N in this run.
+        macs = {
+            str(n): (self._mac_for(n) if self._mac_for is not None else None) or "unknown"
+            for n in self.ctx.nodes
+        }
         self.ctx.log(
             "session_start",
             experiment=self.experiment.name,
@@ -463,7 +472,13 @@ class ExperimentRunner:
             seed=self.ctx.seed,
             utc_offset_s=utc_offset_s.total_seconds() if utc_offset_s is not None else None,
             firmware=firmware,
+            macs=macs,
         )
+        # Fresh state from every node before the first trial: heartbeats are
+        # periodic (60 s in production), so without this the script would
+        # start on default sensor state — e.g. not know a pellet is already
+        # sitting on a plate from before the session.
+        self.ctx.request_status(0)
         if self.ctx.on_session_start is not None:
             try:
                 self.ctx.on_session_start()

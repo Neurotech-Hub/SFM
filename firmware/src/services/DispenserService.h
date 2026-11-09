@@ -35,7 +35,12 @@ constexpr uint32_t kDefaultRaiseTimeoutMs  = 8000;   // M2 raise (step target)
 
 // Delivery / jam / warning timers
 constexpr uint32_t kPelletLoadConfirmMs    = 2000;   // pellet sensor held during Loading → OnPlate
-constexpr uint32_t kPelletTakenConfirmMs   = 200;    // pellet sensor clear → PelletTaken
+// Long enough that a mouse nudging the pellet out of the beam (it then rolls
+// back) is not a take. 200 ms produced false takes; see PelletReturned below.
+constexpr uint32_t kPelletTakenConfirmMs   = 1000;   // pellet sensor clear while Loaded → PelletTaken
+// After a take, a pellet held in the beam this long on the raised plate is the
+// same pellet put back (nothing else can feed it while Idle) → PelletReturned.
+constexpr uint32_t kPelletReturnConfirmMs  = 500;
 constexpr uint32_t kPelletLostMs           = 500;    // pellet sensor clear during raise → retract / reload
 constexpr uint32_t kLoadClearOnRaiseMs     = 5000;   // load sensor must clear after raise start
 constexpr uint32_t kDomeOpenWarnMs         = 30000;  // dome open → DomeOpenWarning
@@ -88,6 +93,9 @@ public:
     // Context latched with the last DomeOpened / PelletTaken event.
     bool lastDomeOpenedWithPellet() const { return lastDomeOpenedWithPellet_; }
     bool lastTakenWithDomeOpen() const { return lastTakenWithDomeOpen_; }
+    // Latched with the last FeedSkipped: true when the occupied plate was
+    // already at the top and is presenting now (no motion, no Loaded follows).
+    bool lastSkipPresented() const { return lastSkipPresented_; }
 
     // Sensors: pellet/load-position beam break = pin LOW; dome open = pin HIGH.
     bool pelletOnPlate() const { return pg1State_; }
@@ -187,6 +195,14 @@ private:
     bool     domeWarnLatched_;
     bool     lastDomeOpenedWithPellet_;
     bool     lastTakenWithDomeOpen_;
+    bool     lastSkipPresented_;
+    // A take was reported for the pellet on this (raised) plate; if the pellet
+    // shows up again while Idle it is the same one put back → PelletReturned.
+    bool     takeMayReturn_;
+    // The pellet now on the plate already produced a PelletTaken once; its
+    // real take must not count again (takenCount_ stays monotonic, no double).
+    bool     pelletReturned_;
+    uint32_t returnSeenSinceMs_;  // pellet sensor held timer while Idle after a take
 
     float    motorSpeed_;
     float    feedSpeedScale_;
@@ -223,6 +239,8 @@ private:
     void startRaise();
     void startRetract(bool pelletLost);
     bool domeSettled() const;
+    void armReturnWatch();
+    void updateReturnedPellet();
     bool eventQueueHasRoom() const;
     long raiseCommitSteps() const;
     void startFeed();
