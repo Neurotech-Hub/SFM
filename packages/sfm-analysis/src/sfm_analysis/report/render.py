@@ -18,6 +18,14 @@ has a print-only static fallback (session_raster_section, gated by
 PAGE_CSS's .print-only). There is exactly one HTML document per report;
 nothing here ever links out to a sibling file. test_report_render.py
 asserts all of this on every build.
+
+When a rendered section sets ``uses_time_axis``, the document also gets
+two radio inputs immediately before ``<div class="report">`` and a sticky
+toolbar inside it. Labels switch every time chart between relative and
+rig-local absolute time through CSS sibling selectors alone (style.py);
+the radios are not a script, so a report built with
+``include_explorer=False`` stays script-free. The checked radio is what
+prints.
 """
 
 from __future__ import annotations
@@ -116,6 +124,7 @@ def render_report_html(
     css_chunks: List[str] = []
     js_chunks: List[str] = []
     seen_css, seen_js = set(), set()
+    uses_time_axis = False
     for spec in specs:
         if not spec.enabled:
             continue
@@ -124,6 +133,7 @@ def render_report_html(
         result = run_section(spec, ctx)
         if result is None or result.empty:
             continue
+        uses_time_axis = uses_time_axis or result.uses_time_axis
         break_style = ' style="page-break-before: always"' if result.page_break_before else ""
         section_html_parts.append(
             f'<div class="section"{break_style}><h2>{_html.escape(result.title)}</h2>{result.html}</div>'
@@ -142,6 +152,26 @@ def render_report_html(
 
     script_block = f"<script>{''.join(js_chunks)}</script>" if js_chunks else ""
 
+    # Radios precede .report so style.py's sibling selectors
+    # (#sfm-tf-abs:checked ~ .report ...) can reach every chart. The
+    # toolbar is inside .report, and it is a <label>, not a script.
+    if uses_time_axis:
+        time_radios = (
+            '<input type="radio" class="sfm-tf-input" name="sfm-tf" '
+            'id="sfm-tf-rel" checked>'
+            '<input type="radio" class="sfm-tf-input" name="sfm-tf" id="sfm-tf-abs">'
+        )
+        time_toggle = (
+            '<div class="time-toggle no-print">'
+            '<span class="time-toggle-label">Time axis</span>'
+            '<label for="sfm-tf-rel">Relative</label>'
+            '<label for="sfm-tf-abs">Absolute (rig clock)</label>'
+            '</div>'
+        )
+    else:
+        time_radios = ""
+        time_toggle = ""
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -151,7 +181,9 @@ def render_report_html(
 </head>
 <body>
 {charts.defs()}
+{time_radios}
 <div class="report">
+  {time_toggle}
   <h1>{_html.escape(doc_title)}</h1>
   <p class="note">Sessions: {_html.escape(session_list)} · Design: {_html.escape(design.label)}</p>
   {_kpi_band(runs, metrics)}

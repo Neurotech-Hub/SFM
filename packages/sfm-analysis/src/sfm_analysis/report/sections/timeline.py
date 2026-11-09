@@ -32,6 +32,7 @@ from ..timeline_data import (
     panel_marks_spans as _panel_marks_spans,
 )
 from ..schema import SectionContext, SectionResult
+from ..time_axis import TimeBase
 
 # The ref this module's interactive section registers under (SECTIONS
 # below) -- session_raster_section checks ctx.active_refs against this
@@ -40,19 +41,20 @@ from ..schema import SectionContext, SectionResult
 EXPLORER_REF = "timeline.explorer"
 
 
-def _panel(run, m, nodes: List[int], w0: float, w1: float, *, tall: bool) -> str:
+def _panel(run, m, nodes: List[int], w0: float, w1: float, *, tall: bool, base: TimeBase) -> str:
     lanes = _build_lanes(nodes)
-    frame = Frame(h=max(140, 30 + len(lanes) * (18 if tall else 12)))
+    # time_frame() adds the bottom margin the two-line labels need, and
+    # keeps the lane stack the same height it had before.
+    frame = Frame(h=max(140, 30 + len(lanes) * (18 if tall else 12))).time_frame()
     x = charts.linear(w0, w1, frame.px0, frame.px1)
     spans_data, marks_data = _panel_marks_spans(run, m, nodes, w0, w1)
 
     body = []
     body.append(f'<line class="axis-line" x1="{frame.px0:.1f}" y1="{frame.py1:.1f}" '
                f'x2="{frame.px1:.1f}" y2="{frame.py1:.1f}"/>')
-    for t, label in charts.time_ticks(w1 - w0, target=8):
-        px = x(w0 + t)
-        body.append(f'<line class="gridline" x1="{px:.1f}" y1="{frame.py0:.1f}" x2="{px:.1f}" y2="{frame.py1:.1f}"/>')
-        body.append(f'<text x="{px:.1f}" y="{frame.py1 + 14:.1f}" text-anchor="middle">{escape_text(label)}</text>')
+    # Labels are session time (from t=0), not time-since-w0, so a detail
+    # panel covering 2h–4h does not restart its axis at 0:00.
+    body.append(charts.time_x_groups(frame, x, base, w0, w1))
 
     lane_h = 12 if tall else 8
     body.append(charts.spans(frame, x, lanes, spans_data, lane_h=lane_h))
@@ -83,6 +85,7 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
     window_s_opt = ctx.opts.get("window_s")
     min_window_s = float(ctx.opts.get("min_window_s", 600.0))
     figs = []
+    has_clock = False
 
     for run, m in zip(ctx.runs, ctx.metrics):
         nodes = sorted(set(run.nodes) | {r.node_id for r in run.rows if r.node_id != 0})
@@ -90,9 +93,11 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
             continue
         duration = max(run.duration_s, 1.0)
         window_s = float(window_s_opt) if window_s_opt is not None else max(min_window_s, duration / 12.0)
+        base = TimeBase.from_run(run)
+        has_clock = has_clock or base.wall(0) is not None
         heading = f"<h3>{escape_text(run.run_label)}</h3>" if len(ctx.runs) > 1 else ""
 
-        overview = _panel(run, m, nodes, 0.0, duration, tall=False)
+        overview = _panel(run, m, nodes, 0.0, duration, tall=False, base=base)
         span_legend = charts.legend(_SPAN_LEGEND, prefix="Bands:")
         mark_legend = charts.legend_glyphs(
             [(label, glyph, key) for glyph, key, label in _SESSION_MARK_STYLES.values()]
@@ -104,16 +109,16 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
         # whole rather than repeated per panel or trailing after them.
         figs.append(f'{heading}{span_legend}{mark_legend}')
         figs.append(f'<figure><figcaption>Full-session overview '
-                    f'({_fmt_duration(duration)}).</figcaption>{overview}</figure>')
+                    f'({charts.dual_range(base, 0.0, duration)}).</figcaption>{overview}</figure>')
 
         if duration > window_s * 1.25:
             n_windows = int(duration // window_s) + (1 if duration % window_s else 0)
             for i in range(n_windows):
                 w0 = i * window_s
                 w1 = min(duration, (i + 1) * window_s)
-                panel = _panel(run, m, nodes, w0, w1, tall=True)
+                panel = _panel(run, m, nodes, w0, w1, tall=True, base=base)
                 figs.append(f'<figure><figcaption>Detail: '
-                            f'{_fmt_duration(w0)}–{_fmt_duration(w1)}</figcaption>{panel}</figure>')
+                            f'{charts.dual_range(base, w0, w1)}</figcaption>{panel}</figure>')
 
     if not figs:
         return SectionResult(section_id="timeline.session_raster", title="Session Timeline", html="", empty=True)
@@ -134,18 +139,18 @@ def session_raster_section(ctx: SectionContext) -> Optional[SectionResult]:
         title=title,
         html=html,
         page_break_before=True,
+        uses_time_axis=has_clock,
     )
 
 
-def _fmt_duration(seconds: float) -> str:
-    seconds = max(0, int(round(seconds)))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}h {m:02d}m {s:02d}s"
-    if m:
-        return f"{m}m {s:02d}s"
-    return f"{s}s"
+def _actogram_tick_label(event_names: Sequence[str]) -> str:
+    """Short legend text for the events drawn as ticks."""
+    friendly = {
+        "Dome Opened": "dome opened",
+        "MousePresence Detected": "presence",
+        "Pellet Taken": "pellet taken",
+    }
+    return ", ".join(friendly.get(name, name) for name in event_names)
 
 
 def _actogram_tick_label(event_names: Sequence[str]) -> str:
@@ -276,11 +281,13 @@ def explorer_section(ctx: SectionContext) -> Optional[SectionResult]:
     legends_done = False
     span_legend = mark_legend = ""
     body = []
+    has_clock = False
 
     for i, (run, m) in enumerate(zip(ctx.runs, ctx.metrics)):
         nodes = sorted(set(run.nodes) | {r.node_id for r in run.rows if r.node_id != 0})
         if not nodes:
             continue
+        has_clock = has_clock or TimeBase.from_run(run).wall(0) is not None
         payload = build_explorer_payload(run, m)
         dom_id = f"sfm-explorer-{i}"
         entries.append({"dom_id": dom_id, "payload": payload})
@@ -316,6 +323,7 @@ def explorer_section(ctx: SectionContext) -> Optional[SectionResult]:
         extra_css=EXPLORER_CSS,
         extra_js=EXPLORER_JS + explorer_bootstrap_js(entries),
         page_break_before=True,
+        uses_time_axis=has_clock,
     )
 
 

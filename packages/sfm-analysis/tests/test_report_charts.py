@@ -117,6 +117,43 @@ class TestNiceTicks:
         assert scale(0) == 10.0  # falls back to p0, no exception
 
 
+class TestTimeAxisCharts:
+    def test_time_series_parses_and_carries_both_modes(self):
+        from sfm_analysis.report.time_axis import TimeBase
+        base = TimeBase("2026-10-28T14:00:00")
+        full = c.time_series(
+            base, 0, 7200,
+            [c.TimeSeries("presented", [(0, 0), (10, 1), (100, 3)], key=0, step=True),
+             c.TimeSeries("taken", [(0, 0), (50, 1)], key=1, step=True)],
+            y_label="cumulative pellets",
+            title="Cumulative throughput",
+        )
+        ET.fromstring(full)
+        assert "tx-rel" in full
+        assert "tx-abs" in full
+        assert "time since start" in full
+        assert "rig-local date / time" in full
+        # Hover titles carry both clocks so a point is readable in either mode.
+        assert "Oct 28" in full
+        assert "+0s" in full
+
+    def test_time_axes_without_a_clock_stays_relative_only(self):
+        from sfm_analysis.report.time_axis import TimeBase
+        frame = Frame().time_frame()
+        x = c.linear(0, 100, frame.px0, frame.px1)
+        y = c.linear(0, 1, frame.py1, frame.py0)
+        body = c.time_axes(frame, x, y, TimeBase(None), 0, 100, y_ticks=[0, 1])
+        full = c.svg(frame, body, title="t")
+        ET.fromstring(full)
+        assert "tx-only" in full
+        assert "tx-abs" not in full
+
+    def test_time_frame_keeps_the_plot_height_and_adds_label_room(self):
+        grown = Frame().time_frame()
+        assert grown.b == 52
+        assert grown.py1 - grown.py0 == Frame().py1 - Frame().py0
+
+
 class TestNoScriptOrNetwork:
     def test_chart_output_contains_no_script_or_urls(self):
         f = Frame()

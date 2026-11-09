@@ -161,10 +161,20 @@ class CanManager:
             return False
 
     def _rx_loop(self) -> None:
-        """Daemon thread: read frames and push to the queue."""
+        """Daemon thread: read frames and push to the queue.
+
+        A dead interface must not spin this thread. After repeated failures
+        the bus is closed and opened again.
+        """
+        failures = 0
         while self._running:
+            if self._bus is None:
+                time.sleep(0.5)
+                self._reopen_bus()
+                continue
             try:
                 msg = self._bus.recv(timeout=0.1)  # 100 ms poll
+                failures = 0
                 if msg is not None:
                     try:
                         self._rx_queue.put_nowait(msg)
@@ -176,5 +186,34 @@ class CanManager:
                         except queue.Empty:
                             pass
             except Exception as exc:
-                if self._running and self._error_callback:
+                failures += 1
+                if self._running and self._error_callback and failures == 1:
                     self._error_callback(exc)
+                time.sleep(min(0.5, 0.05 * failures))
+                if failures >= 20:
+                    self._reopen_bus()
+                    failures = 0
+
+    def _reopen_bus(self) -> None:
+        """Close and re-open the SocketCAN interface after a receive failure."""
+        if not self._running:
+            return
+        old = self._bus
+        self._bus = None
+        if old is not None:
+            try:
+                old.shutdown()
+            except Exception:
+                pass
+        if not self._running:
+            return
+        try:
+            self._bus = can.interface.Bus(
+                channel=self._interface,
+                interface="socketcan",
+                bitrate=self._bitrate,
+            )
+        except Exception as exc:
+            self._bus = None
+            if self._running and self._error_callback:
+                self._error_callback(exc)

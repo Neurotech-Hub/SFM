@@ -4,11 +4,12 @@ free_feeding.py — Free-feeding (continuous reload) experiment template.
 Behavior:
   1. On session start, dispense a pellet on every configured node.
   2. On PelletTaken, wait the shared next-trial advance (``fixed_delay`` or
-     ``presence_clear``) then re-dispense that node.
-  3. On Fault (jam / timeout / pellet lost), the whole session pauses —
-     no node reloads — until an operator **Recover**. The faulted node is
-     **halted** (latched); ``on_recover`` re-dispenses it once every
-     session node is healthy again.
+     ``presence_clear``) then re-dispense that node. If the pellet beam is
+     still broken, keep polling until it clears instead of dropping the
+     reload (a fragment in the beam must not leave the node Idle).
+  3. On Fault (jam / timeout / pellet lost), only that node is halted.
+     Its reload is cancelled and it waits for an operator **Recover**,
+     which re-dispenses it. Every other node keeps reloading.
   4. End after ``duration`` and/or when total `Loaded` milestones reaches
      ``max_pellets``.
 
@@ -91,6 +92,29 @@ def build(
     def _opened(control, event):
         control.incr("dome_openings")
 
+    def _dispense_when_clear(control, node_id: int, *, reload: bool) -> None:
+        """
+        Dispense ``node_id`` once it is healthy and its plate is empty.
+
+        A fault on this node cancels the pending timer. A fault on another
+        node does not. While the pellet beam is still broken (or a cycle is
+        already in flight), poll instead of giving up — a fragment that
+        later falls out must still get a reload.
+        """
+        if control.stop_requested or control.is_halted(node_id):
+            return
+        if control.pellet_on_plate(node_id) or control.is_dispensing(node_id):
+            control.after(
+                0.1,
+                lambda c=control, n=node_id, r=reload: _dispense_when_clear(c, n, reload=r),
+                node=node_id,
+            )
+            return
+        control.next_trial()
+        if reload:
+            control.log("reload_dispense", node=node_id)
+        control.dispense(node_id)
+
     @exp.on_pellet_taken
     def _reload(control, event):
         if control.stop_requested:
@@ -99,21 +123,13 @@ def build(
         control.incr("pellets_taken")
 
         def _do_reload():
-            if control.stop_requested:
-                return
-            if any(control.is_halted(n) for n in control.nodes):
-                return
-            control.next_trial()
-            control.log("reload_dispense", node=node_id)
-            control.dispense(node_id)
+            _dispense_when_clear(control, node_id, reload=True)
 
-        # Node-scoped so a fault on this node cancels its pending reload.
-        # session_pause: a fault on ANY session node holds every reload
-        # until Recover — the whole rig waits together.
+        # Node-scoped so a fault on THIS node cancels its pending reload.
+        # Other nodes are not held: a jam on one port must not starve the rest.
         kit.after_advance(
             control, advance, _do_reload,
             node=node_id, delay_s=delay_s, quiet_s=iti_quiet_s,
-            session_pause=True,
         )
 
     @exp.on_fault
@@ -121,21 +137,17 @@ def build(
         """
         Jam/timeout/pellet-lost on a node = no pellet delivered. The runner
         has already halted just this node (cancels its reload, makes its
-        dispenses no-ops). Reloads on every other node also pause until an
-        operator Recover — we only log here.
+        dispenses no-ops). Other nodes keep reloading; we only log here.
         """
         fault_code = event.data.get("fault_code")
         control.log("fault", node=event.node_id, fault_code=fault_code)
 
     @exp.on_recover
     def _recovered(control, event):
-        """Operator cleared the fault — resume this node's dispense cycle
-        once every session node is healthy (session-wide pause)."""
+        """Operator cleared this node's fault — re-dispense it. Another
+        node still halted does not block this one."""
         control.log("recovered", node=event.node_id)
-        if any(control.is_halted(n) for n in control.nodes):
-            return
-        control.next_trial()
-        control.dispense(event.node_id)
+        _dispense_when_clear(control, event.node_id, reload=False)
 
     @exp.on_end
     def _end(control):

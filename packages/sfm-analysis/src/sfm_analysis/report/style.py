@@ -202,6 +202,50 @@ figcaption {{
 .chart .value-label {{ fill: var(--ink-primary); font-size: 10px; }}
 .chart .node-divider {{ stroke: var(--axis); stroke-width: 1; stroke-dasharray: 2,2; }}
 
+/* Time-axis toggle. The two radios sit *before* .report (see render.py)
+   so these sibling selectors can restyle every chart without a script.
+   .tx-abs starts hidden; checking Absolute hides .tx-rel and shows it.
+   .tx-only is a chart whose x axis is not one rig clock (event-aligned
+   overlay): its relative labels stay visible in both modes. */
+.sfm-tf-input {{
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}}
+.tx-abs {{ display: none; }}
+#sfm-tf-abs:checked ~ .report .tx-rel:not(.tx-only) {{ display: none; }}
+#sfm-tf-abs:checked ~ .report .tx-abs {{ display: inline; }}
+.time-toggle {{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--gridline);
+  font-size: 12px;
+}}
+.time-toggle-label {{ color: var(--ink-secondary); font-weight: 600; margin-right: 4px; }}
+.time-toggle label {{
+  border: 1px solid var(--axis);
+  border-radius: 4px;
+  padding: 2px 10px;
+  cursor: pointer;
+  user-select: none;
+}}
+#sfm-tf-rel:checked ~ .report .time-toggle label[for="sfm-tf-rel"],
+#sfm-tf-abs:checked ~ .report .time-toggle label[for="sfm-tf-abs"] {{
+  background: var(--ink-primary);
+  color: var(--surface);
+  border-color: var(--ink-primary);
+}}
+
 .legend {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11px; color: var(--ink-secondary); margin: 0 0 8px; }}
 .legend-item {{ display: inline-flex; align-items: center; gap: 5px; }}
 .legend-swatch {{ width: 12px; height: 12px; border-radius: 2px; display: inline-block; }}

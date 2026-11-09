@@ -128,7 +128,7 @@ def test_heartbeat_recovers_pellets_missed_while_offline(app) -> None:
 
     assert app._pellets.presented(1) == 4
     assert app._pellets.taken(1) == 2
-    hb_row = [e for e in app._log.all_entries() if e.frame_type == "HEARTBEAT"][0]
+    hb_row = app._log.recent_heartbeats()[0]
     assert hb_row.fields["session_pellets"] == 4
     assert hb_row.fields["node_pellets"] == 8
     gaps = _rows(app, "Pellet Count Gap")

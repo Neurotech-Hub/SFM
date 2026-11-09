@@ -90,6 +90,26 @@ def can_event_row(
     )
 
 
+def dome_hold_row(ts_ms: int, node: int, count: int = 1, **kw) -> List[str]:
+    """A Dome Hold milestone (event 0x12, count LE16)."""
+    extra = bytes([count & 0xFF, (count >> 8) & 0xFF])
+    return can_event_row(ts_ms, node, CanEvent.DomeHold, extra, **kw)
+
+
+def retracting_row(ts_ms: int, node: int, count: int = 1, **kw) -> List[str]:
+    """A Retracting milestone (event 0x13, count LE16)."""
+    extra = bytes([count & 0xFF, (count >> 8) & 0xFF])
+    return can_event_row(ts_ms, node, CanEvent.Retracting, extra, **kw)
+
+
+def pellet_reload_row(
+    ts_ms: int, node: int, reason: int = 1, attempt: int = 1, count: int = 1, **kw,
+) -> List[str]:
+    """A Pellet Reload frame: count LE16, reason, attempt (1-based)."""
+    extra = bytes([count & 0xFF, (count >> 8) & 0xFF, reason & 0xFF, attempt & 0xFF])
+    return can_event_row(ts_ms, node, CanEvent.PelletReload, extra, **kw)
+
+
 def input_changed_row(ts_ms: int, node: int, input_id: int, active: bool, name: str, **kw) -> List[str]:
     """A CAN EVENT row for a raw InputChanged edge (raw byte0 = 0x06)."""
     return row(

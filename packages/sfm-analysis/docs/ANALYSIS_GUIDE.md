@@ -358,9 +358,10 @@ names = sorted({row["event_name"] for row in s.events_table(source="EXP")})
 runs that inventory against the bundled demo session (and is pinned in CI).
 Copy it as the first script you write against a new custom template.
 
-`report.metrics.APPARATUS_HEALTH_EVENTS` is the curated subset the report's
-"Apparatus Health" section surfaces — a good starting list of the
-diagnostic (as opposed to trial-structure) events worth watching.
+`report.metrics.APPARATUS_HEALTH_EVENTS` is the curated subset the report
+lists under Data Quality as script and control events, when any of them
+occurred — a good starting list of the diagnostic (as opposed to
+trial-structure) events worth watching. Faults are in Faults & Downtime.
 
 ## 4. Session parameters
 

@@ -18,10 +18,11 @@ from typing import Dict, List, Optional
 
 from .. import charts
 from ..align import compute_offsets
-from ..charts import Frame, Series, escape_text
+from ..charts import Frame, Series, TimeSeries, escape_text
 from ..naming import parse_session_name
 from ..schema import SectionContext, SectionResult
 from ..stats import median, safe_ratio, wilson_ci
+from ..time_axis import TimeBase
 
 
 def _fmt_duration(seconds: Optional[float]) -> str:
@@ -247,25 +248,43 @@ def cumulative_overlay_section(ctx: SectionContext) -> Optional[SectionResult]:
         return SectionResult(section_id="compare.cumulative_overlay", title="Cumulative Overlay", html="", empty=True)
 
     t0, t1 = min(all_t), max(0.0, max(all_t))
-    max_y = max((max((v for _, v in pts), default=0) for _, _, pts in series_pts), default=1) or 1
 
-    frame = Frame()
-    x = charts.linear(t0, t1, frame.px0, frame.px1)
-    y = charts.linear(0, max_y, frame.py1, frame.py0)
-    x_ticks = [(v, f"{v:.0f}s") for v in charts.nice_ticks(t0, t1, 8)]
-    axes = charts.axes(frame, x, y, x_ticks=x_ticks, y_ticks=charts.nice_ticks(0, max_y, 5),
-                        x_label=f"time (aligned: {ctx.align})", y_label="cumulative pellets taken")
-    body = [axes]
-    for label, key, pts in series_pts:
-        body.append(charts.line(frame, x, y, pts, key=key, step=True))
-    chart = charts.svg(frame, "".join(body), title="Cumulative pellets, aligned overlay")
+    # "wall" is the one alignment that is a single rig clock: x=0 is the
+    # earliest run's start, so absolute labels from that run's timestamp
+    # describe the axis. Every other mode lines runs up on different
+    # origins, and one date would be wrong for all but one of them.
+    wall = ctx.align == "wall"
+    if wall:
+        earliest = min(ctx.runs, key=lambda r: r.t0_ms)
+        base = TimeBase.from_run(earliest)
+        x_label_rel = "time since earliest start"
+        abs_note = ""
+    else:
+        base = TimeBase(None)
+        x_label_rel = f"time (aligned: {ctx.align})"
+        abs_note = (" Absolute time is not shown: these runs are aligned to "
+                    "different origins, so one clock does not describe the axis.")
+
+    chart = charts.time_series(
+        base, t0, t1,
+        [TimeSeries(label, pts, key=key, step=True) for label, key, pts in series_pts],
+        y_label="cumulative pellets taken",
+        title="Cumulative pellets, aligned overlay",
+        absolute=wall and base.wall(0) is not None,
+        x_label_rel=x_label_rel,
+    )
     legend = charts.legend([(label, key) for label, key, _ in series_pts])
 
     html = f'<figure><figcaption>Alignment: <b>{escape_text(ctx.align)}</b>. ' \
           f'"relative" starts every run at its own session start; "event:&lt;name&gt;" starts every ' \
-          f'run at the first row named &lt;name&gt;, which is what makes a run with a long ' \
-          f'pre-trial gap comparable to a clean one.</figcaption>{legend}{chart}</figure>'
-    return SectionResult(section_id="compare.cumulative_overlay", title="Cumulative Overlay", html=html)
+          f'run at the first row named &lt;name&gt;, which is what makes a run with a long pre-trial ' \
+          f'stall comparable to a clean one.{escape_text(abs_note)}</figcaption>{legend}{chart}</figure>'
+    return SectionResult(
+        section_id="compare.cumulative_overlay",
+        title="Cumulative Overlay",
+        html=html,
+        uses_time_axis=wall and base.wall(0) is not None,
+    )
 
 
 SECTIONS = {
