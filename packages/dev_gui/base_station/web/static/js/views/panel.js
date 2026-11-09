@@ -134,15 +134,9 @@ export function createPanel(ctx, rs, log) {
     const inputs = [0, 1].map(inputCard);
     const out = outCard();
     const pulse = btn("Manual pulse", async () => { const r = await ctx.command("bnc_pulse"); if (!r.ok) ctx.toast(r.error, "error"); });
-    const cal = btn("Calibrate presence", () => rs.set({ cal: { phase: "confirm" } }));
-    const rediscover = btn("Re-discover nodes", async () => {
-      const ok = await ctx.confirm({ title: "Re-discover nodes?", body: ["This clears the saved ID map and reassigns IDs from 1. A board can end up with a different ID."], confirm: "Re-discover", danger: true });
-      if (!ok) return;
-      const r = await ctx.command("rediscover"); if (!r.ok) ctx.toast(r.error, "error");
-    });
     const el = h("div", { class: "tabpanel", role: "tabpanel" },
       h("div", { class: "panelrow", style: { flexDirection: "column", alignItems: "flex-start", gap: "2px" } }, h("span", {}, "Log file"), logPath),
-      gpio, lockNote, armLine, ...inputs.map((i) => i.el), out.el, pulse, h("div", { class: "sep" }), cal, rediscover);
+      gpio, lockNote, armLine, ...inputs.map((i) => i.el), out.el, pulse);
 
     function inputCard(index) {
       const which = index === 0 ? "IN1" : "IN2";
@@ -262,7 +256,7 @@ export function createPanel(ctx, rs, log) {
       state.bnc.inputs.forEach((cfg, i) => inputs[i].update(cfg, locked, defaults));
       if (!triggers) { triggers = []; ctx.command("bnc_out_triggers").then((r) => { if (r.ok) { triggers = r.triggers; out.update(state.bnc.out, locked, defaults, triggers); } }); }
       out.update(state.bnc.out, locked, defaults, triggers);
-      setDisabled(pulse, locked); setDisabled(cal, locked);
+      setDisabled(pulse, locked);
     } };
   }
 

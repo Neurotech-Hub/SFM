@@ -168,7 +168,7 @@ def connect(
 ) -> Dict[str, Any]:
     """Open the bus, the log and discovery. Does nothing if already connected."""
     if engine._can is not None:
-        raise CommandError("Already connected. Restart the engine to change the interface.")
+        raise CommandError("Already connected. Use Change connection to connect again.")
     if not 1 <= int(num_nodes) <= 12:
         raise CommandError("Number of nodes must be between 1 and 12.")
     error = engine.connect(interface, int(bitrate), int(num_nodes), log_dir, bool(auto_save))
@@ -182,6 +182,14 @@ def connect(
     # instead of after the next heartbeat. The DearPyGui app does the same.
     engine._broadcast(CanCmd.Ping)
     return {"interface": interface.strip(), "num_nodes": int(num_nodes)}
+
+
+def disconnect(engine: Any) -> Dict[str, Any]:
+    """Close the bus and the log so the Connect step can be changed. The session must be stopped."""
+    error = engine.disconnect()
+    if error:
+        raise CommandError(error)
+    return {}
 
 
 def rediscover(engine: Any) -> Dict[str, Any]:
@@ -535,7 +543,7 @@ def log_export(engine: Any) -> Dict[str, Any]:
 COMMANDS: Dict[str, Callable[..., Dict[str, Any]]] = {
     fn.__name__: fn
     for fn in (
-        check_interface, connect, rediscover,
+        check_interface, connect, disconnect, rediscover,
         list_experiments, preview_session, start_session, stop_session, arm_start, disarm_start,
         dispense, ping, recover, set_label, assign_node_id, calibrate_presence,
         get_layout, set_node_position, clear_layout,

@@ -61,7 +61,8 @@ class Rig:
         await self.client.close()
         await self.service.stop()
         self.host.stop()
-        self.engine._log.close()
+        if self.engine._log:
+            self.engine._log.close()
 
     async def wait_engine(self, up: bool, timeout: float = 8.0) -> dict:
         end = asyncio.get_running_loop().time() + timeout

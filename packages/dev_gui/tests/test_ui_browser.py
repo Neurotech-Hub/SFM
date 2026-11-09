@@ -64,6 +64,46 @@ def test_a_connected_engine_opens_on_the_experiment_step(tmp_path) -> None:
     run_ui(body, tmp_path)
 
 
+def test_connect_offers_can0_and_vcan0_with_can0_selected(tmp_path) -> None:
+    async def body(rig, p):
+        await rig.on_engine(lambda e: (setattr(e, "_can", None), setattr(e, "_registry", None)))
+        await rig.open(wait_step=False)
+        await p.wait("document.querySelectorAll('[aria-labelledby=can-h] .opt').length === 2")
+        names = "[...document.querySelectorAll('[aria-labelledby=can-h] .opt')].map(b => b.querySelector('strong').textContent).join()"
+        assert await p.eval(names) == "can0,vcan0"
+        checked = "[...document.querySelectorAll('[aria-labelledby=can-h] .opt')].filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.querySelector('strong').textContent).join()"
+        assert await p.eval(checked) == "can0"
+        await p.eval("document.querySelectorAll('[aria-labelledby=can-h] .opt')[1].click()")
+        await p.wait(f"{checked} === 'vcan0'")
+    run_ui(body, tmp_path)
+
+
+def test_change_connection_unlocks_the_connect_step(tmp_path) -> None:
+    async def body(rig, p):
+        await rig.on_engine(lambda e: setattr(e._can, "stop", lambda: None))
+        await rig.open()
+        await p.click_step("Connect")
+        await p.wait("!document.querySelector('#view-connect').hidden")
+        assert await p.eval("document.querySelector('#can-h').closest('section').querySelector('.opt').disabled")
+        await p.click_text("Change connection", "#view-connect")
+        await p.click_text("Change connection", "[role=dialog], dialog, .modal")
+        await p.wait("!document.querySelector('#view-connect .opt').disabled")
+        assert await p.eval("[...document.querySelectorAll('.step')].map(b => b.disabled).join()") == "false,true,true"
+    run_ui(body, tmp_path)
+
+
+def test_saved_form_values_drop_nodes_that_are_gone(tmp_path) -> None:
+    async def body(rig, p):
+        await rig.open()
+        out = await p.eval("""(async () => {
+          const m = await import('/static/js/views/experiment.js');
+          const exp = {parameters: [{key: 'nodes', type: 'nodes', node_defaults: {1: false, 2: false}}, {key: 'p', type: 'float', default: 0.9}]};
+          return JSON.stringify(m.mergeValues(exp, {nodes: {1: true, 2: true, 3: true}, p: 0.7}));
+        })()""")
+        assert json.loads(out) == {"nodes": {"1": True, "2": True}, "p": 0.7}
+    run_ui(body, tmp_path)
+
+
 def test_the_steps_after_connect_are_locked_until_connected(tmp_path) -> None:
     async def body(rig, p):
         # Take the bus away: an engine that was never connected.

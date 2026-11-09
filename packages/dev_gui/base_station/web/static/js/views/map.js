@@ -26,7 +26,7 @@ export function createMap(ctx, rs) {
   const chip = h("div", { class: "mousechip", hidden: true });
   const empty = h("div", { class: "empty-map" }, "No nodes yet. Connect to the bus first.");
   const legend = h("div", { class: "legend" },
-    h("span", {}, h("i", { style: { border: "3px solid #B5561A" } }), "Mouse on pad"),
+    h("span", {}, h("i", { style: { border: "3px solid #B5561A" } }), "Mouse"),
     h("span", {}, h("i", { style: { background: "#1A2030" } }), "Pellet on plate"),
     h("span", {}, h("i", { style: { border: "2px solid #1A2030" } }), "Dome open"),
     h("span", {}, h("i", { style: { background: "conic-gradient(#2D4BD8 60%, #DDE1E8 0)" } }), "Dispense cycle progress"));
@@ -123,14 +123,17 @@ export function createMap(ctx, rs) {
     const { exp, values } = rs.get().setupView || {};
     reconcileNodes(nodes, pos, exp, values);
 
-    // Where the mouse stood last, and the line from the one before.
+    // Where the mouse is (between every pad that senses it), or where it stood
+    // last, and the line from the one before.
     const last = nodes.find((n) => n.id === tracker.last), prev = nodes.find((n) => n.id === tracker.prev);
-    show(chip, !!last);
-    if (last) {
-      const p = pos[last.id];
+    const onPads = nodes.filter((n) => n.presence && pos[n.id]);
+    show(chip, onPads.length > 0 || !!last);
+    if (onPads.length || last) {
+      const at = onPads.length ? onPads.map((n) => pos[n.id]) : [pos[last.id]];
+      const p = [0, 1].map((k) => at.reduce((sum, q) => sum + q[k], 0) / at.length);
       // Sit just above the node's block (ring plus labels), whatever size the ring is.
       setStyle(chip, "left", `${p[0]}%`); setStyle(chip, "top", `calc(${p[1]}% - ${Math.round((112 * nodeScale(nodes.length) + 62) / 2) + 2}px)`);
-      setText(chip, last.presence ? "Mouse on pad" : "Mouse last here");
+      setText(chip, onPads.length ? "Mouse" : "Mouse last here");
     }
     const a = last && pos[last.id], b = prev && pos[prev.id];
     show(trail, !!(a && b));

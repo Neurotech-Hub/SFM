@@ -23,13 +23,15 @@ export function initialValues(exp) {
   return v;
 }
 
-/** Saved form values laid over the defaults. Per-node maps merge node by node, so a node that
- *  appeared after the values were saved still gets its default. */
+/** Saved form values laid over the defaults. Per-node maps merge node by node: a node that
+ *  appeared after the values were saved gets its default, and one that is gone is dropped. */
 export function mergeValues(exp, saved) {
   const base = initialValues(exp);
   for (const p of exp.parameters) {
     if (!(p.key in (saved || {}))) continue;
-    base[p.key] = NODE_TYPES.includes(p.type) ? { ...base[p.key], ...(saved[p.key] || {}) } : saved[p.key];
+    if (!NODE_TYPES.includes(p.type)) { base[p.key] = saved[p.key]; continue; }
+    // Only nodes in this setup: a node that was there before a reconnect must not linger.
+    for (const id of Object.keys(base[p.key])) if (id in (saved[p.key] || {})) base[p.key][id] = saved[p.key][id];
   }
   return base;
 }
@@ -128,7 +130,7 @@ export function createExperiment(ctx) {
       control = h("label", { class: "check", for: id }, box, param.label);
       sync = () => { box.checked = !!model.values[param.key]; };
     } else if (param.type === "int" || param.type === "float") {
-      const input = h("input", { class: "input num", id, type: "number", inputmode: "decimal", step: param.type === "int" ? "1" : "any",
+      const input = h("input", { class: "input num", id, type: "number", inputmode: "decimal", step: param.step ?? (param.type === "int" ? "1" : "any"),
         min: param.min ?? undefined, max: param.max ?? undefined, onInput: (e) => set(e.target.value === "" ? "" : Number(e.target.value)) });
       control = h("div", { class: "field" }, h("label", { class: "lab", for: id }, param.label,
         param.min != null || param.max != null ? h("span", { class: "small muted" }, ` (${param.min ?? ""}–${param.max ?? ""})`) : null), input);

@@ -64,6 +64,7 @@
       "default": 0.5,
       "min": 0,
       "max": 1,
+      "step": 0.1,
       "help": "Chance that one Random node feeds this cycle"
     },
     {

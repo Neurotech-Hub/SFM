@@ -1,15 +1,14 @@
 // Step 1: choose the bus and where logs go, connect, and see which nodes answered.
-import { h, s, setAttr, setDisabled, setText, setValue, show, reconcile } from "../dom.js";
+import { h, s, setAttr, setDisabled, setText, show, reconcile } from "../dom.js";
 import { nodeName } from "../nodes.js";
 
 const CHECK = "M5 12.5l4.5 4.5L19 7.5", CROSS = "M7 7l10 10M17 7L7 17";
+const IFACES = ["can0", "vcan0"], DEFAULT_IFACE = "can0", RESCAN_MS = 3000;
 
 export function createConnect(ctx) {
-  const model = { iface: null, other: "", numNodes: 2, logDir: "", autoSave: true, scanned: [], checkMsg: null, busy: false, seeded: false };
+  const model = { iface: DEFAULT_IFACE, numNodes: 2, logDir: "", autoSave: true, scanned: [], connected: false, checkMsg: null, busy: false, seeded: false };
 
   const ifaceList = h("div", { class: "opts", role: "radiogroup", "aria-labelledby": "can-h" });
-  const otherInput = h("input", { class: "input mono", id: "can-other", placeholder: "e.g. can1", "aria-label": "Interface name",
-    onInput: (e) => { model.iface = e.target.value.trim(); model.other = e.target.value; update(); } });
   const checkStatus = h("span", { role: "status", class: "small" });
   const bitrateRow = h("p", { class: "small muted" });
   const countOut = h("output", { class: "mono", style: { minWidth: "40px", textAlign: "center", fontSize: "20px", fontWeight: "500" }, "aria-live": "polite" });
@@ -18,10 +17,11 @@ export function createConnect(ctx) {
   const connectBtn = h("button", { class: "btn primary", type: "button", onClick: doConnect }, "Connect");
   const checkBtn = h("button", { class: "btn", type: "button", onClick: doCheck }, "Check");
   const rescanBtn = h("button", { class: "btn", type: "button", onClick: rescan }, "Re-scan interfaces");
+  const changeBtn = h("button", { class: "btn", type: "button", onClick: doChange }, "Change connection");
   const connectNote = h("p", { class: "small", role: "status" });
 
   const connectedBanner = h("div", { class: "banner info", role: "status" },
-    h("strong", {}, "Connected"), h("span", { class: "msg", id: "conn-msg" }));
+    h("strong", {}, "Connected"), h("span", { class: "msg", id: "conn-msg" }), changeBtn);
   const nodeCount = h("div", { class: "row", style: { justifyContent: "space-between", padding: "10px 12px", background: "var(--surface)", borderRadius: "10px" } },
     h("div", { class: "col", style: { gap: "2px" } },
       h("span", { id: "count-l", style: { fontWeight: 600 } }, "Number of nodes"),
@@ -47,8 +47,6 @@ export function createConnect(ctx) {
     h("section", { class: "card col", "aria-labelledby": "can-h" },
       h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", { id: "can-h" }, "CAN interface"), rescanBtn),
       ifaceList,
-      h("details", { class: "more", id: "other-wrap" }, h("summary", {}, "Use a different interface name"),
-        h("div", { class: "field" }, h("label", { class: "lab", for: "can-other" }, "Interface name"), otherInput)),
       h("div", { class: "row" }, checkBtn, checkStatus),
       bitrateRow, nodeCount,
       h("div", { class: "row" }, connectBtn, connectNote),
@@ -68,12 +66,11 @@ export function createConnect(ctx) {
     const r = await ctx.command("list_interfaces");
     if (!r.ok) { model.checkMsg = { ok: false, text: r.error }; update(); return; }
     model.scanned = r.interfaces;
-    if (!model.iface || (!model.scanned.some((i) => i.name === model.iface) && !model.other)) model.iface = model.scanned[0]?.name || model.iface;
     update();
   }
 
   async function doCheck() {
-    if (!model.iface) { model.checkMsg = { ok: false, text: "Choose or type an interface first." }; update(); return; }
+    if (!model.iface) { model.checkMsg = { ok: false, text: "Choose an interface first." }; update(); return; }
     const r = await ctx.command("check_interface", { interface: model.iface });
     model.checkMsg = r.ok && r.up ? { ok: true, text: `${model.iface} is up.` }
       : { ok: false, text: r.ok ? `${model.iface} was not found or is down. See deploy/README.md to bring up the CAN HAT.` : r.error };
@@ -81,7 +78,7 @@ export function createConnect(ctx) {
   }
 
   async function doConnect() {
-    if (!model.iface) { model.checkMsg = { ok: false, text: "Choose or type an interface first." }; update(); return; }
+    if (!model.iface) { model.checkMsg = { ok: false, text: "Choose an interface first." }; update(); return; }
     model.busy = true; update();
     const r = await ctx.command("connect", {
       interface: model.iface, bitrate: ctx.ui.get().defaults?.bitrate || 250000,
@@ -92,6 +89,18 @@ export function createConnect(ctx) {
     model.checkMsg = null;
     ctx.command("set_gui_settings", { interface: model.iface, num_nodes: model.numNodes, log_dir: model.logDir, auto_save: model.autoSave });
     update();
+  }
+
+  async function doChange() {
+    const ok = await ctx.confirm({
+      title: "Change the connection?",
+      body: ["This closes the CAN bus and the log so you can pick another interface, number of nodes or log folder.",
+        "Node IDs and saved positions are kept. You connect again afterwards."],
+      confirm: "Change connection",
+    });
+    if (!ok) return;
+    const r = await ctx.command("disconnect");
+    if (!r.ok) ctx.toast(r.error, "error");
   }
 
   async function doRediscover() {
@@ -113,39 +122,36 @@ export function createConnect(ctx) {
     model.numNodes = settings.num_nodes || 2;
     model.logDir = settings.log_dir || defaults.log_dir || "";
     model.autoSave = settings.auto_save !== false;
-    if (settings.interface) model.iface = settings.interface;
+    if (IFACES.includes(settings.interface)) model.iface = settings.interface;
     logDir.value = model.logDir;
     autoSave.checked = model.autoSave;
     rescan();
+    setInterval(() => { const { state, up } = ctx.engine.get(); if (up && !(state && state.connected) && !document.hidden) rescan(); }, RESCAN_MS);
   }
 
   function update() {
     seed();
     const { state, up } = ctx.engine.get();
-    const connected = !!(up && state && state.connected);
+    const connected = model.connected = !!(up && state && state.connected);
     const defaults = ctx.ui.get().defaults;
 
     if (connected) {
       model.iface = state.interface || model.iface;
       model.numNodes = state.nodes.length;
     }
-    // Interface choices: those found, plus a typed name that isn't among them.
-    const options = model.scanned.slice();
-    if (model.iface && !options.some((i) => i.name === model.iface)) options.push({ name: model.iface, virtual: false, up: null, bitrate: null, typed: true });
+    // Interface choices: always can0 and vcan0, marked by what the last scan found.
+    const options = IFACES.map((name) => model.scanned.find((i) => i.name === name)
+      || { name, virtual: name.startsWith("v"), missing: true });
     reconcile(ifaceList, options, (i) => i.name, (i) => {
       const name = h("strong", { class: "mono" }, i.name), desc = h("span", { class: "small muted" });
-      const b = h("button", { class: "opt", type: "button", role: "radio", onClick: () => { if (!connected) { model.iface = i.name; model.other = ""; update(); } } }, name, desc);
+      const b = h("button", { class: "opt", type: "button", role: "radio", onClick: () => { if (!model.connected) { model.iface = i.name; update(); } } }, name, desc);
       return { el: b, update: (it) => {
         setAttr(b, "aria-checked", model.iface === it.name ? "true" : "false");
-        setText(desc, it.virtual ? "Virtual bus, for testing without hardware"
-          : `${it.typed ? "Typed name" : "Hardware CAN"}${it.bitrate ? " · " + it.bitrate / 1000 + " kbit/s" : ""}${it.up === false ? " · down" : it.up ? " · up" : ""}`);
-        setDisabled(b, connected);
+        setText(desc, (it.virtual ? "Virtual bus, for testing without hardware" : "Hardware CAN")
+          + (it.missing ? " · not found" : `${it.bitrate ? " · " + it.bitrate / 1000 + " kbit/s" : ""}${it.up ? " · up" : " · down"}`));
+        setDisabled(b, model.connected);
       } };
     }, ifaceStore);
-    show(document.getElementById('other-wrap') || otherInput, !connected);
-    setDisabled(otherInput, connected);
-    if (document.activeElement !== otherInput) setValue(otherInput, model.scanned.some((i) => i.name === model.iface) ? "" : (model.iface || ""));
-
     const cur = model.scanned.find((i) => i.name === model.iface);
     const rate = cur && cur.bitrate ? cur.bitrate : defaults?.bitrate;
     setText(bitrateRow, rate ? `Bitrate ${rate / 1000} kbit/s, set by the system and shown here read-only.` : "");
@@ -170,7 +176,7 @@ export function createConnect(ctx) {
     show(checkBtn.parentElement, !connected);
     show(next, connected);
     if (connected) {
-      setText(document.getElementById("conn-msg"), `${state.interface} · ${state.nodes.length} ${state.nodes.length === 1 ? "node" : "nodes"} expected. Changing the interface needs an engine restart.`);
+      setText(document.getElementById("conn-msg"), `${state.interface} · ${state.nodes.length} ${state.nodes.length === 1 ? "node" : "nodes"} expected. Use Change connection to pick another interface, node count or log folder.`);
       if (document.activeElement !== logDir) { logDir.value = model.logDir; }
       const online = state.nodes.filter((n) => n.online).length;
       setText(foundSummary, `${online} of ${state.nodes.length} nodes answered`);

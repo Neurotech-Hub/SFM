@@ -22,7 +22,7 @@ reading `base_station/app.py`, not from memory.
 
 | Old control | New home |
 |---|---|
-| Interface | Connect: one card per CAN interface found, plus "Use a different interface name" |
+| Interface | Connect: can0 and vcan0 cards, can0 selected by default, re-scanned every 3 s |
 | Bitrate | Connect: shown read-only, read from the kernel for hardware CAN |
 | Check | Connect: Check |
 | Number of nodes | Connect: stepper, 1 to 12; the nodes that answered are listed once connected |

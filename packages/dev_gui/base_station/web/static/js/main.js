@@ -99,10 +99,14 @@ async function loadStatics() {
   });
 }
 
-let wasUp = false, lastNodeCount = -1, started = false, lastNotice = null;
+let wasUp = false, wasConnected = false, lastNodeCount = -1, started = false, lastNotice = null;
 engine.subscribe(({ up, state }) => {
   if (up && !wasUp) loadStatics();
   wasUp = up;
+  // Connected again, maybe with another number of nodes: the forms are built for the new setup.
+  const isConnected = !!(up && state && state.connected);
+  if (isConnected && !wasConnected && started) loadStatics();
+  wasConnected = isConnected;
   const count = state && state.nodes ? state.nodes.length : 0;
   if (up && count && count !== lastNodeCount) {
     if (lastNodeCount !== -1) command("list_experiments").then((r) => r.ok && ui.set({ experiments: r.experiments }));

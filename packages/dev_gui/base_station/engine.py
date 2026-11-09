@@ -305,6 +305,7 @@ class BaseStationEngine:
         # (normalized trigger, pulse width in us), or None when that path is off.
         self._fast_out: Optional[Tuple[str, int]] = None
         self._rx_tap_installed = False
+        self._io_started = False     # the BNC/GPIO lines are claimed once and kept across a disconnect
         # Where the BNC configuration is saved. None until a front-end asks for
         # persistence with ``enable_bnc_persistence``.
         self._bnc_settings: Optional[BncSettings] = None
@@ -417,7 +418,9 @@ class BaseStationEngine:
 
         # Bring up base-station GPIO (BNC I/O, button, AEO). Degrades to a
         # no-op automatically when no GPIO hardware is present.
-        self._io.begin()
+        if not self._io_started:
+            self._io.begin()
+            self._io_started = True
 
         # Create subsystems
         self._registry = NodeRegistry(num_nodes)
@@ -448,6 +451,27 @@ class BaseStationEngine:
                     f"{self._mac_registry.path}"
                 ),
             ))
+        return ""
+
+    def disconnect(self) -> str:
+        """
+        Close the CAN bus, the log and discovery so Connect can be done again
+        with another interface, node count or log folder. The BNC lines stay
+        claimed. Returns "" on success, otherwise a message for the operator.
+        """
+        if self._can is None:
+            return ""
+        if self._exp.is_running:
+            return "Stop the session before changing the connection."
+        if self._discovery:
+            self._discovery.stop()
+        self._can.stop()
+        if self._log:
+            self._log.close()
+        self._can = self._registry = self._log = self._discovery = None
+        self._rx_tap_installed = False
+        self._hb_configured_nodes.clear()
+        self._hb_roster_configured = False
         return ""
 
     # ------------------------------------------------------------------

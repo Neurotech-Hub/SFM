@@ -28,7 +28,8 @@ def engine(tmp_path, monkeypatch):
     e._exp_log_dir = str(tmp_path)
     e._dev_settings = type("D", (), {"presence_factor": 3.0, "set_presence_factor": lambda self, f: setattr(self, "presence_factor", f)})()
     yield e
-    e._log.close()
+    if e._log:
+        e._log.close()
 
 
 @pytest.fixture
@@ -241,6 +242,13 @@ def test_connect_checks_node_count_and_existing_connection(offline_engine, engin
     assert "between 1 and 12" in _err(offline_engine, "connect", interface="vcan0", num_nodes=13)
     assert "between 1 and 12" in _err(offline_engine, "connect", interface="vcan0", num_nodes=0)
     assert "Already connected" in _err(engine, "connect", interface="vcan0", num_nodes=2)
+
+
+def test_disconnect_closes_the_connection(engine) -> None:
+    engine._can.stop = lambda: None            # the fake bus has nothing to close
+    _ok(engine, "disconnect")
+    assert engine._can is None and engine._registry is None and engine._log is None
+    assert _ok(engine, "disconnect") == {"ok": True}      # nothing to close is not an error
 
 
 def test_check_interface_reports_a_missing_interface(engine) -> None:

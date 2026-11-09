@@ -33,7 +33,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 from .protocol import (
     CAN_ID_ANNOUNCE,
@@ -92,8 +92,10 @@ class DiscoveryManager:
         self._phase = DiscoveryPhase.Idle
         self._next_id: int = 1
         self._last_activity: float = 0.0
-        self._pending_assign: Optional[bytes] = None  # MAC waiting for ACK
-        self._pending_assign_id: Optional[int] = None
+        # Every board that has been sent an ASSIGN and not yet ACKed: MAC -> ID. Several boards can
+        # announce within a millisecond of each other, so one slot would drop all but the last.
+        self._pending: Dict[bytes, int] = {}
+        self._last_assign: Optional[Tuple[bytes, int]] = None   # the ASSIGN sent most recently
         self._discovered: List[DiscoveredNode] = []
         self._force_fresh_ids: bool = False
         self._node_callback: Optional[Callable[[DiscoveredNode], None]] = None
@@ -139,8 +141,8 @@ class DiscoveryManager:
         else:
             self._next_id = start_id
         self._discovered.clear()
-        self._pending_assign = None
-        self._pending_assign_id = None
+        self._pending.clear()
+        self._last_assign = None
         self._last_activity = time.time()
         self._phase = DiscoveryPhase.Running
 
@@ -189,8 +191,8 @@ class DiscoveryManager:
         if self._mac_registry is not None:
             self._next_id = self._mac_registry.next_free_id(self._next_id)
 
-        self._pending_assign = None
-        self._pending_assign_id = None
+        self._pending.clear()
+        self._last_assign = None
         self._last_activity = time.time()
         self._phase = DiscoveryPhase.Running
 
@@ -295,11 +297,11 @@ class DiscoveryManager:
 
     @property
     def pending_mac(self) -> Optional[bytes]:
-        return self._pending_assign
+        return self._last_assign[0] if self._last_assign else None
 
     @property
     def pending_id(self) -> Optional[int]:
-        return self._pending_assign_id
+        return self._last_assign[1] if self._last_assign else None
 
     # ------------------------------------------------------------------
     # Internal handlers
@@ -308,20 +310,22 @@ class DiscoveryManager:
     def _handle_announce(self, mac: bytes) -> None:
         """New node, no saved NVS ID — assign historical ID if known, else next free."""
         # Retransmit ASSIGN if the node is retrying for the same pending MAC
-        if self._pending_assign == mac and self._pending_assign_id is not None:
-            self._can.send_assign(mac, self._pending_assign_id)
+        if mac in self._pending:
+            self._assign(mac, self._pending[mac])
             return
 
-        node_id = self._allocate_id_for_mac(mac)
-        self._pending_assign = mac
-        self._pending_assign_id = node_id
+        self._assign(mac, self._allocate_id_for_mac(mac))
+
+    def _assign(self, mac: bytes, node_id: int) -> None:
+        """Send an ASSIGN and remember that this board owes an ACK."""
+        self._pending[mac] = node_id
+        self._last_assign = (mac, node_id)
         self._can.send_assign(mac, node_id)
 
     def _handle_ack(self, mac: bytes, node_id: Optional[int]) -> None:
         """Node confirmed receipt of ASSIGN."""
-        if self._pending_assign and mac == self._pending_assign:
-            self._pending_assign = None
-            self._pending_assign_id = None
+        if mac in self._pending:
+            del self._pending[mac]
             if node_id is None:
                 return
             if self._mac_registry is not None:
@@ -343,31 +347,23 @@ class DiscoveryManager:
         ASSIGN the next free ID so stale REJOINs cannot rebuild the old map.
         """
         if self._force_fresh_ids:
-            if self._pending_assign == mac and self._pending_assign_id is not None:
-                self._can.send_assign(mac, self._pending_assign_id)
+            if mac in self._pending:
+                self._assign(mac, self._pending[mac])
                 return
-            new_id = self._allocate_id_for_mac(mac)
-            self._pending_assign = mac
-            self._pending_assign_id = new_id
-            self._can.send_assign(mac, new_id)
+            self._assign(mac, self._allocate_id_for_mac(mac))
             return
 
         if self._mac_registry is not None:
             known = self._mac_registry.get_id(mac)
             if known is not None and known != node_id:
                 # Re-align node NVS to the base-station historical ID
-                self._pending_assign = mac
-                self._pending_assign_id = known
-                self._can.send_assign(mac, known)
+                self._assign(mac, known)
                 return
 
             owner = self._mac_registry.get_mac(node_id)
             if known is None and owner is not None and owner != mac:
                 # This NVS ID is already claimed by a different MAC — re-assign
-                new_id = self._allocate_id_for_mac(mac)
-                self._pending_assign = mac
-                self._pending_assign_id = new_id
-                self._can.send_assign(mac, new_id)
+                self._assign(mac, self._allocate_id_for_mac(mac))
                 return
 
             # Matching or first-seen REJOIN — remember / confirm the mapping

@@ -39,6 +39,7 @@ class ExperimentParam:
     default: Any = None
     min: Optional[float] = None
     max: Optional[float] = None
+    step: Optional[float] = None   # how far the GUI's up/down arrows move a number
     help: str = ""
     options: List[str] = field(default_factory=list)
     # Conditional display: {controlling_key: value | [values]}. The param is
@@ -79,6 +80,7 @@ def _parse_param(raw: dict) -> ExperimentParam:
         default=raw.get("default"),
         min=raw.get("min"),
         max=raw.get("max"),
+        step=raw.get("step"),
         help=str(raw.get("help", "")),
         options=[str(o) for o in raw.get("options", [])],
         visible_when=dict(visible_when) if visible_when else None,

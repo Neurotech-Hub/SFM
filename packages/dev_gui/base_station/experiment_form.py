@@ -58,6 +58,7 @@ def describe(exp_def: ExperimentDef, node_ids: Sequence[int]) -> Dict[str, Any]:
             "default": p.default,
             "min": p.min,
             "max": p.max,
+            "step": p.step,
             "help": p.help,
             "options": list(p.options),
             "visible_when": p.visible_when,

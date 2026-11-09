@@ -136,3 +136,30 @@ class TestDiscoveryMacPersistence:
         assert discovered[-1].node_id == 1
         assert mac_reg.get_id(MAC_A) == 1
         assert mac_reg.get_id(MAC_A) != 9
+
+
+class TestSimultaneousAnnounce:
+    def test_two_boards_announcing_together_are_both_registered(self, tmp_path):
+        """Both ASSIGNs go out before either ACK comes back (they announced a millisecond apart)."""
+        can = FakeCan()
+        dm = DiscoveryManager(can, FakeIO(), MacIdRegistry(tmp_path / "r.json"))
+        discovered = []
+        dm.on_node_discovered(discovered.append)
+        dm.start(start_id=1)
+
+        dm.handle_frame(CAN_ID_ANNOUNCE, MAC_A)
+        dm.handle_frame(CAN_ID_ANNOUNCE, MAC_B)
+        assert can.assigns == [(MAC_A, 1), (MAC_B, 2)]
+
+        dm.handle_frame(CAN_ID_ACK, MAC_A + bytes([1]))
+        dm.handle_frame(CAN_ID_ACK, MAC_B + bytes([2]))
+        assert [(n.mac, n.node_id) for n in discovered] == [(MAC_A, 1), (MAC_B, 2)]
+
+    def test_a_retry_resends_the_same_id(self, tmp_path):
+        can = FakeCan()
+        dm = DiscoveryManager(can, FakeIO(), MacIdRegistry(tmp_path / "r.json"))
+        dm.start(start_id=1)
+        dm.handle_frame(CAN_ID_ANNOUNCE, MAC_A)
+        dm.handle_frame(CAN_ID_ANNOUNCE, MAC_B)
+        dm.handle_frame(CAN_ID_ANNOUNCE, MAC_A)
+        assert can.assigns == [(MAC_A, 1), (MAC_B, 2), (MAC_A, 1)]
