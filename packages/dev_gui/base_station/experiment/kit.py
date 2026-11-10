@@ -39,6 +39,7 @@ class CycleResult:
     ok: bool = False
     faulted: bool = False
     faulted_node: int = 0
+    recovered: bool = False  # aborted by an operator Recover, not a fault
     invalid: bool = False
     invalid_reason: str = ""
     taken_node: int = 0
@@ -527,6 +528,7 @@ def synchronized_cycle(
         node=commanded,
         timeout=timeout,
         label="arms_presented",
+        abort_on_recover=True,
     )
     if ready.faulted or ready.timed_out:
         # A no-feed node holds at the drop position until a peer raises, with no
@@ -541,6 +543,7 @@ def synchronized_cycle(
         _recover_unpresented(control, commanded)
     if ready.faulted:
         result.faulted = True
+        result.recovered = ready.recovered
         result.faulted_node = ready.faulted_node
         return result
     if ready.timed_out:
@@ -580,6 +583,7 @@ def synchronized_cycle(
     r = yield control.wait_for("pellet_taken", node=watch)
     if r.faulted:
         result.faulted = True
+        result.recovered = r.recovered
         result.faulted_node = r.faulted_node
         return result
     result.taken_node = r.event.node_id if r.event else 0

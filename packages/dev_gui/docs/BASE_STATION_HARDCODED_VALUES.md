@@ -156,6 +156,19 @@ fallbacks (kept in sync).
 
 ---
 
+## Phone notifications (ntfy)
+
+
+| Value | Constant | Location | Notes |
+| ----- | -------- | -------- | ----- |
+| 60 s | `DEDUPE_WINDOW_S` | `notifier.py` | Same node + fault code is not sent again inside this window |
+| 10 s | `SEND_TIMEOUT_S` | `notifier.py` | Per POST. One retry after a failure, then the error is shown in the Notifications window |
+| `https://ntfy.sh` | `DEFAULT_SERVER` | `notifier.py` | Free public server. Override per Pi in the Notifications window |
+| `~/.sfm/notify.json` | `DEFAULT_NOTIFY_PATH` | `notifier.py` | Per-lab topic, user name, and which faults to send. Not in git |
+
+
+---
+
 ## Logging and storage
 
 
@@ -170,6 +183,7 @@ fallbacks (kept in sync).
 | 64 chars | `sanitize_session_name` | Session-name filesystem cap |
 | `~/.sfm/mac_id_registry.json` | `mac_id_registry.py` | Persistent MAC ↔ Node ID map |
 | `~/.sfm/dev_settings.json` | `dev_settings.py` | Presence factor, etc. |
+| `~/.sfm/notify.json` | `notifier.py` | ntfy topic and which faults alert the phone |
 | `~/.sfm/report_settings.json` | `sfm_analysis.report.naming` (packages/sfm-analysis) | Session-name parse patterns |
 
 

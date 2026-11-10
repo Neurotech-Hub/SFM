@@ -220,7 +220,10 @@ def build(
             )
 
             if result.faulted:
-                control.log("bandit_trial_aborted", trial=trial, node=result.faulted_node)
+                control.log(
+                    "bandit_trial_aborted", trial=trial, node=result.faulted_node,
+                    reason="recover" if result.recovered else "fault",
+                )
                 continue  # top of loop pauses the whole session until recovered
             if result.invalid_reason == "arm_never_presented":
                 control.log(

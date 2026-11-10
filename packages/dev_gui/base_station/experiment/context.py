@@ -62,6 +62,17 @@ _ACTIVITY_KINDS = frozenset(
 )
 
 
+# Events only a running dispense cycle produces. Firmware recover() puts the
+# node in Idle, which emits none of them until the next Dispense.
+_CYCLE_EVENT_KINDS = frozenset({
+    EventKind.ON_PLATE, EventKind.LOADED, EventKind.NO_FEED_PRESENTED,
+    EventKind.PELLET_TAKEN, EventKind.FEED_SKIPPED, EventKind.SEEKING,
+    EventKind.LOWERING, EventKind.LOADING, EventKind.DWELLING,
+    EventKind.DOME_HOLD, EventKind.RETRACTING, EventKind.RAISING,
+    EventKind.PELLET_RELOAD, EventKind.PELLET_RETURNED,
+})
+
+
 @dataclass
 class _NodeView:
     """Per-node sensor snapshot, mirrored from the normalized event stream."""
@@ -400,13 +411,16 @@ class ExperimentControl:
         if self.on_node_halted is not None:
             self.on_node_halted(node_id)
 
-    def recover_node(self, node_id: int) -> None:
+    def recover_node(self, node_id: int, *, send: bool = True) -> None:
         """
         Clear a node's halted state and clear its firmware fault.
 
         Sends ``Recover`` to the node (firmware ``recover()`` resets the fault to
         Idle) and un-latches it so ``dispense`` works again. The runner fires
         ``on_recover`` handlers afterwards so a template can re-arm the node.
+        ``send=False`` when the Recover already went out another way (the GUI's
+        Recover All broadcast) and only the experiment's bookkeeping is needed.
+
         Also clears the "cycle in flight" veto defensively — a FAULT event
         should already have cleared it, but a node whose fault predates this
         experiment session (never saw the FAULT event) must not stay
@@ -414,7 +428,8 @@ class ExperimentControl:
         """
         self._halted.discard(node_id)
         self._view(node_id).dispensing = False
-        self._send(node_id, CanCmd.Recover)
+        if send:
+            self._send(node_id, CanCmd.Recover)
         self.log("node_recovered", node=node_id)
 
     def is_halted(self, node_id: int) -> bool:
@@ -546,6 +561,9 @@ class ExperimentControl:
             nodes=nodes,
             timeout=timeout,
             label=f"{ek.name.lower()}{_node_suffix(nodes)}",
+            # A Recovered (Idle) node can no longer produce a dispense-cycle
+            # event, so waiting for one on that node must end on Recover.
+            abort_on_recover=bool(nodes) and ek in _CYCLE_EVENT_KINDS,
         )
 
     def wait_until(
@@ -554,6 +572,7 @@ class ExperimentControl:
         timeout: Optional[float] = None,
         node: Union[int, Sequence[int], None] = None,
         label: Optional[str] = None,
+        abort_on_recover: bool = False,
     ) -> _Await:
         """
         Wait until ``predicate(control)`` returns True (polled every tick).
@@ -566,6 +585,11 @@ class ExperimentControl:
         short name (``"plates_clear"``, ``"fault_recovery"``) — otherwise
         an unlabeled lambda is logged as ``condition``, not ``<lambda>``.
         Named helper functions keep their ``__name__`` if ``label`` is omitted.
+
+        ``abort_on_recover``: also end the wait (as ``faulted``, with
+        ``recovered`` set) when an operator Recovers one of ``node`` — use it
+        when the predicate depends on that node finishing a dispense cycle,
+        which a Recover cancels.
         """
         nodes = _as_node_tuple(node)
         return _Await(
@@ -574,6 +598,7 @@ class ExperimentControl:
             nodes=nodes,
             timeout=timeout,
             label=_until_label(predicate, nodes, label),
+            abort_on_recover=abort_on_recover and bool(nodes),
         )
 
     def wait(self, seconds: float) -> _Await:

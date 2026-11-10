@@ -132,6 +132,18 @@ class ExperimentController:
         edge = "rising" if high else "falling"
         self._runner.feed_bnc_in(channel, edge, now=ts, high=high)
 
+    def recover_nodes_after_broadcast(self, now: Optional[float] = None) -> bool:
+        """
+        A Recover broadcast (GUI Recover All, BNC recover_all) already reached
+        every node. Do the experiment side for each session node — clear its
+        halted latch, fire on_recover, abort a stranded await — without
+        sending a second frame. Returns False when no experiment is active.
+        """
+        if self._runner is None or self._runner.is_finished:
+            return False
+        self._runner.recover_nodes(self._runner.ctx.nodes, now=now, send=False)
+        return True
+
     def recover_node(self, node_id: int, now: Optional[float] = None) -> bool:
         """
         Recover a faulted node in the running experiment.
