@@ -566,6 +566,17 @@ def synchronized_cycle(
         result.ok = not result.invalid
         return result
 
+    # The animal can take the fast arm's pellet while the gate above is still
+    # waiting on a slower arm (e.g. the empty arm retracted because the mouse
+    # nudged its dome mid-raise). wait_for() only sees takes that arrive after
+    # it is armed, so waiting here would hang forever on a take that already
+    # happened — check the per-node latch first.
+    already = [n for n in watch if control.pellet_taken(n)]
+    if already:
+        result.taken_node = already[0]
+        result.ok = not result.invalid
+        return result
+
     r = yield control.wait_for("pellet_taken", node=watch)
     if r.faulted:
         result.faulted = True

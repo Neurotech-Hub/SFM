@@ -411,6 +411,8 @@ void SFM::handleDispenserEvents() {
 
         case DispenseEvent::PelletReload:    canEv = CanEvent::PelletReload;    break;
 
+        case DispenseEvent::PelletReturned:  canEv = CanEvent::PelletReturned;  break;
+
         case DispenseEvent::Fault:
 
             canEv = CanEvent::Fault;
@@ -433,7 +435,8 @@ void SFM::handleDispenserEvents() {
 
         ev == DispenseEvent::DomeOpened || ev == DispenseEvent::PelletTaken ||
 
-        ev == DispenseEvent::FeedSkipped || ev == DispenseEvent::NoFeedPresented) {
+        ev == DispenseEvent::FeedSkipped || ev == DispenseEvent::NoFeedPresented ||
+        ev == DispenseEvent::PelletReturned) {
 
         leds_.setStatusLed(false);
 
@@ -453,7 +456,7 @@ void SFM::handleDispenserEvents() {
 
 
 
-    // count LE16 (+ optional context byte for DomeOpened / PelletTaken)
+    // count LE16 (+ optional context byte for DomeOpened / PelletTaken / FeedSkipped)
 
     uint8_t extra[3];
 
@@ -471,6 +474,12 @@ void SFM::handleDispenserEvents() {
 
         return;
 
+    }
+
+    if (ev == DispenseEvent::FeedSkipped) {
+        extra[2] = dispenser_.lastSkipPresented() ? 1 : 0;
+        can_.sendEvent(canEv, extra, 3);
+        return;
     }
 
     if (ev == DispenseEvent::PelletTaken) {

@@ -17,6 +17,9 @@ meaningless.
   - locates the ``session_start`` / ``<experiment>_start`` / ``session_end``
     EXPERIMENT rows and copies their fields onto the RunData
   - flags every row after ``session_end`` as ``post_session=True``
+  - renames a ``Pellet Taken`` that a later ``Pellet Returned`` (firmware
+    1.7+) proves false to ``Pellet Taken (returned)``, so every
+    ``by_event("Pellet Taken")`` consumer counts each pellet's real take once
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ class RunData:
     seed: Optional[int] = None
     utc_offset_s: Optional[float] = None  # from session_start's fields; None on
                                            # logs recorded before this was captured
+    macs: Dict[int, str] = field(default_factory=dict)       # node id -> MAC, from session_start
     params: Dict[str, Any] = field(default_factory=dict)     # <experiment>_start fields
     end_fields: Dict[str, Any] = field(default_factory=dict)  # session_end fields
     end_reason: Optional[str] = None
@@ -81,6 +85,44 @@ class RunData:
 
 def _stable_sort_key(row: LogRow) -> Tuple[int, int]:
     return (row.ts_ms, row.idx)
+
+
+RETURNED_TAKE_NAME = "Pellet Taken (returned)"
+
+
+def _mark_returned_takes(run: RunData) -> None:
+    """
+    Rename each ``Pellet Taken`` that a ``Pellet Returned`` on the same node
+    later retracts.
+
+    Firmware 1.7+ sends PelletReturned when the pellet shows up again on the
+    raised plate after a take (the mouse moved it out of the beam and dropped
+    it back). The node goes back to Loaded and a second PelletTaken reports
+    the real take. Renaming the false one keeps it visible in the log/timeline
+    without every take count, latency and inter-take interval counting the
+    same pellet twice.
+    """
+    pending: Dict[int, LogRow] = {}
+    returned = 0
+    for row in run.rows:
+        if row.source != "CAN" or row.frame_type != "EVENT":
+            continue
+        if row.event_name == "Pellet Taken":
+            pending[row.node_id] = row
+        elif row.event_name == "Pellet Returned":
+            take = pending.pop(row.node_id, None)
+            if take is not None:
+                take.event_name = RETURNED_TAKE_NAME
+                returned += 1
+        elif row.event_name in ("Loaded", "NoFeedPresented", "FeedSkipped", "Lowering", "Seeking"):
+            # A new presentation/cycle: an earlier take can no longer be retracted.
+            pending.pop(row.node_id, None)
+    if returned:
+        run.notes.append(
+            f"{returned} Pellet Taken event(s) were followed by Pellet Returned "
+            "(pellet put back on the plate) and are counted as "
+            f"'{RETURNED_TAKE_NAME}', not as takes."
+        )
 
 
 def split_runs(
@@ -140,6 +182,12 @@ def split_runs(
                     utc_offset_s = row.fields.get("utc_offset_s")
                     if isinstance(utc_offset_s, (int, float)):
                         run.utc_offset_s = float(utc_offset_s)
+                    macs = row.fields.get("macs")
+                    if isinstance(macs, dict):
+                        run.macs = {
+                            int(k): str(v) for k, v in macs.items()
+                            if str(k).isdigit() and v and v != "unknown"
+                        }
                 elif row.event_name.endswith("_start") and row.event_name != "session_start":
                     run.params = dict(row.fields)
                 elif row.event_name == "session_end":
@@ -147,6 +195,8 @@ def split_runs(
                     reason = row.fields.get("reason")
                     run.end_reason = str(reason) if reason else None
                     run.has_session_end = True
+
+        _mark_returned_takes(run)
 
         # Flag rows after session_end — needs its position, known only
         # once the run has been fully scanned above.

@@ -370,3 +370,22 @@ class TestOfflineTimeoutHelper:
         )
         assert offline_timeout_for_heartbeat(30) == 90.0
         assert offline_timeout_for_heartbeat(0) == pytest.approx(0.3)
+
+
+def test_feed_skipped_presented_shows_loaded_not_raising() -> None:
+    reg = NodeRegistry(4)
+    reg.update_from_event(1, CanEvent.FeedSkipped, presented=True)
+    assert reg.get(1).dispense_state == DispenseState.Loaded
+    reg.update_from_event(2, CanEvent.FeedSkipped, presented=False)
+    assert reg.get(2).dispense_state == DispenseState.Raising
+    reg.update_from_event(3, CanEvent.FeedSkipped)  # legacy firmware: unchanged
+    assert reg.get(3).dispense_state == DispenseState.Raising
+
+
+def test_pellet_returned_puts_node_back_in_loaded() -> None:
+    reg = NodeRegistry(4)
+    reg.update_from_event(1, CanEvent.PelletTaken)
+    assert reg.get(1).dispense_state == DispenseState.Idle
+    reg.update_from_event(1, CanEvent.PelletReturned)
+    assert reg.get(1).dispense_state == DispenseState.Loaded
+    assert reg.get(1).status_label == "LOADED"

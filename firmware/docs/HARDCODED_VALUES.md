@@ -17,7 +17,8 @@ These are the ones called out most often during bring-up.
 
 | Value         | Constant                | Location             | Notes                                                                                   |
 | ------------- | ----------------------- | -------------------- | --------------------------------------------------------------------------------------- |
-| **200 ms**    | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while `Loaded` → `PelletTaken`. Set from bench data: too short and a reach-in flicker counts as a take |
+| **1 s**       | `kPelletTakenConfirmMs` | `DispenserService.h` | Pellet sensor clear this long while `Loaded` → `PelletTaken`. Too short and a reach-in flicker or a nudged pellet counts as a take (200 ms did, session 110426_1.2F) |
+| **500 ms**    | `kPelletReturnConfirmMs`| `DispenserService.h` | After a take, pellet sensor blocked this long with the plate still up → `PelletReturned`, back to `Loaded` |
 | **2 s**       | `kPelletLoadConfirmMs`  | `DispenserService.h` | Pellet sensor held this long during `Loading` → `OnPlate`. Raw beam stops M1 immediately; if the beam clears before the window elapses the wheel resumes the run-pause pattern. Rejects a fragment tumbling past the beam |
 | **0.5×**      | `kDefaultFeedSpeedScale`| `DispenserService.h` | M1 runs at this fraction of `motorSpeed_` — half speed, so the wheel drops one pellet at a time |
 | **500 steps** | `kDefaultFeedBurstSteps`| `DispenserService.h` | M1 steps per run burst before a settle pause (same idea as `StepperMotorTest`) |
@@ -90,7 +91,8 @@ Same header; **not** runtime-configurable via CAN today.
 | Value  | Constant                | Trigger                                                              |
 | ------ | ----------------------- | -------------------------------------------------------------------- |
 | 2 s    | `kPelletLoadConfirmMs`  | Pellet sensor held during `Loading` → `OnPlate`, raise starts        |
-| 200 ms | `kPelletTakenConfirmMs` | Pellet sensor clear while `Loaded` → `PelletTaken`, cycle completes |
+| 1 s    | `kPelletTakenConfirmMs` | Pellet sensor clear while `Loaded` → `PelletTaken`, cycle completes |
+| 500 ms | `kPelletReturnConfirmMs`| Pellet back in the beam after a take, plate up → `PelletReturned`, `Loaded` |
 | 500 ms | `kPelletLostMs`         | Pellet sensor clear during the raise → retract and reload, or an early take |
 | 5 s    | `kLoadClearOnRaiseMs`   | Load position sensor still blocked after raise start → Jam           |
 | 30 s   | `kDomeOpenWarnMs`       | Dome held open → `DomeOpenWarning`                                   |
@@ -211,9 +213,15 @@ The number lives in two places that must stay identical. `packages/dev_gui/tests
 | `firmware/src/SFMVersion.h` | `kFirmwareVersionMajor` / `Minor` / `Patch` and `kFirmwareVersionStr` |
 | `firmware/library.properties` | `version=` |
 
-Use the **minor** number for a behaviour or protocol change, and the **patch** number for a fix that does not change the wire format. Current release: **1.6.0**.
+Use the **minor** number for a behaviour or protocol change, and the **patch** number for a fix that does not change the wire format. Current release: **1.7.0**.
 
 When you bump the version, add a subsection here for the new number. The base station only records the number; this list is what that number means.
+
+### 1.7.0
+
+- **Take confirm 1 s** (was 200 ms). A nudged pellet that rolls back is no longer a take.
+- **`PelletReturned` (`0x16`, count LE16).** After a take, if the pellet is back in the beam for 500 ms with the plate still up, the node reports it and returns to `Loaded`. The real take then reports `PelletTaken` again with the same `takenCount_`, so the pellet is counted once.
+- **`FeedSkipped` presented byte.** Payload is now count LE16 + `presented`: 1 when the occupied plate was already at the top (the node is `Loaded`, no motion, no `Loaded` event follows), 0 when it homes and raises (`Loaded` follows). Base stations older than this treat the byte as absent.
 
 ### 1.6.0
 

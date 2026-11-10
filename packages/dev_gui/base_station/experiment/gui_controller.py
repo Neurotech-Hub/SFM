@@ -63,6 +63,7 @@ class ExperimentController:
         online_timeout_s: Optional[float] = None,
         resume: Any = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
+        mac_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
@@ -85,6 +86,7 @@ class ExperimentController:
             wire_bnc=False,
             online_timeout_s=online_timeout_s,
             firmware_for=firmware_for,
+            mac_for=mac_for,
         )
         self._gui_log = log
         runner.ctx.on_log = self._on_experiment_log

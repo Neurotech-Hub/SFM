@@ -48,6 +48,7 @@ class EventKind(Enum):
     DOME_HOLD = auto()  # at the drop position, waiting for the dome to close
     RETRACTING = auto()  # plate returning to the drop position
     PELLET_RELOAD = auto()  # warning: pellet missing, M1 loading again
+    PELLET_RETURNED = auto()  # pellet back on the raised plate after a (false) take
     RAISING = auto()
     DOME_OPEN_WARNING = auto()
     PRESENCE_CHANGED = auto()
@@ -85,6 +86,7 @@ _CAN_EVENT_TO_KIND: Dict[CanEvent, EventKind] = {
     CanEvent.DomeHold: EventKind.DOME_HOLD,
     CanEvent.Retracting: EventKind.RETRACTING,
     CanEvent.PelletReload: EventKind.PELLET_RELOAD,
+    CanEvent.PelletReturned: EventKind.PELLET_RETURNED,
     CanEvent.Raising: EventKind.RAISING,
     CanEvent.DomeOpenWarning: EventKind.DOME_OPEN_WARNING,
     CanEvent.PresenceCalResult: EventKind.PRESENCE_CAL_RESULT,
@@ -333,6 +335,8 @@ class EventNormalizer:
                     event_data["pellet_present"] = ctx["pellet_present"]
                 if "dome_open" in ctx:
                     event_data["dome_open"] = ctx["dome_open"]
+                if "presented" in ctx:
+                    event_data["presented"] = ctx["presented"]
             elif payload.raw_extra:
                 event_data["raw_extra"] = bytes(payload.raw_extra)
 
