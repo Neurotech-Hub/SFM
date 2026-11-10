@@ -305,19 +305,19 @@ to a harmless simulation mode automatically when no GPIO backend
 ## Phone notifications (ntfy)
 
 The **Notifications** button on the main screen sends a phone alert when a node
-faults with `Jam`, `PelletLost`, `FeedTimeout`, or `ActuatorTimeout`. Each base
+faults with `PelletLost`, `FeedTimeout`, or `ActuatorTimeout`. Each base
 station has its own settings in `~/.sfm/notify.json`, so each lab picks its own
-topic and which of those four faults to send. Nothing is sent until a topic is
+topic and which of those three faults to send. Nothing is sent until a topic is
 set.
 
 1. Install the ntfy app (free on iOS and Android) or open [ntfy.sh](https://ntfy.sh).
-2. In the GUI, click **Generate topic**, then **Save**. The topic is the password
-   on the free server — leave it random, and don't reuse another lab's topic.
+2. In the GUI, type a topic (letters, digits, `-` and `_`), enter your name in
+   **User name**, then click **Save**. The topic is the password on the free
+   server — make it long and random, and don't reuse another lab's topic.
 3. Subscribe to that topic in the app.
 4. Click **Send test**. The phone should show the test within a few seconds.
 
 The server field stays `https://ntfy.sh` unless the lab runs its own ntfy server.
-The token field is only for a paid ntfy account or a server that requires one.
 A repeat of the same fault on the same node inside 60 seconds is not sent again.
 
 ## File structure

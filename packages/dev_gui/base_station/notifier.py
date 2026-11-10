@@ -12,9 +12,8 @@ File format (JSON)::
       "enabled": true,
       "server": "https://ntfy.sh",
       "topic": "sfm-lab-a-7Qx2kP9wLm",
-      "token": "",
       "station_name": "Lab A rig 1",
-      "faults": ["Jam", "PelletLost", "FeedTimeout", "ActuatorTimeout"]
+      "faults": ["PelletLost", "FeedTimeout", "ActuatorTimeout"]
     }
 
 Unknown keys are ignored on load. A missing or corrupt file falls back to
@@ -30,8 +29,6 @@ from __future__ import annotations
 
 import json
 import queue
-import secrets
-import string
 import threading
 import time
 import urllib.error
@@ -48,18 +45,10 @@ DEFAULT_NOTIFY_PATH = Path("~/.sfm/notify.json")
 DEFAULT_SERVER = "https://ntfy.sh"
 
 # Wire fault codes a lab can subscribe to. Order is the GUI checkbox order.
-KNOWN_FAULTS = ("Jam", "PelletLost", "FeedTimeout", "ActuatorTimeout")
+KNOWN_FAULTS = ("PelletLost", "FeedTimeout", "ActuatorTimeout")
 
 DEDUPE_WINDOW_S = 60.0
 SEND_TIMEOUT_S = 10.0
-TOPIC_LENGTH = 20
-_TOPIC_ALPHABET = string.ascii_letters + string.digits
-
-
-def generate_topic() -> str:
-    """A fresh unguessable topic name. On the free server the topic is the password."""
-    return "".join(secrets.choice(_TOPIC_ALPHABET) for _ in range(TOPIC_LENGTH))
-
 
 @dataclass
 class SendResult:
@@ -75,7 +64,6 @@ class _Outgoing:
     url: str
     title: str
     body: str
-    token: str
 
 
 class NotifySettings:
@@ -86,7 +74,6 @@ class NotifySettings:
         self.enabled: bool = True
         self.server: str = DEFAULT_SERVER
         self.topic: str = ""
-        self.token: str = ""
         self.station_name: str = ""
         self.faults: List[str] = list(KNOWN_FAULTS)
         self.load()
@@ -100,7 +87,6 @@ class NotifySettings:
         self.enabled = True
         self.server = DEFAULT_SERVER
         self.topic = ""
-        self.token = ""
         self.station_name = ""
         self.faults = list(KNOWN_FAULTS)
         if not self._path.is_file():
@@ -118,7 +104,7 @@ class NotifySettings:
         server = data.get("server")
         if isinstance(server, str) and server.strip():
             self.server = server.strip()
-        for attr in ("topic", "token", "station_name"):
+        for attr in ("topic", "station_name"):
             value = data.get(attr)
             if isinstance(value, str):
                 setattr(self, attr, value.strip())
@@ -134,7 +120,6 @@ class NotifySettings:
             "enabled": self.enabled,
             "server": self.server,
             "topic": self.topic,
-            "token": self.token,
             "station_name": self.station_name,
             "faults": list(self.faults),
         }
@@ -239,7 +224,6 @@ class Notifier:
             url=_endpoint(settings.server, topic),
             title=_fault_title(settings.station_name, int(node_id), code_name, label),
             body=_fault_body(code, session),
-            token=settings.token.strip(),
         ))
 
     def _enqueue_test(self) -> None:
@@ -254,7 +238,6 @@ class Notifier:
             url=_endpoint(settings.server, topic),
             title=f"{head}: test",
             body="Test notification from the SFM base station.",
-            token=settings.token.strip(),
         ))
 
     def _set_result(self, ok: bool, detail: str) -> None:
@@ -322,8 +305,6 @@ def _post(item: _Outgoing) -> None:
     req.add_header("Priority", "high")
     req.add_header("Tags", "warning")
     req.add_header("Content-Type", "text/plain; charset=utf-8")
-    if item.token:
-        req.add_header("Authorization", f"Bearer {item.token}")
     with urllib.request.urlopen(req, timeout=SEND_TIMEOUT_S) as resp:
         resp.read()
 

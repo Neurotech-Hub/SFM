@@ -14,7 +14,6 @@ from base_station.notifier import (
     KNOWN_FAULTS,
     Notifier,
     NotifySettings,
-    generate_topic,
 )
 from base_station.protocol import (
     CanEvent,
@@ -23,6 +22,7 @@ from base_station.protocol import (
     ServiceStatus,
     build_event_frame,
     build_heartbeat_frame,
+    fault_user_message,
 )
 
 
@@ -82,14 +82,13 @@ def test_save_load_round_trip_ignores_unknown_keys(tmp_path) -> None:
     settings.enabled = False
     settings.server = "https://alerts.example"
     settings.topic = "lab-topic"
-    settings.token = "secret"
     settings.station_name = "Rig 1"
-    settings.faults = ["Jam", "FeedTimeout"]
+    settings.faults = ["PelletLost", "FeedTimeout"]
     settings.save()
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["not_a_real_key"] = "ignored"
-    raw["faults"] = ["Jam", "NotAFault", "FeedTimeout"]
+    raw["faults"] = ["PelletLost", "NotAFault", "FeedTimeout"]
     raw["enabled"] = "yes"
     path.write_text(json.dumps(raw), encoding="utf-8")
 
@@ -97,32 +96,25 @@ def test_save_load_round_trip_ignores_unknown_keys(tmp_path) -> None:
     assert loaded.enabled is True  # non-bool is ignored, so the default stands
     assert loaded.server == "https://alerts.example"
     assert loaded.topic == "lab-topic"
-    assert loaded.token == "secret"
     assert loaded.station_name == "Rig 1"
-    assert loaded.faults == ["Jam", "FeedTimeout"]
+    assert loaded.faults == ["PelletLost", "FeedTimeout"]
     assert not hasattr(loaded, "not_a_real_key")
 
 
-def test_generate_topic_is_20_unguessable_characters() -> None:
-    topic = generate_topic()
-    assert len(topic) == 20
-    assert topic.isalnum()
-    assert generate_topic() != topic
-
-
 def test_disabled_code_or_empty_topic_sends_nothing(tmp_path, monkeypatch) -> None:
-    notifier, captured = _notifier(tmp_path, monkeypatch, faults=["Jam"])
+    notifier, captured = _notifier(tmp_path, monkeypatch, faults=["FeedTimeout"])
     notifier.on_fault(1, ServiceStatus.PelletLost, "Node 1", "")
+    notifier.on_fault(1, ServiceStatus.Jam, "Node 1", "")
     notifier.on_fault(1, None, "Node 1", "")
     notifier.settings.topic = ""
-    notifier.on_fault(1, ServiceStatus.Jam, "Node 1", "")
+    notifier.on_fault(1, ServiceStatus.FeedTimeout, "Node 1", "")
     notifier.flush()
     assert captured == []
 
 
 def test_alerts_off_sends_nothing(tmp_path, monkeypatch) -> None:
     notifier, captured = _notifier(tmp_path, monkeypatch, enabled=False)
-    notifier.on_fault(1, ServiceStatus.Jam)
+    notifier.on_fault(1, ServiceStatus.FeedTimeout)
     notifier.flush()
     assert captured == []
 
@@ -144,39 +136,34 @@ def test_duplicate_window(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("base_station.notifier.time.monotonic", lambda: clock["now"])
     notifier, captured = _notifier(tmp_path, monkeypatch)
 
-    notifier.on_fault(2, ServiceStatus.Jam, "Node 2", "")
-    notifier.on_fault(2, ServiceStatus.Jam, "Node 2", "")
-    notifier.on_fault(3, ServiceStatus.Jam, "Node 3", "")
+    notifier.on_fault(2, ServiceStatus.FeedTimeout, "Node 2", "")
+    notifier.on_fault(2, ServiceStatus.FeedTimeout, "Node 2", "")
+    notifier.on_fault(3, ServiceStatus.FeedTimeout, "Node 3", "")
     notifier.flush()
     assert len(captured) == 2
 
     clock["now"] += DEDUPE_WINDOW_S
-    notifier.on_fault(2, ServiceStatus.Jam, "Node 2", "")
+    notifier.on_fault(2, ServiceStatus.FeedTimeout, "Node 2", "")
     notifier.flush()
     assert len(captured) == 3
 
 
-def test_request_headers_include_bearer_only_with_a_token(tmp_path, monkeypatch) -> None:
-    notifier, captured = _notifier(tmp_path, monkeypatch, token="abc123")
-    notifier.on_fault(2, ServiceStatus.Jam, "Left feeder", "cohortA")
+def test_request_headers(tmp_path, monkeypatch) -> None:
+    notifier, captured = _notifier(tmp_path, monkeypatch)
+    notifier.on_fault(2, ServiceStatus.FeedTimeout, "Left feeder", "cohortA")
     notifier.flush()
 
     req, timeout = captured[0]
     headers = _headers(req)
     assert req.full_url == "https://ntfy.sh/labtopic123"
-    assert headers["title"].startswith("SFM Lab A: Node 2 (Left feeder) Jam")
+    assert headers["title"].startswith("SFM Lab A: Node 2 (Left feeder) FeedTimeout")
     assert headers["priority"] == "high"
     assert headers["tags"] == "warning"
-    assert headers["authorization"] == "Bearer abc123"
+    assert "authorization" not in headers
     assert timeout == 10.0
     body = req.data.decode("utf-8")
-    assert "Jam" in body
     assert "Session: cohortA" in body
-
-    bare, _captured = _notifier(tmp_path, monkeypatch, token="")
-    bare.on_fault(1, ServiceStatus.FeedTimeout, "Node 1", "")
-    bare.flush()
-    assert "authorization" not in _headers(_captured[0][0])
+    assert fault_user_message(ServiceStatus.FeedTimeout) in body
 
 
 def test_failed_send_is_retried_once_and_does_not_raise(tmp_path, monkeypatch) -> None:

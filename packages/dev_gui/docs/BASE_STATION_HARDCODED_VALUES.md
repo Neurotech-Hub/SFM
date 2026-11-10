@@ -164,7 +164,7 @@ fallbacks (kept in sync).
 | 60 s | `DEDUPE_WINDOW_S` | `notifier.py` | Same node + fault code is not sent again inside this window |
 | 10 s | `SEND_TIMEOUT_S` | `notifier.py` | Per POST. One retry after a failure, then the error is shown in the Notifications window |
 | `https://ntfy.sh` | `DEFAULT_SERVER` | `notifier.py` | Free public server. Override per Pi in the Notifications window |
-| `~/.sfm/notify.json` | `DEFAULT_NOTIFY_PATH` | `notifier.py` | Per-lab topic, token, station name, and which faults to send. Not in git |
+| `~/.sfm/notify.json` | `DEFAULT_NOTIFY_PATH` | `notifier.py` | Per-lab topic, user name, and which faults to send. Not in git |
 
 
 ---

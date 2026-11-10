@@ -33,7 +33,7 @@ from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .dev_settings import DevSettings
-from .notifier import KNOWN_FAULTS, Notifier, NotifySettings, generate_topic
+from .notifier import KNOWN_FAULTS, Notifier, NotifySettings
 from . import storage
 from .node_registry import (
     NodeRegistry,
@@ -2447,7 +2447,7 @@ class SFMApp:
         ):
             dpg.add_text(
                 "Install the free ntfy app (iOS or Android) and subscribe to the topic below. "
-                "The topic is the password: keep it random, and give each lab its own.",
+                "The topic is the password: pick a long, random one and give each lab its own.",
                 color=(160, 165, 175, 255), wrap=width - 30,
             )
             dpg.add_checkbox(
@@ -2461,29 +2461,15 @@ class SFMApp:
                 default_value=settings.server,
                 width=280,
             )
-            with dpg.group(horizontal=True):
-                dpg.add_input_text(
-                    tag="notify_topic",
-                    label="Topic",
-                    default_value=settings.topic,
-                    width=280,
-                )
-                dpg.add_button(
-                    label="Generate topic",
-                    width=130,
-                    callback=lambda: dpg.set_value("notify_topic", generate_topic()),
-                )
             dpg.add_input_text(
-                tag="notify_token",
-                label="Token",
-                default_value=settings.token,
-                password=True,
+                tag="notify_topic",
+                label="Topic",
+                default_value=settings.topic,
                 width=280,
-                hint="Only for a paid account or your own server",
             )
             dpg.add_input_text(
                 tag="notify_station",
-                label="Station name",
+                label="User name",
                 default_value=settings.station_name,
                 width=280,
             )
@@ -2544,7 +2530,6 @@ class SFMApp:
             return "Topic may only use letters, digits, - and _."
         settings.server = server or "https://ntfy.sh"
         settings.topic = topic
-        settings.token = str(dpg.get_value("notify_token") or "").strip()
         settings.station_name = str(dpg.get_value("notify_station") or "").strip()
         settings.faults = [
             name for name in KNOWN_FAULTS
