@@ -73,13 +73,17 @@ export function placeNodes(nodes, overrides = {}) {
 /** Ring scale, so twelve nodes still fit. The text keeps a readable size. */
 export function nodeScale(n) { return n <= 4 ? 1 : n <= 8 ? 0.72 : 0.56; }
 
-/** Remembers which node a mouse stood on last, and the one before it. */
+/**
+ * Remembers which node a mouse stood on last, and the one before it. A node
+ * becomes "last" when its presence drops, so with the mouse between two pads
+ * the one it leaves from last is the one that counts.
+ */
 export class PadTracker {
   constructor() { this.last = null; this.prev = null; this.seen = new Map(); }
   update(nodes) {
     for (const n of nodes) {
       const was = this.seen.get(n.id) || false;
-      if (n.presence && !was && n.id !== this.last) { this.prev = this.last; this.last = n.id; }
+      if (!n.presence && was && n.id !== this.last) { this.prev = this.last; this.last = n.id; }
       this.seen.set(n.id, !!n.presence);
     }
   }
