@@ -347,24 +347,48 @@ class ExperimentRunner:
             self.normalizer.inject_bnc_in(channel, edge, ts, high=high)
         )
 
-    def recover_node(self, node_id: int, now: Optional[float] = None) -> None:
+    def recover_node(
+        self, node_id: int, now: Optional[float] = None, *, send: bool = True,
+    ) -> None:
         """
         Operator-initiated recovery of a faulted node.
 
         Clears the node's halted state, sends Recover (clears the firmware
         fault), then fires NODE_RECOVERED handlers so a template can re-arm it.
         No-op after the session ends.
+
+        Works for a node that was NOT faulted too (an operator can Recover a
+        node mid-cycle): any script await that node's cycle was meant to
+        satisfy is aborted, so the template moves on instead of waiting for an
+        event an Idle node will never send.
+        """
+        self.recover_nodes([node_id], now=now, send=send)
+
+    def recover_nodes(
+        self, node_ids: Sequence[int], now: Optional[float] = None, *, send: bool = True,
+    ) -> None:
+        """
+        Recover several nodes as ONE operation (e.g. a Recover All broadcast).
+
+        Every node is un-halted and its pending await aborted before the
+        script advances once. Recovering them one at a time would let the
+        first recovery resume the session and start a trial that the second
+        recovery then aborts.
         """
         if self._finished:
             return
         now = now if now is not None else time.time()
         self.ctx.set_now(now)
-        self.ctx.recover_node(node_id)
-        ev = NodeEvent(kind=EventKind.NODE_RECOVERED, node_id=node_id, timestamp=now)
-        self.ctx.observe_event(ev)
-        self._fire_handlers(ev)
-        if self.script is not None and self._active and not self._finished:
-            self.script.observe(ev)
+        script_live = self.script is not None and self._active and not self._finished
+        for node_id in node_ids:
+            self.ctx.recover_node(node_id, send=send)
+            ev = NodeEvent(kind=EventKind.NODE_RECOVERED, node_id=node_id, timestamp=now)
+            self.ctx.observe_event(ev)
+            self._fire_handlers(ev)
+            if script_live:
+                self.script.on_node_recovered(node_id)
+                self.script.observe(ev)
+        if script_live:
             self.script.advance(now)
 
     def step(

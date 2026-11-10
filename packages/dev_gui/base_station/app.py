@@ -2310,6 +2310,11 @@ class SFMApp:
                     self._send_cmd(node_id, cmd, payload)
                 return
         ok = self._can.send_broadcast(cmd, payload)
+        if cmd == CanCmd.Recover and self._exp is not None and self._exp.is_running:
+            # The running experiment must hear about it too — otherwise a
+            # fault-paused session stays paused and a script waiting on a
+            # recovered node's cycle waits forever.
+            self._exp.recover_nodes_after_broadcast()
         if cmd == CanCmd.Recover and self._registry:
             for node in self._registry.all_nodes():
                 self._registry.clear_fault(node.node_id)
