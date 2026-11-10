@@ -68,7 +68,7 @@ class CanEvent(IntEnum):
     Raising           = 0x09  # M2 raising plate
     DomeOpenWarning   = 0x0A  # dome open >30 s (non-sticky warning)
     PelletTaken       = 0x0B  # raw_extra: count LE16 + dome_open
-    FeedSkipped       = 0x0C  # plate occupied on Dispense
+    FeedSkipped       = 0x0C  # plate occupied on Dispense; raw_extra: count LE16 + presented (fw >= 1.7)
     Seeking           = 0x0D  # M2 clearing the load sensor before Lowering (clear or step cap)
     NoFeedPresented   = 0x0E  # no-feed raise complete; raw_extra: count LE16 (NOT incremented)
     Dwelling          = 0x0F  # phase: holding at the drop position, M1 idle
@@ -78,6 +78,7 @@ class CanEvent(IntEnum):
     Retracting        = 0x13  # plate returning to the drop position (dome opened before 80% of the raise)
     PelletReload      = 0x14  # raw_extra: count LE16, reason(1), attempt(1). Pellet missing; wheel loads again
     FirmwareInfo      = 0x15  # raw_extra: major(1), minor(1), patch(1)
+    PelletReturned    = 0x16  # pellet back on the raised plate after a PelletTaken (that take was false); raw_extra: count LE16
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
@@ -100,6 +101,7 @@ CAN_EVENT_DISPLAY_NAME = {
     CanEvent.DomeHold: "Dome Hold",
     CanEvent.Retracting: "Retracting",
     CanEvent.PelletReload: "Pellet Reload",
+    CanEvent.PelletReturned: "Pellet Returned",
     CanEvent.FirmwareInfo: "Firmware Info",
     CanEvent.PresenceCalResult: "PresenceCalResult",
     CanEvent.ConfigApplied: "ConfigApplied",
@@ -114,6 +116,7 @@ _COUNT_EVENTS = frozenset({
     CanEvent.FeedSkipped, CanEvent.Seeking, CanEvent.Lowering, CanEvent.Loading,
     CanEvent.Raising, CanEvent.NoFeedPresented, CanEvent.Dwelling,
     CanEvent.DomeHold, CanEvent.Retracting, CanEvent.PelletReload,
+    CanEvent.PelletReturned,
 })
 
 
@@ -453,7 +456,9 @@ def parse_event_context(event: EventPayload) -> Optional[dict]:
     """
     Decode count LE16 (+ optional context byte) for milestone events.
 
-    Returns dict with pellet_count and optional pellet_present / dome_open.
+    Returns dict with pellet_count and optional pellet_present / dome_open /
+    presented (FeedSkipped: 1 = plate already at the top and presenting, no
+    Loaded follows; 0 = homing then raising; absent before firmware 1.7).
     Only applies to events in _COUNT_EVENTS — anything else (e.g. a fault
     payload or PresenceCalResult) is not a count and must not be misread as
     one just because it happens to carry >= 2 extra bytes.
@@ -467,6 +472,8 @@ def parse_event_context(event: EventPayload) -> Optional[dict]:
         out["pellet_present"] = bool(event.raw_extra[2])
     if event.event == CanEvent.PelletTaken and len(event.raw_extra) >= 3:
         out["dome_open"] = bool(event.raw_extra[2])
+    if event.event == CanEvent.FeedSkipped and len(event.raw_extra) >= 3:
+        out["presented"] = bool(event.raw_extra[2])
     return out
 
 
