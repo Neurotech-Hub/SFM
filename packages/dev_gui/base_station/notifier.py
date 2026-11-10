@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from .protocol import ServiceStatus, fault_user_message
 
@@ -46,6 +46,10 @@ DEFAULT_SERVER = "https://ntfy.sh"
 
 # Wire fault codes a lab can subscribe to. Order is the GUI checkbox order.
 KNOWN_FAULTS = ("PelletLost", "FeedTimeout", "ActuatorTimeout")
+
+MAX_TOPIC_LEN = 64            # ntfy's own limit
+MAX_NAME_LEN = 64
+MAX_SERVER_LEN = 200
 
 DEDUPE_WINDOW_S = 60.0
 SEND_TIMEOUT_S = 10.0
@@ -64,6 +68,87 @@ class _Outgoing:
     url: str
     title: str
     body: str
+
+
+def clean_form(
+    enabled: object, server: object, topic: object, station_name: object, faults: object,
+) -> "tuple[Optional[Dict[str, object]], str]":
+    """
+    Check Notifications form values the way the DearPyGui window does.
+
+    Returns ``(values, "")`` ready to put on a ``NotifySettings``, or ``(None, message)`` with a
+    message for the operator. An empty topic is allowed: it means nothing is sent.
+    """
+    if not isinstance(enabled, bool):
+        return None, "Alerts must be on or off."
+    srv = server.strip() if isinstance(server, str) else ""
+    if srv and not srv.startswith(("http://", "https://")):
+        srv = "https://" + srv
+    if srv:
+        host = urlsplit(srv).netloc
+        if not host or " " in srv or len(srv) > MAX_SERVER_LEN:
+            return None, "Server must be an http(s) URL, such as https://ntfy.sh."
+    top = topic.strip() if isinstance(topic, str) else None
+    if top is None:
+        return None, "Topic must be text."
+    if top and (len(top) > MAX_TOPIC_LEN or not all(ch.isascii() and (ch.isalnum() or ch in "-_") for ch in top)):
+        return None, f"Topic may only use letters, digits, - and _ ({MAX_TOPIC_LEN} at most)."
+    name = station_name.strip() if isinstance(station_name, str) else None
+    if name is None or len(name) > MAX_NAME_LEN or any(ord(ch) < 32 for ch in name):
+        return None, f"Name must be plain text of up to {MAX_NAME_LEN} characters."
+    if not isinstance(faults, (list, tuple)):
+        return None, "Choose which faults to send."
+    unknown = [f for f in faults if f not in KNOWN_FAULTS]
+    if unknown:
+        return None, f"Unknown fault: {', '.join(str(u) for u in unknown)}."
+    return {
+        "enabled": enabled,
+        "server": srv or DEFAULT_SERVER,
+        "topic": top,
+        "station_name": name,
+        "faults": [f for f in KNOWN_FAULTS if f in faults],
+    }, ""
+
+
+def _read_raw(path: Path) -> Dict[str, object]:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def kept_extras(path: "str | Path") -> Dict[str, List[str]]:
+    """What the settings file holds that this version doesn't manage: other keys, and fault names it doesn't know."""
+    raw = _read_raw(Path(path).expanduser())
+    faults = raw.get("faults") if isinstance(raw.get("faults"), list) else []
+    return {
+        "keys": sorted(k for k in raw if k not in ("version", "enabled", "server", "topic", "station_name", "faults")),
+        "faults": [f for f in faults if isinstance(f, str) and f not in KNOWN_FAULTS],
+    }
+
+
+def save_preserving(path: "str | Path", values: Dict[str, object]) -> None:
+    """
+    Write checked form ``values`` (see ``clean_form``) into the settings file and keep everything else
+    in it: a newer version may have added keys (an access token, more fault types) that this one
+    can't show, and saving must not erase them. Atomic: a killed process can't leave half a file.
+    """
+    path = Path(path).expanduser()
+    raw = _read_raw(path)
+    old_faults = raw.get("faults") if isinstance(raw.get("faults"), list) else []
+    unknown = [f for f in old_faults if isinstance(f, str) and f not in KNOWN_FAULTS]
+    raw.update({
+        "version": raw.get("version", 1),
+        "enabled": values["enabled"], "server": values["server"], "topic": values["topic"],
+        "station_name": values["station_name"], "faults": list(values["faults"]) + unknown,
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(raw, f, indent=2)
+        f.write("\n")
+    tmp.replace(path)
 
 
 class NotifySettings:

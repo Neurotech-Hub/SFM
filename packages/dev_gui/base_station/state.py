@@ -81,6 +81,16 @@ def bnc_out_dict(cfg: Any) -> Dict[str, Any]:
     }
 
 
+def _notify_dict(notifier: Any) -> Dict[str, Any]:
+    """Whether alerts can go out, and how the last send went. The topic is deliberately not here."""
+    last = notifier.last_result
+    return {
+        "enabled": bool(notifier.settings.enabled),
+        "configured": bool(notifier.settings.topic.strip()),
+        "last": None if last is None else {"when": last.when, "ok": bool(last.ok), "detail": last.detail},
+    }
+
+
 def log_row_dict(entry: LogEntry) -> Dict[str, Any]:
     """One log row for the event table. The full record stays in the CSV."""
     return {
@@ -170,7 +180,9 @@ def build_snapshot(engine: Any) -> Dict[str, Any]:
             "out": bnc_out_dict(engine._bnc_out_cfg),
         },
         "notice": None if notice is None else {"level": notice[0], "text": notice[1], "seq": engine.notice_seq},
+        "notify": _notify_dict(engine._notifier),
         "log": {
+            "dir": engine._exp_log_dir,
             "last_seq": log.last_seq if log is not None else 0,
             "csv_path": str(log.csv_path) if log is not None and log.csv_path else None,
             "write_error": str(log.write_error) if log is not None and log.write_error else None,

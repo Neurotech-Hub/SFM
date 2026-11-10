@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from . import storage
+from . import notifier, storage
 from .experiment_form import FormError, collect, describe
 from .gui_settings import MAX_NODES
 from .log_manager import sanitize_session_name
@@ -479,8 +479,57 @@ def bnc_pulse(engine: Any) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Phone notifications (ntfy)
+# ---------------------------------------------------------------------------
+
+def get_notify_settings(engine: Any) -> Dict[str, Any]:
+    """The saved alert settings. The topic is the password on the free server, so it is only given here."""
+    engine._notifier.reload()          # the file is the truth: it may have been edited since the engine started
+    st = engine._notifier.settings
+    return {
+        "settings": {"enabled": st.enabled, "server": st.server, "topic": st.topic,
+                     "station_name": st.station_name, "faults": list(st.faults)},
+        "known_faults": list(notifier.KNOWN_FAULTS),
+        # Things in the file this version doesn't manage. Saving from the page keeps them.
+        "kept": notifier.kept_extras(st.path),
+    }
+
+
+def set_notify_settings(
+    engine: Any, enabled: bool, server: str, topic: str, station_name: str, faults: List[str],
+) -> Dict[str, Any]:
+    """Check and save the alert settings. They apply from the next fault."""
+    clean, error = notifier.clean_form(enabled, server, topic, station_name, faults)
+    if error:
+        raise CommandError(error)
+    st = engine._notifier.settings
+    try:
+        notifier.save_preserving(st.path, clean)       # nothing in memory changes unless this works
+    except OSError as exc:
+        raise CommandError(f"Could not save: {exc}") from None
+    engine._notifier.reload()
+    return {"saved": True, "has_topic": bool(st.topic)}
+
+
+def send_test_notification(engine: Any) -> Dict[str, Any]:
+    """Queue a test message to the saved topic. The result shows up in the state a moment later."""
+    if not engine._notifier.settings.topic.strip():
+        raise CommandError("Save a topic first, then send a test.")
+    engine._notifier.send_test()
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Log
 # ---------------------------------------------------------------------------
+
+def set_log_dir(engine: Any, path: str) -> Dict[str, Any]:
+    """Log to another folder from now on. New sessions, exports and the daily log go there."""
+    error = engine.set_log_dir(path)
+    if error:
+        raise CommandError(error)
+    return {"log_dir": engine._exp_log_dir}
+
 
 MAX_LOG_ROWS_PER_REQUEST = 1000
 
@@ -549,7 +598,8 @@ COMMANDS: Dict[str, Callable[..., Dict[str, Any]]] = {
         get_layout, set_node_position, clear_layout,
         set_heartbeat, set_presence_factor, get_dev_settings,
         set_bnc_input, set_bnc_out, bnc_out_triggers, bnc_pulse,
-        log_rows, heartbeat_rows, log_clear, log_export,
+        log_rows, heartbeat_rows, log_clear, log_export, set_log_dir,
+        get_notify_settings, set_notify_settings, send_test_notification,
         list_interfaces, get_defaults, get_gui_settings, set_gui_settings,
     )
 }

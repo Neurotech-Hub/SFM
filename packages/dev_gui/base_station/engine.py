@@ -456,6 +456,38 @@ class BaseStationEngine:
             ))
         return ""
 
+    def set_log_dir(self, log_dir: str) -> str:
+        """
+        Move logging to another folder while connected. Returns "" on success, otherwise a
+        message for the operator; nothing changes on a refusal.
+
+        New sessions, exports and the daily activity log go to the new folder. Files already
+        written stay where they are. Not while a session runs: its file is open in the old one.
+        """
+        if self._log is None:
+            return "Connect to the bus first."
+        if self._exp.is_running:
+            return "Stop the session before changing the log folder."
+        log_dir = (log_dir or "").strip()
+        if not log_dir:
+            return "Enter a log folder."
+        ok, error = storage.validate_log_dir(log_dir)
+        if not ok:
+            return error
+        old = self._exp_log_dir
+        if Path(log_dir).expanduser().resolve() == Path(old).expanduser().resolve():
+            return ""
+        try:
+            self._log.move_to(log_dir)
+        except (OSError, RuntimeError) as exc:
+            return f"Could not start logging in that folder: {exc}"
+        self._exp_log_dir = log_dir
+        self._log.add(LogEntry(
+            timestamp=time.time(), direction="SYS", node_id=0, frame_type="LOG", event_name="LogFolderChanged",
+            raw_id=0, raw_data=b"", details=f"{old} -> {log_dir}",
+        ))
+        return ""
+
     def disconnect(self) -> str:
         """
         Close the CAN bus, the log and discovery so Connect can be done again

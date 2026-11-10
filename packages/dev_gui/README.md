@@ -369,6 +369,11 @@ set.
 3. Subscribe to that topic in the app.
 4. Click **Send test**. The phone should show the test within a few seconds.
 
+In the Rig Map web page the same settings are in the **Phone notifications** card on the
+Connect step. It works before you connect to the bus, and **Make a random topic** fills in a long
+random one. Saving keeps anything else already in `notify.json` (an access token, other fault
+types) exactly as it is, and the card says so when there is something it doesn't show.
+
 The server field stays `https://ntfy.sh` unless the lab runs its own ntfy server.
 A repeat of the same fault on the same node inside 60 seconds is not sent again.
 

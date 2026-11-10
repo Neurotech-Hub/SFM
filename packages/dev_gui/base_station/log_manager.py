@@ -645,6 +645,28 @@ class LogManager:
             return
         self._open_daily(self._log_dir)
 
+    def move_to(self, log_dir: str) -> None:
+        """
+        Write from now on under ``log_dir``. Today's daily file moves with it: the old one is
+        closed (and stays where it is, complete) and the new folder gets its own for today.
+
+        Not while a named session is open, because that session's file is in the old folder.
+        Raises RuntimeError for that, and OSError if the new folder can't be used; in both
+        cases logging carries on in the old folder.
+        """
+        if self.is_named_session:
+            raise RuntimeError("a session is open")
+        if self._sink_kind != "daily":
+            self._log_dir = log_dir          # nothing is open (auto-save off): only the folder changes
+            return
+        old = self._log_dir
+        try:
+            self._open_daily(log_dir)
+        except OSError:
+            self._log_dir = old
+            self._open_daily(old)            # put it back
+            raise
+
     def _close_named_csv(self) -> None:
         """Close the current sink (named or daily) before opening a new one."""
         self.close()

@@ -4,9 +4,12 @@ import { nodeName } from "../nodes.js";
 
 const CHECK = "M5 12.5l4.5 4.5L19 7.5", CROSS = "M7 7l10 10M17 7L7 17";
 const IFACES = ["can0", "vcan0"], DEFAULT_IFACE = "can0", RESCAN_MS = 3000;
+const FAULTS = [["PelletLost", "Pellet lost"], ["FeedTimeout", "Feed timeout"], ["ActuatorTimeout", "Actuator timeout"]];
+const stripSlash = (p) => String(p || "").trim().replace(/\/+$/, "");
 
 export function createConnect(ctx) {
-  const model = { iface: DEFAULT_IFACE, numNodes: 2, logDir: "", autoSave: true, scanned: [], connected: false, checkMsg: null, busy: false, seeded: false };
+  const model = { iface: DEFAULT_IFACE, numNodes: 2, logDir: "", autoSave: true, scanned: [], connected: false, checkMsg: null, busy: false, seeded: false,
+    dirTouched: false, dirMsg: null, notify: { loaded: false, touched: false, msg: null } };
 
   const ifaceList = h("div", { class: "opts", role: "radiogroup", "aria-labelledby": "can-h" });
   const checkStatus = h("span", { role: "status", class: "small" });
@@ -35,10 +38,33 @@ export function createConnect(ctx) {
   const gpioLine = h("p", { class: "small" });
   const discoveryBox = h("div", { class: "col" }, foundSummary, found, h("div", { class: "row" }, rediscoverBtn), gpioLine);
 
-  const logDir = h("input", { class: "input mono", id: "log-dir", onInput: (e) => { model.logDir = e.target.value; } });
-  const useDrive = h("button", { class: "btn", type: "button", onClick: () => { model.logDir = ctx.ui.get().defaults?.log_dir || ""; logDir.value = model.logDir; } }, "Use external drive");
+  const logDir = h("input", { class: "input mono", id: "log-dir", onInput: (e) => { model.logDir = e.target.value; model.dirTouched = true; model.dirMsg = null; update(); } });
+  const useDrive = h("button", { class: "btn", type: "button", onClick: () => { model.logDir = ctx.ui.get().defaults?.log_dir || ""; logDir.value = model.logDir; model.dirTouched = true; model.dirMsg = null; update(); } }, "Use external drive");
+  const applyDir = h("button", { class: "btn primary", type: "button", onClick: doApplyDir }, "Apply");
+  const dirNote = h("p", { class: "small", role: "status", id: "log-dir-note" });
+  const autoNote = h("p", { class: "small muted" }, "Saving the activity log automatically is chosen when you connect. Use Change connection to change it.");
   const autoSave = h("input", { type: "checkbox", id: "auto-save", onChange: (e) => { model.autoSave = e.target.checked; } });
   autoSave.checked = true;
+
+  // ---- phone notifications (ntfy) ----
+  const nEnabled = h("input", { type: "checkbox", id: "notify-enabled" });
+  const nServer = h("input", { class: "input mono", id: "notify-server", autocomplete: "off", spellcheck: "false", placeholder: "https://ntfy.sh" });
+  const nTopic = h("input", { class: "input mono", id: "notify-topic", autocomplete: "off", spellcheck: "false", placeholder: "e.g. sfm-lab-a-7Qx2kP9wLm" });
+  const nStation = h("input", { class: "input", id: "notify-station", autocomplete: "off", maxlength: "64", placeholder: "e.g. Lab A rig 1" });
+  const nFaults = FAULTS.map(([key, label]) => {
+    const box = h("input", { type: "checkbox", id: `notify-fault-${key}` });
+    return { key, box, el: h("label", { class: "check", for: `notify-fault-${key}` }, box, label) };
+  });
+  const nSave = h("button", { class: "btn primary", type: "button", id: "notify-save", onClick: () => saveNotify(false) }, "Save");
+  const nTest = h("button", { class: "btn", type: "button", id: "notify-test", onClick: () => saveNotify(true) }, "Send test");
+  const nRandom = h("button", { class: "btn", type: "button", id: "notify-random", onClick: makeTopic }, "Make a random topic");
+  const nStatus = h("p", { class: "small", role: "status", id: "notify-status" });
+  const nHint = h("p", { class: "small", id: "notify-hint" });
+  const nKept = h("p", { class: "tiny muted", id: "notify-kept" });
+  for (const c of [nEnabled, nServer, nTopic, nStation, ...nFaults.map((f) => f.box)]) {
+    c.addEventListener("input", () => { model.notify.touched = true; });
+    c.addEventListener("change", () => { model.notify.touched = true; });
+  }
 
   const next = h("button", { class: "btn primary big", type: "button", onClick: () => ctx.go("experiment") }, "Continue to experiment");
 
@@ -54,11 +80,95 @@ export function createConnect(ctx) {
     h("section", { class: "card col", "aria-labelledby": "log-h" },
       h("h2", { id: "log-h" }, "Log directory"),
       h("div", { class: "field" }, h("label", { class: "lab", for: "log-dir" }, "Folder"),
-        h("div", { class: "row", style: { flexWrap: "wrap" } }, h("div", { style: { flex: "1 1 320px" } }, logDir), useDrive)),
+        h("div", { class: "row", style: { flexWrap: "wrap" } }, h("div", { style: { flex: "1 1 320px" } }, logDir), useDrive, applyDir)),
+      dirNote,
       h("label", { class: "check", for: "auto-save" }, autoSave, "Save the log to CSV automatically"),
-      h("p", { class: "small muted" }, "Each session is written to its own file in this folder. The name is chosen in step 2.")),
+      autoNote,
+      h("p", { class: "small muted" }, "Each session is written to its own file in this folder. The name is chosen in step 2. Changing the folder moves new sessions and the daily log there; files already written stay where they are.")),
+    notifyCard(),
     h("div", { class: "row", style: { justifyContent: "flex-end" } }, next),
   );
+
+  function notifyCard() {
+    return h("section", { class: "card col", "aria-labelledby": "notify-h" },
+      h("h2", { id: "notify-h" }, "Phone notifications"),
+      h("p", { class: "small muted" }, "Get an alert on your phone when a node faults. Install the free ntfy app (iOS or Android) and subscribe to your topic. The topic is the password: pick a long, random one, and a different one for each lab. Nothing is sent until a topic is saved."),
+      h("label", { class: "check", for: "notify-enabled" }, nEnabled, "Send phone alerts"),
+      h("div", { class: "field" }, h("label", { class: "lab", for: "notify-topic" }, "Topic"),
+        h("div", { class: "row", style: { flexWrap: "wrap" } }, h("div", { style: { flex: "1 1 320px" } }, nTopic), nRandom),
+        h("p", { class: "tiny muted" }, "Letters, digits, - and _ only.")),
+      h("div", { class: "field" }, h("label", { class: "lab", for: "notify-station" }, "User name"), nStation,
+        h("p", { class: "tiny muted" }, "Shown in the title of each alert, so you can tell rigs apart.")),
+      h("fieldset", { style: { border: 0, padding: 0, margin: 0 } },
+        h("legend", { class: "lab" }, "Send an alert for"), h("div", { class: "row" }, ...nFaults.map((f) => f.el)),
+        h("p", { class: "tiny muted" }, "The same fault on the same node is sent at most once a minute.")),
+      h("div", { class: "field" }, h("label", { class: "lab", for: "notify-server" }, "Server"), nServer,
+        h("p", { class: "tiny muted" }, "Leave empty to use https://ntfy.sh. Only change it if your lab runs its own ntfy server.")),
+      h("div", { class: "row" }, nSave, nTest), nStatus, nHint, nKept);
+  }
+
+  function gatherNotify() {
+    return { enabled: nEnabled.checked, server: nServer.value, topic: nTopic.value, station_name: nStation.value,
+      faults: nFaults.filter((f) => f.box.checked).map((f) => f.key) };
+  }
+
+  async function loadNotify() {
+    const r = await ctx.command("get_notify_settings");
+    if (!r.ok) { model.notify.msg = { ok: false, text: r.error }; update(); return; }
+    model.notify.loaded = true;
+    const kept = r.kept || { keys: [], faults: [] }, parts = [...kept.keys, ...kept.faults.map((f) => `fault ${f}`)];
+    setText(nKept, parts.length ? `The settings file also holds ${parts.join(", ")}. This page doesn't show ${parts.length === 1 ? "it" : "them"}, and saving keeps ${parts.length === 1 ? "it" : "them"} as they are.` : "");
+    if (!model.notify.touched) {                       // never overwrite what is being typed
+      const st = r.settings;
+      nEnabled.checked = st.enabled; nServer.value = st.server === "https://ntfy.sh" ? "" : st.server;
+      nTopic.value = st.topic; nStation.value = st.station_name;
+      for (const f of nFaults) f.box.checked = st.faults.includes(f.key);
+    }
+    update();
+  }
+
+  async function saveNotify(thenTest) {
+    const startedAt = Date.now() / 1000;                // before anything is sent, so the result can't look older than the click
+    const saved = await ctx.command("set_notify_settings", gatherNotify());
+    if (!saved.ok) { model.notify.msg = { ok: false, text: saved.error }; update(); return; }
+    model.notify.touched = false;
+    if (!thenTest) {
+      model.notify.msg = { ok: true, text: saved.has_topic ? "Saved." : "Saved. Add a topic to send alerts." };
+      update(); return;
+    }
+    const test = await ctx.command("send_test_notification");
+    // The send runs in the background; its result arrives in the engine state a moment later.
+    model.notify.msg = test.ok ? { ok: null, text: "Sending test…", at: startedAt } : { ok: false, text: test.error };
+    update();
+  }
+
+  function makeTopic() {
+    const slug = nStation.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20) || "lab";
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789", bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    nTopic.value = `sfm-${slug}-${[...bytes].map((b) => chars[b % chars.length]).join("")}`;
+    model.notify.touched = true; model.notify.msg = null;
+    update();
+  }
+
+  function updateNotify(state, up) {
+    if (!up) model.notify.loaded = false;
+    else if (!model.notify.loaded) { model.notify.loaded = "loading"; loadNotify(); }
+    for (const c of [nEnabled, nServer, nTopic, nStation, nSave, nTest, nRandom, ...nFaults.map((f) => f.box)]) setDisabled(c, !up);
+    // What to say: the latest save/test note, or the result of the test that was just sent.
+    const n = state && state.notify, note = model.notify.msg;
+    let text = note ? note.text : "", ok = note ? note.ok : null;
+    if (note && note.at && n && n.last && n.last.when >= note.at) {
+      const when = new Date(n.last.when * 1000).toLocaleTimeString([], { hour12: false });
+      text = n.last.ok ? `Test sent at ${when}. Check your phone.` : `Test failed at ${when}: ${n.last.detail}`;
+      ok = n.last.ok;
+    }
+    setText(nStatus, text);
+    nStatus.className = "small " + (ok === true ? "ok-text" : ok === false ? "err-text" : "muted");
+    const hint = !up ? "Waiting for the engine." : n && !n.configured ? "No topic is saved, so no alerts are sent yet." : n && !n.enabled ? "Alerts are switched off." : "";
+    setText(nHint, hint);
+    nHint.className = "small " + (!up ? "muted" : "note");
+  }
 
   function bump(d) { model.numNodes = Math.min(ctx.ui.get().defaults?.max_nodes || 12, Math.max(1, model.numNodes + d)); update(); }
 
@@ -88,6 +198,15 @@ export function createConnect(ctx) {
     if (!r.ok) { model.checkMsg = { ok: false, text: r.error }; update(); return; }
     model.checkMsg = null;
     ctx.command("set_gui_settings", { interface: model.iface, num_nodes: model.numNodes, log_dir: model.logDir, auto_save: model.autoSave });
+    update();
+  }
+
+  async function doApplyDir() {
+    const r = await ctx.command("set_log_dir", { path: model.logDir });
+    if (!r.ok) { model.dirMsg = { ok: false, text: r.error }; update(); return; }
+    model.dirTouched = false;
+    model.dirMsg = { ok: true, text: `Logging to ${r.log_dir} from now on.` };
+    ctx.command("set_gui_settings", { log_dir: r.log_dir });
     update();
   }
 
@@ -138,7 +257,9 @@ export function createConnect(ctx) {
     if (connected) {
       model.iface = state.interface || model.iface;
       model.numNodes = state.nodes.length;
-    }
+      // Show the folder the engine is really writing to, unless the operator is editing it.
+      if (!model.dirTouched && state.log && state.log.dir && model.logDir !== state.log.dir) { model.logDir = state.log.dir; logDir.value = model.logDir; }
+    } else { model.dirMsg = null; }
     // Interface choices: always can0 and vcan0, marked by what the last scan found.
     const options = IFACES.map((name) => model.scanned.find((i) => i.name === name)
       || { name, virtual: name.startsWith("v"), missing: true });
@@ -170,13 +291,22 @@ export function createConnect(ctx) {
     checkStatus.className = "small " + (msg ? (msg.ok ? "ok-text" : "err-text") : "muted");
     setText(connectNote, msg && !msg.ok && !checkStatus.textContent ? msg.text : "");
 
-    setDisabled(logDir, connected); setDisabled(useDrive, connected); setDisabled(autoSave, connected);
+    // The folder stays editable once connected, except while a session runs (its file is open in the old folder).
+    const running = !!(connected && state.session.running);
+    setDisabled(logDir, running); setDisabled(useDrive, running); setDisabled(autoSave, connected);
+    const active = connected && state.log ? state.log.dir : "";
+    show(applyDir, connected && !running && stripSlash(model.logDir) !== stripSlash(active));
+    show(autoNote, connected);
+    const dm = model.dirMsg;
+    setText(dirNote, running ? "Stop the session to change the log folder." : dm ? dm.text : connected && active ? `Writing to ${active}` : "");
+    dirNote.className = "small " + (running ? "note" : dm ? (dm.ok ? "ok-text" : "err-text") : "muted");
+    updateNotify(state, up);
     show(connectedBanner, connected);
     show(discoveryBox, connected);
     show(checkBtn.parentElement, !connected);
     show(next, connected);
     if (connected) {
-      setText(document.getElementById("conn-msg"), `${state.interface} · ${state.nodes.length} ${state.nodes.length === 1 ? "node" : "nodes"} expected. Use Change connection to pick another interface, node count or log folder.`);
+      setText(document.getElementById("conn-msg"), `${state.interface || "The bus"} · ${state.nodes.length} ${state.nodes.length === 1 ? "node" : "nodes"} expected. Use Change connection to pick another interface, node count or log folder.`);
       if (document.activeElement !== logDir) { logDir.value = model.logDir; }
       const online = state.nodes.filter((n) => n.online).length;
       setText(foundSummary, `${online} of ${state.nodes.length} nodes answered`);
