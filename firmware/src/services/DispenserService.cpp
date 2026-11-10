@@ -56,6 +56,10 @@ DispenserService::DispenserService()
       domeWarnLatched_(false),
       lastDomeOpenedWithPellet_(false),
       lastTakenWithDomeOpen_(false),
+      lastSkipPresented_(false),
+      takeMayReturn_(false),
+      pelletReturned_(false),
+      returnSeenSinceMs_(0),
       motorSpeed_(kDefaultMotorSpeed),
       feedSpeedScale_(kDefaultFeedSpeedScale),
       feedBurstSteps_(kDefaultFeedBurstSteps),
@@ -122,6 +126,9 @@ void DispenserService::update() {
 
     switch (state_) {
         case DispenseState::Idle:
+            updateReturnedPellet();
+            break;
+
         case DispenseState::Fault:
             break;
 
@@ -412,6 +419,7 @@ void DispenserService::update() {
                     takenCount_++;
                     setEvent(DispenseEvent::PelletTaken);
                     pelletClearSinceMs_ = 0;
+                    armReturnWatch();
                     setState(DispenseState::Idle);
                 } else if (noFeed_) {
                     // No pellet was delivered: do NOT emit Loaded and do NOT
@@ -455,9 +463,13 @@ void DispenserService::update() {
                 } else if ((millis() - pelletClearSinceMs_) >= kPelletTakenConfirmMs) {
                     if (eventQueueHasRoom()) {
                         lastTakenWithDomeOpen_ = pg3State_;
-                        takenCount_++;
+                        // A returned pellet was already counted by its first
+                        // (false) PelletTaken: report this take, don't recount.
+                        if (!pelletReturned_) takenCount_++;
+                        pelletReturned_ = false;
                         setEvent(DispenseEvent::PelletTaken);
                         haltMotors();
+                        armReturnWatch();
                         setState(DispenseState::Idle);
                         pelletClearSinceMs_ = 0;
                     }
@@ -483,13 +495,17 @@ bool DispenserService::dispense() {
     pelletLostDuringRaise_ = false;
     earlyTaken_ = false;
     edgeLatched_ = false;
+    takeMayReturn_ = false;
+    returnSeenSinceMs_ = 0;
 
-    // Occupancy first — pellet sensor is on the plate at all times.
+    // Occupancy first — pellet sensor is on the plate at all times. A returned
+    // pellet keeps pelletReturned_: it was already counted as taken once.
     if (pg1State_) {
         beginOccupiedDispense();
         return true;
     }
 
+    pelletReturned_ = false;
     beginLoweringPhase();
     return true;
 }
@@ -509,6 +525,8 @@ bool DispenserService::dispenseNoFeed() {
     pelletLostDuringRaise_ = false;
     earlyTaken_ = false;
     edgeLatched_ = false;
+    takeMayReturn_ = false;
+    returnSeenSinceMs_ = 0;
 
     // Occupancy first, same as dispense(). A real pellet is already on the
     // plate: present it honestly as a normal FeedSkipped cycle rather than
@@ -521,6 +539,7 @@ bool DispenserService::dispenseNoFeed() {
         return true;
     }
 
+    pelletReturned_ = false;
     noFeed_ = true;
     beginLoweringPhase();
     return true;
@@ -536,15 +555,22 @@ void DispenserService::notifyPeerRaise() {
 }
 
 void DispenserService::beginOccupiedDispense() {
-    setEvent(DispenseEvent::FeedSkipped);
-
     // Already at presentation height: nothing to home. PG2 clear and not
-    // below the sensor is the only reading that means "up".
+    // below the sensor is the only reading that means "up". FeedSkipped is
+    // the only event this path sends, so it has to say the cycle is complete
+    // (presented = 1) — otherwise the base station waits for a Loaded that
+    // never comes.
     if (!pg2State_ && !belowLoad_) {
+        lastSkipPresented_ = true;
+        setEvent(DispenseEvent::FeedSkipped);
         pg3WasOpen_ = pg3State_;
+        pelletClearSinceMs_ = 0;
         setState(DispenseState::Loaded);
         return;
     }
+
+    lastSkipPresented_ = false;
+    setEvent(DispenseEvent::FeedSkipped);
 
     // Anywhere else, home to the drop position (M1 stays off) and raise
     // raiseSteps_ from that known datum. No shortened raise from "somewhere
@@ -565,6 +591,9 @@ void DispenserService::recover() {
     earlyTaken_ = false;
     pelletLostDuringRaise_ = false;
     reloadCount_ = 0;
+    takeMayReturn_ = false;
+    pelletReturned_ = false;
+    returnSeenSinceMs_ = 0;
     edgeLatched_ = false;
     dropPosKnown_ = false;
     seekBreakThenClear_ = false;
@@ -733,6 +762,44 @@ void DispenserService::updateFeedMotor() {
     }
 }
 
+void DispenserService::armReturnWatch() {
+    takeMayReturn_ = true;
+    returnSeenSinceMs_ = 0;
+}
+
+// Idle after a take, plate still at the top: a pellet held in the beam is the
+// one the mouse moved and dropped back — M1 cannot feed while Idle. Undo the
+// take: report PelletReturned and present it again as Loaded, so the real take
+// is still detected (and not counted twice — see pelletReturned_).
+void DispenserService::updateReturnedPellet() {
+    if (!takeMayReturn_) return;
+    if (pg2State_ || belowLoad_) {
+        // Plate is not at the top any more; nothing to present.
+        takeMayReturn_ = false;
+        returnSeenSinceMs_ = 0;
+        return;
+    }
+    if (!pg1State_) {
+        returnSeenSinceMs_ = 0;
+        return;
+    }
+    if (returnSeenSinceMs_ == 0) {
+        returnSeenSinceMs_ = millis();
+        return;
+    }
+    if ((millis() - returnSeenSinceMs_) < kPelletReturnConfirmMs) return;
+    if (!eventQueueHasRoom()) return;
+
+    takeMayReturn_ = false;
+    returnSeenSinceMs_ = 0;
+    pelletReturned_ = true;
+    noFeed_ = false;
+    pelletClearSinceMs_ = 0;
+    pg3WasOpen_ = pg3State_;
+    setEvent(DispenseEvent::PelletReturned);
+    setState(DispenseState::Loaded);
+}
+
 void DispenserService::startDwell() {
     motionStartMs_     = millis();
     pelletSeenSinceMs_ = 0;
@@ -849,6 +916,9 @@ void DispenserService::faultNow(ServiceStatus code) {
     earlyTaken_ = false;
     pelletLostDuringRaise_ = false;
     pelletSeenSinceMs_ = 0;
+    takeMayReturn_ = false;
+    pelletReturned_ = false;
+    returnSeenSinceMs_ = 0;
     edgeLatched_ = false;
     dropPosKnown_ = false;
     seekBreakThenClear_ = false;

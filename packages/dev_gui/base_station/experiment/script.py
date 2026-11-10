@@ -71,6 +71,11 @@ class _Await:
     seconds: float = 0.0
     timeout: Optional[float] = None
     label: str = ""
+    # Abort (as ``faulted``, with ``recovered`` set) when an operator Recovers
+    # one of ``nodes``. Firmware recover() drops the node to Idle from any
+    # phase, and an Idle node never sends Loaded / NoFeedPresented /
+    # PelletTaken — an await for one of those would otherwise never end.
+    abort_on_recover: bool = False
 
     # Filled in by ScriptScheduler at arm time / resolution time.
     armed_at: Optional[float] = None
@@ -80,6 +85,7 @@ class _Await:
     timed_out: bool = False
     faulted: bool = False
     faulted_node: int = 0
+    recovered: bool = False  # the abort was an operator Recover, not a fault
     event: Optional[NodeEvent] = None
 
     @property
@@ -181,6 +187,22 @@ class ScriptScheduler:
         aw.satisfied = True
         aw.event = ev
 
+    def on_node_recovered(self, node_id: int) -> None:
+        """Hook for an operator Recover: abort a pending await that this
+        node's cycle was supposed to satisfy (see ``_Await.abort_on_recover``).
+        Templates see it as ``faulted`` (with ``recovered`` set), so the same
+        "abort this trial and carry on" path handles both."""
+        aw = self._pending
+        if (aw is None or aw.satisfied or not aw.abort_on_recover
+                or node_id not in aw.nodes):
+            return
+        aw.satisfied = True
+        aw.faulted = True
+        aw.recovered = True
+        aw.faulted_node = node_id
+        self._ctx.log("script_await_aborted", node=node_id, waiting_on=aw.label,
+                      reason="recover")
+
     def on_node_halted(self, node_id: int) -> None:
         """Hook for ctx.halt_node(): abort a pending await scoped to this node."""
         aw = self._pending
@@ -245,6 +267,7 @@ class ScriptScheduler:
         aw.timed_out = False
         aw.faulted = False
         aw.faulted_node = 0
+        aw.recovered = False
         aw.event = None
         if aw.kind is _AwaitKind.DELAY:
             aw.deadline = now + aw.seconds

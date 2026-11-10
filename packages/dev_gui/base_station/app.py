@@ -36,6 +36,7 @@ from .protocol import (
     PRESENCE_FACTOR_MIN,
     PRESENCE_FACTOR_MAX,
 )
+from .notifier import KNOWN_FAULTS
 from .process_lock import AlreadyRunning, ProcessLock
 from .engine import (
     BNC_IN_ACTIONS,
@@ -103,6 +104,11 @@ class SFMApp(BaseStationEngine):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
         self._bnc_tiles: Dict[str, dict] = {}
+
+        # Save/test notes for the Notifications window, shown until a send result is newer.
+        self._notify_note = ""
+        self._notify_note_at = 0.0
+        self._notify_note_ok: Optional[bool] = None
 
         # GUI state
         self._screen = "setup"
@@ -400,6 +406,13 @@ class SFMApp(BaseStationEngine):
                 label="Developer Menu",
                 width=140,
                 callback=self._on_open_dev_menu,
+            )
+            dpg.add_spacer(width=12)
+            dpg.add_button(
+                tag="notify_btn",
+                label="Notifications",
+                width=130,
+                callback=self._on_open_notify,
             )
             dpg.add_spacer(width=12)
             dpg.add_text("Heartbeat (s):", color=(160, 165, 175, 255))
@@ -1072,6 +1085,8 @@ class SFMApp(BaseStationEngine):
         if self._screen != "main":
             return
         self.tick()
+        if dpg.does_item_exist("notify_status"):
+            self._refresh_notify_status()
 
     # ------------------------------------------------------------------
     # Tile refresh
@@ -1307,6 +1322,138 @@ class SFMApp(BaseStationEngine):
         payload = build_setconfig_presence_factor(factor)
         self._broadcast(CanCmd.SetConfig, payload)
         self._dev_settings.set_presence_factor(factor)
+
+    def _on_open_notify(self, sender=None, app_data=None, user_data=None) -> None:
+        """Per-lab ntfy settings. Saved to ~/.sfm/notify.json on this Pi."""
+        if dpg.does_item_exist("notify_modal"):
+            dpg.delete_item("notify_modal")
+        settings = self._notifier.settings
+        width, height = 500, 560
+        with dpg.window(
+            tag="notify_modal",
+            label="Notifications",
+            modal=True,
+            no_resize=True,
+            width=width,
+            height=height,
+            pos=((WINDOW_W - width) // 2, (WINDOW_H - height) // 2),
+        ):
+            dpg.add_text(
+                "Install the free ntfy app (iOS or Android) and subscribe to the topic below. "
+                "The topic is the password: pick a long, random one and give each lab its own.",
+                color=(160, 165, 175, 255), wrap=width - 30,
+            )
+            dpg.add_checkbox(
+                tag="notify_enabled",
+                label="Enabled",
+                default_value=settings.enabled,
+            )
+            dpg.add_input_text(
+                tag="notify_server",
+                label="Server",
+                default_value=settings.server,
+                width=280,
+            )
+            dpg.add_input_text(
+                tag="notify_topic",
+                label="Topic",
+                default_value=settings.topic,
+                width=280,
+            )
+            dpg.add_input_text(
+                tag="notify_station",
+                label="User name",
+                default_value=settings.station_name,
+                width=280,
+            )
+            dpg.add_text("Alert on", color=(100, 180, 255, 255))
+            for name in KNOWN_FAULTS:
+                dpg.add_checkbox(
+                    tag=f"notify_fault_{name}",
+                    label=name,
+                    default_value=name in settings.faults,
+                )
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Save", width=100, callback=self._on_save_notify)
+                dpg.add_button(label="Send test", width=110, callback=self._on_test_notify)
+            dpg.add_text(tag="notify_status", default_value=self._notify_status_line(), wrap=width - 30)
+            self._refresh_notify_status()
+
+    def _on_save_notify(self, sender=None, app_data=None, user_data=None) -> None:
+        error = self._apply_notify_form()
+        if error:
+            self._set_notify_note(error, ok=False)
+            return
+        try:
+            self._notifier.settings.save()
+            self._notifier.reload()
+        except OSError as exc:
+            self._set_notify_note(f"Could not save: {exc}", ok=False)
+            return
+        if not self._notifier.settings.topic.strip():
+            self._set_notify_note("Saved. Add a topic to send alerts.")
+        else:
+            self._set_notify_note("Saved.")
+
+    def _on_test_notify(self, sender=None, app_data=None, user_data=None) -> None:
+        error = self._apply_notify_form()
+        if error:
+            self._set_notify_note(error, ok=False)
+            return
+        try:
+            self._notifier.settings.save()
+            self._notifier.reload()
+        except OSError as exc:
+            self._set_notify_note(f"Could not save: {exc}", ok=False)
+            return
+        self._set_notify_note("Sending test…")
+        self._notifier.send_test()
+
+    def _apply_notify_form(self) -> str:
+        """Copy the Notifications form onto the settings object. Returns an error, or ""."""
+        settings = self._notifier.settings
+        settings.enabled = bool(dpg.get_value("notify_enabled"))
+        server = str(dpg.get_value("notify_server") or "").strip()
+        if server and not server.startswith(("http://", "https://")):
+            server = "https://" + server
+        if server and not server.startswith(("http://", "https://")):
+            return "Server must be an http(s) URL."
+        topic = str(dpg.get_value("notify_topic") or "").strip()
+        if topic and not all(ch.isascii() and (ch.isalnum() or ch in "-_") for ch in topic):
+            return "Topic may only use letters, digits, - and _."
+        settings.server = server or "https://ntfy.sh"
+        settings.topic = topic
+        settings.station_name = str(dpg.get_value("notify_station") or "").strip()
+        settings.faults = [
+            name for name in KNOWN_FAULTS
+            if dpg.get_value(f"notify_fault_{name}")
+        ]
+        return ""
+
+    def _set_notify_note(self, text: str, ok: Optional[bool] = True) -> None:
+        self._notify_note = text
+        self._notify_note_at = time.time()
+        self._notify_note_ok = ok
+        self._refresh_notify_status()
+
+    def _notify_status_line(self) -> str:
+        result = self._notifier.last_result
+        if result is not None and result.when >= self._notify_note_at:
+            return self._notifier.status_text()
+        return self._notify_note
+
+    def _refresh_notify_status(self) -> None:
+        if not dpg.does_item_exist("notify_status"):
+            return
+        result = self._notifier.last_result
+        showing_send = result is not None and result.when >= self._notify_note_at
+        if showing_send:
+            color = _COLOR_GREEN if result.ok else _COLOR_RED
+        elif self._notify_note_ok is False:
+            color = _COLOR_RED
+        else:
+            color = _COLOR_GREY
+        dpg.configure_item("notify_status", default_value=self._notify_status_line(), color=color)
 
     def _on_assign_id(self, node_id: int) -> None:
         tags = self._node_tiles.get(node_id)

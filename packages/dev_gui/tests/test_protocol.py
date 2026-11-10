@@ -593,4 +593,4 @@ class TestDomeSafeAndFirmware:
         composed = f"{major.group(1)}.{minor.group(1)}.{patch.group(1)}"
         assert text.group(1) == composed
         assert lib.group(1).strip() == composed
-        assert composed == "1.6.0"
+        assert composed == "1.7.0"

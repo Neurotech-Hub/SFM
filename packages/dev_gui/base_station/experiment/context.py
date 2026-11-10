@@ -62,6 +62,17 @@ _ACTIVITY_KINDS = frozenset(
 )
 
 
+# Events only a running dispense cycle produces. Firmware recover() puts the
+# node in Idle, which emits none of them until the next Dispense.
+_CYCLE_EVENT_KINDS = frozenset({
+    EventKind.ON_PLATE, EventKind.LOADED, EventKind.NO_FEED_PRESENTED,
+    EventKind.PELLET_TAKEN, EventKind.FEED_SKIPPED, EventKind.SEEKING,
+    EventKind.LOWERING, EventKind.LOADING, EventKind.DWELLING,
+    EventKind.DOME_HOLD, EventKind.RETRACTING, EventKind.RAISING,
+    EventKind.PELLET_RELOAD, EventKind.PELLET_RETURNED,
+})
+
+
 @dataclass
 class _NodeView:
     """Per-node sensor snapshot, mirrored from the normalized event stream."""
@@ -87,6 +98,12 @@ class _NodeView:
     # yet reached the plate (ON_PLATE hasn't fired), so `pellet` alone can't
     # catch "this node is still mid-motion from a previous command."
     dispensing: bool = False
+    # True once PELLET_TAKEN arrives for the current cycle; cleared when a new
+    # cycle starts, by clear_presentation(), and by PELLET_RETURNED (the take
+    # was false — the pellet came back). Latched so a take that lands while a
+    # template is still waiting on something else (e.g. the other arm's raise)
+    # is not lost — see pellet_taken().
+    taken: bool = False
 
 
 @dataclass
@@ -358,6 +375,14 @@ class ExperimentControl:
         """Send Recover to all nodes (broadcast)."""
         return self._send(0, CanCmd.Recover)
 
+    def request_status(self, node: int = 0) -> bool:
+        """Ask node(s) for an immediate heartbeat (ReqStatus; 0 = broadcast).
+
+        The runner does this at session start so pellet/online state is known
+        before the first trial instead of after the next periodic heartbeat
+        (up to the configured interval later — 60 s in production)."""
+        return self._send(node, CanCmd.ReqStatus)
+
     def set_heartbeat_interval(self, node: int, ms: int) -> bool:
         """SetConfig HeartbeatInterval for one node."""
         payload = build_setconfig_heartbeat(ms)
@@ -394,13 +419,16 @@ class ExperimentControl:
         if self.on_node_halted is not None:
             self.on_node_halted(node_id)
 
-    def recover_node(self, node_id: int) -> None:
+    def recover_node(self, node_id: int, *, send: bool = True) -> None:
         """
         Clear a node's halted state and clear its firmware fault.
 
         Sends ``Recover`` to the node (firmware ``recover()`` resets the fault to
         Idle) and un-latches it so ``dispense`` works again. The runner fires
         ``on_recover`` handlers afterwards so a template can re-arm the node.
+        ``send=False`` when the Recover already went out another way (the GUI's
+        Recover All broadcast) and only the experiment's bookkeeping is needed.
+
         Also clears the "cycle in flight" veto defensively — a FAULT event
         should already have cleared it, but a node whose fault predates this
         experiment session (never saw the FAULT event) must not stay
@@ -408,7 +436,8 @@ class ExperimentControl:
         """
         self._halted.discard(node_id)
         self._view(node_id).dispensing = False
-        self._send(node_id, CanCmd.Recover)
+        if send:
+            self._send(node_id, CanCmd.Recover)
         self.log("node_recovered", node=node_id)
 
     def is_halted(self, node_id: int) -> bool:
@@ -540,6 +569,9 @@ class ExperimentControl:
             nodes=nodes,
             timeout=timeout,
             label=f"{ek.name.lower()}{_node_suffix(nodes)}",
+            # A Recovered (Idle) node can no longer produce a dispense-cycle
+            # event, so waiting for one on that node must end on Recover.
+            abort_on_recover=bool(nodes) and ek in _CYCLE_EVENT_KINDS,
         )
 
     def wait_until(
@@ -548,6 +580,7 @@ class ExperimentControl:
         timeout: Optional[float] = None,
         node: Union[int, Sequence[int], None] = None,
         label: Optional[str] = None,
+        abort_on_recover: bool = False,
     ) -> _Await:
         """
         Wait until ``predicate(control)`` returns True (polled every tick).
@@ -560,6 +593,11 @@ class ExperimentControl:
         short name (``"plates_clear"``, ``"fault_recovery"``) — otherwise
         an unlabeled lambda is logged as ``condition``, not ``<lambda>``.
         Named helper functions keep their ``__name__`` if ``label`` is omitted.
+
+        ``abort_on_recover``: also end the wait (as ``faulted``, with
+        ``recovered`` set) when an operator Recovers one of ``node`` — use it
+        when the predicate depends on that node finishing a dispense cycle,
+        which a Recover cancels.
         """
         nodes = _as_node_tuple(node)
         return _Await(
@@ -568,6 +606,7 @@ class ExperimentControl:
             nodes=nodes,
             timeout=timeout,
             label=_until_label(predicate, nodes, label),
+            abort_on_recover=abort_on_recover and bool(nodes),
         )
 
     def wait(self, seconds: float) -> _Await:
@@ -637,6 +676,7 @@ class ExperimentControl:
             # "finished presenting" reading. Call clear_presentation()
             # explicitly at the start of a new trial instead.
             view.pellet = False
+            view.taken = True
         elif ev.kind in (
             EventKind.SEEKING, EventKind.LOWERING, EventKind.LOADING,
             EventKind.DWELLING, EventKind.RAISING,
@@ -650,8 +690,29 @@ class ExperimentControl:
             # FeedSkipped, so re-assert `dispensing` here.
             view.presented_pellet = view.presented_empty = False
             view.dispensing = True
+            view.taken = False
+        elif ev.kind is EventKind.FEED_SKIPPED and ev.data.get("presented") is not None:
+            # Firmware >= 1.7 says whether the occupied plate is ALREADY up and
+            # presenting (presented=1: no motion follows, the cycle is done —
+            # a real pellet is at the top) or still has to home and raise
+            # (presented=0: Seeking/Lowering/.../Loaded follow as usual).
+            view.pellet = True
+            view.taken = False
+            if ev.data["presented"]:
+                view.presented_pellet, view.presented_empty = True, False
+                view.dispensing = False
+            else:
+                view.presented_pellet = view.presented_empty = False
+                view.dispensing = True
+        elif ev.kind is EventKind.PELLET_RETURNED:
+            # The pellet reappeared on the raised plate after a PelletTaken:
+            # the take was false (moved out of the beam, then dropped back).
+            # Firmware is back in Loaded; the real take will follow.
+            view.pellet = True
+            view.taken = False
         elif ev.kind in (EventKind.FEED_SKIPPED, EventKind.FAULT):
-            # Terminal without a normal raise: FeedSkipped means firmware
+            # Terminal without a normal raise (legacy FeedSkipped, without the
+            # presented byte, is treated as before): FeedSkipped means firmware
             # never ran a motion (plate already occupied), and a fault aborts
             # whatever was in progress — either way no further completion
             # event is coming for this cycle, so clear `dispensing` here too
@@ -751,6 +812,16 @@ class ExperimentControl:
         view = self._view(node)
         return view.presented_pellet or view.presented_empty
 
+    def pellet_taken(self, node: int) -> bool:
+        """True if PelletTaken has arrived for this node's current cycle.
+
+        Latched until a new cycle starts (or ``clear_presentation``), so a
+        template that gates on something else first — e.g. both arms having
+        presented — can still see a take that happened during that gate.
+        ``wait_for("pellet_taken")`` only sees takes that arrive AFTER it is
+        armed; check this first."""
+        return self._view(node).taken
+
     def clear_presentation(self, node: int) -> None:
         """Reset this node's presentation state. Call at the start of a new
         trial so a stale reading from the previous cycle can't be mistaken
@@ -765,6 +836,7 @@ class ExperimentControl:
         view.presented_pellet = False
         view.presented_empty = False
         view.dispensing = False
+        view.taken = False
 
     # ------------------------------------------------------------------
     # Mouse presence (capacitive pad)

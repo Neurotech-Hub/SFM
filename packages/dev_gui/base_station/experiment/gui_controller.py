@@ -67,6 +67,7 @@ class ExperimentController:
         resume: Any = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
         session_fields: Optional[Dict[str, Any]] = None,
+        mac_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> bool:
         """
         Build and start an experiment. Returns False if one is already running.
@@ -92,6 +93,7 @@ class ExperimentController:
             wire_bnc=False,
             online_timeout_s=online_timeout_s,
             firmware_for=firmware_for,
+            mac_for=mac_for,
         )
         self._gui_log = log
         runner.ctx.on_log = self._on_experiment_log
@@ -137,6 +139,18 @@ class ExperimentController:
         channel = 0 if which.upper() in ("IN1", "BNC_IN1") else 1
         edge = "rising" if high else "falling"
         self._runner.feed_bnc_in(channel, edge, now=ts, high=high)
+
+    def recover_nodes_after_broadcast(self, now: Optional[float] = None) -> bool:
+        """
+        A Recover broadcast (GUI Recover All, BNC recover_all) already reached
+        every node. Do the experiment side for each session node — clear its
+        halted latch, fire on_recover, abort a stranded await — without
+        sending a second frame. Returns False when no experiment is active.
+        """
+        if self._runner is None or self._runner.is_finished:
+            return False
+        self._runner.recover_nodes(self._runner.ctx.nodes, now=now, send=False)
+        return True
 
     def recover_node(self, node_id: int, now: Optional[float] = None) -> bool:
         """

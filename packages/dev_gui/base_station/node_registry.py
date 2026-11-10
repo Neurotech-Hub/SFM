@@ -194,8 +194,14 @@ class NodeRegistry:
         node_id: int,
         event: CanEvent,
         fault_code: Optional[ServiceStatus] = None,
+        presented: Optional[bool] = None,
     ) -> None:
-        """Update node state based on a received event."""
+        """Update node state based on a received event.
+
+        ``presented`` is FeedSkipped's context byte (firmware >= 1.7): True
+        means the occupied plate was already at the top and the node is now
+        Loaded with no motion to follow.
+        """
         node = self._get_or_create(node_id)
         node.online = True
         # Mirror dispense state transitions from events for better responsiveness
@@ -214,10 +220,13 @@ class NodeRegistry:
             CanEvent.NoFeedPresented: DispenseState.Loaded,
             CanEvent.DomeOpened:      DispenseState.Loaded,
             CanEvent.PelletTaken:     DispenseState.Idle,
+            CanEvent.PelletReturned:  DispenseState.Loaded,
             CanEvent.Fault:           DispenseState.Fault,
         }
         if event in state_map:
             node.dispense_state = state_map[event]
+            if event == CanEvent.FeedSkipped and presented:
+                node.dispense_state = DispenseState.Loaded
             # Only NoFeedPresented means "empty plate at the top". Every
             # other transition in state_map is either a new cycle starting
             # or proof a real pellet is involved — except DomeOpened, which

@@ -128,3 +128,17 @@ def test_reset_baseline_continues_the_session_total() -> None:
     # run adds one to the seeded total.
     assert led.witness_event(1, CanEvent.Loaded, 20).total == 6
     assert led.witness_event(1, CanEvent.PelletTaken, 9).total == 5
+
+
+def test_returned_pellet_is_taken_once() -> None:
+    """Firmware 1.7: Taken (count 5) → Returned → Taken again with the SAME
+    takenCount — the session total must not advance twice for one pellet."""
+    ledger = PelletLedger()
+    ledger.witness_event(1, CanEvent.Loaded, 3)
+    ledger.witness_event(1, CanEvent.PelletTaken, 5)
+    ret = ledger.witness_event(1, CanEvent.PelletReturned, 3)
+    assert ret is not None and not ret.had_gap
+    again = ledger.witness_event(1, CanEvent.PelletTaken, 5)
+    assert again.delta == 0 and not again.had_gap and not again.restarted
+    assert ledger.taken(1) == 1
+    assert ledger.presented(1) == 1

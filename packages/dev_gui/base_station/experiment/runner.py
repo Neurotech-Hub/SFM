@@ -201,6 +201,7 @@ class Experiment:
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
+        mac_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> "ExperimentRunner":
         """Build a runner for GUI hosting or synthetic testing."""
         return ExperimentRunner(
@@ -210,6 +211,7 @@ class Experiment:
             wire_bnc=wire_bnc,
             online_timeout_s=online_timeout_s,
             firmware_for=firmware_for,
+            mac_for=mac_for,
         )
 
 
@@ -229,11 +231,13 @@ class ExperimentRunner:
         wire_bnc: bool = True,
         online_timeout_s: Optional[float] = None,
         firmware_for: Optional[Callable[[int], Optional[str]]] = None,
+        mac_for: Optional[Callable[[int], Optional[str]]] = None,
     ) -> None:
         self.experiment = experiment
         self.can = can
         self.io = io
         self._firmware_for = firmware_for
+        self._mac_for = mac_for
         self.ctx = ExperimentControl(
             nodes=experiment.nodes,
             can=can,
@@ -343,24 +347,48 @@ class ExperimentRunner:
             self.normalizer.inject_bnc_in(channel, edge, ts, high=high)
         )
 
-    def recover_node(self, node_id: int, now: Optional[float] = None) -> None:
+    def recover_node(
+        self, node_id: int, now: Optional[float] = None, *, send: bool = True,
+    ) -> None:
         """
         Operator-initiated recovery of a faulted node.
 
         Clears the node's halted state, sends Recover (clears the firmware
         fault), then fires NODE_RECOVERED handlers so a template can re-arm it.
         No-op after the session ends.
+
+        Works for a node that was NOT faulted too (an operator can Recover a
+        node mid-cycle): any script await that node's cycle was meant to
+        satisfy is aborted, so the template moves on instead of waiting for an
+        event an Idle node will never send.
+        """
+        self.recover_nodes([node_id], now=now, send=send)
+
+    def recover_nodes(
+        self, node_ids: Sequence[int], now: Optional[float] = None, *, send: bool = True,
+    ) -> None:
+        """
+        Recover several nodes as ONE operation (e.g. a Recover All broadcast).
+
+        Every node is un-halted and its pending await aborted before the
+        script advances once. Recovering them one at a time would let the
+        first recovery resume the session and start a trial that the second
+        recovery then aborts.
         """
         if self._finished:
             return
         now = now if now is not None else time.time()
         self.ctx.set_now(now)
-        self.ctx.recover_node(node_id)
-        ev = NodeEvent(kind=EventKind.NODE_RECOVERED, node_id=node_id, timestamp=now)
-        self.ctx.observe_event(ev)
-        self._fire_handlers(ev)
-        if self.script is not None and self._active and not self._finished:
-            self.script.observe(ev)
+        script_live = self.script is not None and self._active and not self._finished
+        for node_id in node_ids:
+            self.ctx.recover_node(node_id, send=send)
+            ev = NodeEvent(kind=EventKind.NODE_RECOVERED, node_id=node_id, timestamp=now)
+            self.ctx.observe_event(ev)
+            self._fire_handlers(ev)
+            if script_live:
+                self.script.on_node_recovered(node_id)
+                self.script.observe(ev)
+        if script_live:
             self.script.advance(now)
 
     def step(
@@ -458,7 +486,12 @@ class ExperimentRunner:
         }
         host_fields = {
             k: v for k, v in self.ctx.session_fields.items()
-            if k not in ("experiment", "nodes", "seed", "utc_offset_s", "firmware")
+            if k not in ("experiment", "nodes", "seed", "utc_offset_s", "firmware", "macs")
+        }
+        # Hardware identity: which physical board was node N in this run.
+        macs = {
+            str(n): (self._mac_for(n) if self._mac_for is not None else None) or "unknown"
+            for n in self.ctx.nodes
         }
         self.ctx.log(
             "session_start",
@@ -467,8 +500,14 @@ class ExperimentRunner:
             seed=self.ctx.seed,
             utc_offset_s=utc_offset_s.total_seconds() if utc_offset_s is not None else None,
             firmware=firmware,
+            macs=macs,
             **host_fields,
         )
+        # Fresh state from every node before the first trial: heartbeats are
+        # periodic (60 s in production), so without this the script would
+        # start on default sensor state — e.g. not know a pellet is already
+        # sitting on a plate from before the session.
+        self.ctx.request_status(0)
         if self.ctx.on_session_start is not None:
             try:
                 self.ctx.on_session_start()

@@ -44,6 +44,7 @@ from .io_manager import (
 from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
 from .dev_settings import DevSettings
+from .notifier import Notifier, NotifySettings
 from .gui_settings import GuiSettings
 from .node_layout import NodeLayout
 from .node_registry import (
@@ -233,6 +234,8 @@ class BaseStationEngine:
         # Developer Menu values (presence factor) persisted across restarts —
         # see dev_settings.py.
         self._dev_settings = DevSettings()
+        # Phone alerts for node faults. Each Pi has its own ~/.sfm/notify.json.
+        self._notifier = Notifier(NotifySettings())
 
         # IOManager owns all base-station GPIO except CAN (BNC I/O).
         # Created up front (not tied to CAN session) since it degrades to a
@@ -681,6 +684,12 @@ class BaseStationEngine:
                 return None
             return node.firmware_version
 
+        def _mac_for(node_id: int) -> Optional[str]:
+            node = self._registry.get(node_id) if self._registry is not None else None
+            if node is None or not node.mac:
+                return None
+            return format_mac(node.mac)
+
         ok = self._exp.start(
             exp_def,
             params=params,
@@ -692,6 +701,7 @@ class BaseStationEngine:
             online_timeout_s=offline_timeout_for_heartbeat(self._hb_interval_s),
             resume=resume if resume is not None and resume.from_run else None,
             firmware_for=_firmware_for,
+            mac_for=_mac_for,
             session_fields=self._timebase_fields(),
         )
         if ok:
@@ -1670,12 +1680,20 @@ class BaseStationEngine:
                             details = "InputChanged payload must contain input ID and state"
                     else:
                         fault_code = parse_fault_code(ev) if ev.event == CanEvent.Fault else None
-                        self._registry.update_from_event(node_id, ev.event, fault_code=fault_code)
+                        skip_ctx = (
+                            parse_event_context(ev)
+                            if ev.event == CanEvent.FeedSkipped else None
+                        )
+                        self._registry.update_from_event(
+                            node_id, ev.event, fault_code=fault_code,
+                            presented=(skip_ctx or {}).get("presented"),
+                        )
                         entry_name = CAN_EVENT_DISPLAY_NAME.get(ev.event, ev.event.name)
                         if ev.event == CanEvent.Fault:
                             code = fault_code.name if fault_code is not None else "unknown"
                             details = f"fault={code} — {fault_user_message(fault_code)}"
                             entry_name = f"Fault: {code}"
+                            self._notify_fault(node_id, fault_code)
                         elif ev.event == CanEvent.DomeOpenWarning:
                             details = "dome sensor open >30s"
                         elif ev.event == CanEvent.PelletReload:
@@ -1768,6 +1786,9 @@ class BaseStationEngine:
                                 if "dome_open" in ctx:
                                     details += f" dome_open={int(ctx['dome_open'])}"
                                     log_fields["dome_open"] = bool(ctx["dome_open"])
+                                if "presented" in ctx:
+                                    details += f" presented={int(ctx['presented'])}"
+                                    log_fields["presented"] = bool(ctx["presented"])
                                 if rec is not None and (rec.had_gap or rec.restarted):
                                     self._log_pellet_gap(node_id, entry_name, rec)
                         # Distinguish a real delivery from a no-feed (mimic)
@@ -1781,6 +1802,11 @@ class BaseStationEngine:
                             details += " delivery=EMPTY — holding at drop position, M1 idle"
                         elif ev.event == CanEvent.Loaded:
                             details += " delivery=PELLET"
+                        elif ev.event == CanEvent.PelletReturned:
+                            details += (
+                                " warning — pellet back on the plate after Pellet Taken;"
+                                " that take was false, node is Loaded again"
+                            )
                     self._refresh_tile(node_id)
                     if not skip_log:
                         self._maybe_fire_bnc_out(entry_name)
@@ -2115,6 +2141,16 @@ class BaseStationEngine:
             return f"{purpose} — send failed"
         return purpose
 
+    def _notify_fault(self, node_id: int, fault_code) -> None:
+        """Hand a Fault event to the notifier. A notifier bug must not drop the frame."""
+        try:
+            node = self._registry.get(node_id) if self._registry is not None else None
+            label = node.label if node is not None else ""
+            session = self._log.session_name if self._log is not None else ""
+            self._notifier.on_fault(node_id, fault_code, label, session)
+        except Exception:  # noqa: BLE001 — frame handling continues either way
+            pass
+
     def _on_recover_node(self, node_id: int) -> None:
         """
         Recover a faulted node: clears the fault and readies it for the next
@@ -2188,6 +2224,11 @@ class BaseStationEngine:
                     self._send_cmd(node_id, cmd, payload)
                 return
         ok = self._can.send_broadcast(cmd, payload)
+        if cmd == CanCmd.Recover and self._exp is not None and self._exp.is_running:
+            # The running experiment must hear about it too — otherwise a
+            # fault-paused session stays paused and a script waiting on a
+            # recovered node's cycle waits forever.
+            self._exp.recover_nodes_after_broadcast()
         if cmd == CanCmd.Recover and self._registry:
             for node in self._registry.all_nodes():
                 self._registry.clear_fault(node.node_id)
