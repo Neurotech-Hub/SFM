@@ -249,7 +249,7 @@ doesn't bloat the main log.
 | Column | Holds | Notes |
 |---|---|---|
 | `timestamp_iso` | rig-local wall-clock string, e.g. `2025-06-01T14:32:07.123` | Written with `datetime.fromtimestamp()` **on the rig**, so it's already correct local time — see [§7](#7-time-timezone-and-time-of-day) |
-| `timestamp_ms` | epoch milliseconds | Used to recompute `.t` on load; don't trust it for wall-clock display without knowing the rig's real-world offset |
+| `timestamp_ms` | epoch milliseconds, rounded; BNC and CAN rows are stamped when the edge or frame happened, accurate to 1 ms (see the dev_gui README, "Timing accuracy") | Used to recompute `.t` on load; don't trust it for wall-clock display without knowing the rig's real-world offset |
 | `elapsed_s` | seconds since the row's *originating process* started | **Never read this directly** — it resets across a reopened session. Use `RunData` rows' `.t` instead ([Vocabulary](#vocabulary); [README trap #2](../README.md#five-things-to-know-before-trusting-a-number)) |
 | `session` | the session name | Groups rows into files; combined with `run_id` for run-scoping |
 | `run_id` | increments each time a session is reopened | A single CSV can hold several runs — [session vs run](#units-of-recording); [README trap #1](../README.md#five-things-to-know-before-trusting-a-number) |

@@ -391,3 +391,28 @@ def test_heartbeat_rows_come_from_their_own_ring(engine) -> None:
     rows = _ok(engine, "heartbeat_rows")["rows"]
     assert [r["event"] for r in rows] == ["Heartbeat"]
     assert [r["event"] for r in _ok(engine, "log_rows")["rows"]] == ["x"]
+
+
+def test_a_log_drive_that_has_gone_is_explained_when_a_session_starts(engine, monkeypatch) -> None:
+    def gone(*_a, **_k):
+        raise OSError(5, "Input/output error")
+    monkeypatch.setattr(engine._log, "open_session", gone)
+    message = _err(engine, "start_session", experiment="free_feeding", session_name="s")
+    assert "log folder can't be written" in message and "Input/output error" in message
+
+
+def test_disconnect_works_when_the_log_drive_has_gone(engine) -> None:
+    engine._can.stop = lambda: None
+
+    class Dead:
+        def flush(self):
+            raise OSError(5, "Input/output error")
+
+        def close(self):
+            raise OSError(5, "Input/output error")
+
+    log = engine._log
+    log._csv_file = log._hb_csv_file = Dead()
+    _ok(engine, "disconnect")
+    assert engine._log is None and log._csv_file is None
+    assert "Input/output error" in str(log.write_error)

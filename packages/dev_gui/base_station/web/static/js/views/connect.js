@@ -36,7 +36,8 @@ export function createConnect(ctx) {
   const foundSummary = h("p", { class: "small", role: "status" });
   const rediscoverBtn = h("button", { class: "btn", type: "button", onClick: doRediscover }, "Re-discover nodes");
   const gpioLine = h("p", { class: "small" });
-  const discoveryBox = h("div", { class: "col" }, foundSummary, found, h("div", { class: "row" }, rediscoverBtn), gpioLine);
+  const timingLine = h("p", { class: "small", id: "timing-line" });
+  const discoveryBox = h("div", { class: "col" }, foundSummary, found, h("div", { class: "row" }, rediscoverBtn), gpioLine, timingLine);
 
   const logDir = h("input", { class: "input mono", id: "log-dir", onInput: (e) => { model.logDir = e.target.value; model.dirTouched = true; model.dirMsg = null; update(); } });
   const useDrive = h("button", { class: "btn", type: "button", onClick: () => { model.logDir = ctx.ui.get().defaults?.log_dir || ""; logDir.value = model.logDir; model.dirTouched = true; model.dirMsg = null; update(); } }, "Use external drive");
@@ -323,6 +324,19 @@ export function createConnect(ctx) {
           detail.style.color = nn.online ? "var(--muted)" : "var(--amber)";
         } };
       }, foundStore);
+      // Whether the BNC timing threads run at real-time priority (opt-in at install time).
+      const rt = state.timing && state.timing.realtime, got = rt ? Object.entries(rt.threads) : [];
+      const refused = got.filter(([, v]) => String(v).startsWith("refused")), raised = got.filter(([, v]) => String(v).startsWith("FIFO"));
+      if (!rt || !rt.requested) {
+        setText(timingLine, "Timing: normal priority. A BNC pulse can be delayed by a few milliseconds while the machine is busy. Real-time priority is an option at install time (deploy/README.md).");
+        timingLine.className = "small muted";
+      } else if (refused.length) {
+        setText(timingLine, `Timing: real-time priority ${rt.requested} was requested but the system refused it (the real-time limit is too low), so the engine runs at normal priority. See deploy/README.md.`);
+        timingLine.className = "small note";
+      } else {
+        setText(timingLine, `Timing: real-time priority ${rt.requested} on the engine's CAN receive, BNC pulse and BNC edge threads${raised.length ? "" : " (starting)"}.`);
+        timingLine.className = "small ok-text";
+      }
       const gb = state.gpio_backend;
       if (gb === "gpiod") { setText(gpioLine, "BNC I/O: gpiod, with kernel edge timestamps."); gpioLine.className = "small ok-text"; }
       else if (gb) { setText(gpioLine, `BNC I/O: ${gb}. Edge times are stamped in software, so timing is less precise.`); gpioLine.className = "small note"; }

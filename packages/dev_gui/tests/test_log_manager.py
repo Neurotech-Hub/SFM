@@ -499,3 +499,24 @@ def test_row_number_is_not_in_the_csv(tmp_path):
     lm.close()
     header = lm.csv_path.read_text(encoding="utf-8").splitlines()[0]
     assert "seq" not in header
+
+
+class TestTimestampColumns:
+    """The two time columns come from one rounded millisecond, so they agree and are never early."""
+
+    def _entry(self, ts):
+        from base_station.log_manager import LogEntry
+        return LogEntry(timestamp=ts, direction="TX", node_id=0, frame_type="BNC",
+                        event_name="x", raw_id=0, raw_data=b"")
+
+    def test_ms_is_rounded_not_truncated(self):
+        assert self._entry(1_763_327_000.1239999).timestamp_ms == 1_763_327_000_124
+        assert self._entry(1_763_327_000.1234).timestamp_ms == 1_763_327_000_123
+
+    def test_iso_and_ms_columns_agree(self):
+        from datetime import datetime
+        for frac in (0.1239999, 0.0004, 0.9996, 0.5005, 0.4995):
+            e = self._entry(1_763_327_000 + frac)
+            iso_ms = int(e.timestamp_iso[-3:])
+            assert iso_ms == e.timestamp_ms % 1000
+            assert e.timestamp_str.endswith(f".{iso_ms:03d}")

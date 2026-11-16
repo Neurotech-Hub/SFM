@@ -38,6 +38,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+from . import realtime
+
 # ---------------------------------------------------------------------------
 # Pin definitions (BCM numbering) — fixed by the custom CAN HAT schematic.
 # ---------------------------------------------------------------------------
@@ -99,8 +101,14 @@ class BncEdgeEvent:
 @dataclass(frozen=True)
 class PulseRecord:
     """
-    What the BNC OUT worker actually did for one pulse. All times are
+    What the BNC OUT worker actually did for one pulse. ``t_rise`` and ``t_fall`` are
     ``time.monotonic()`` readings taken as the pin write returned.
+
+    The line goes high somewhere inside the write, and nothing stamps an output edge, so
+    ``wall_rise`` (the wall-clock time logged for the pulse) is the middle of the write, taken
+    from ``t_write_start`` and ``t_rise``. If the worker was held off the CPU during the write
+    the window is wide and ``rise_uncertainty_us`` says by how much; it is normally a few
+    microseconds.
     """
     purpose: str
     requested_us: int
@@ -108,6 +116,14 @@ class PulseRecord:
     t_rise: float
     t_fall: float
     wall_rise: float
+    t_write_start: float = 0.0
+
+    @property
+    def rise_uncertainty_us(self) -> float:
+        """Half the time the rising-edge write took: how far ``wall_rise`` can be from the edge."""
+        if not self.t_write_start:
+            return 0.0
+        return max(0.0, (self.t_rise - self.t_write_start) / 2 * 1_000_000)
 
     @property
     def width_us(self) -> float:
@@ -118,6 +134,26 @@ class PulseRecord:
     def latency_us(self) -> float:
         """Time from the request to the line going high."""
         return (self.t_rise - self.t_request) * 1_000_000
+
+
+def _wall_from_mono(t_mono: float) -> float:
+    """
+    The wall-clock time of a ``time.monotonic()`` reading. The two clocks are read back to back and
+    the pair is retried if this thread was held off the CPU between them, so the offset between the
+    clocks is good to a few microseconds.
+    """
+    best_gap = None
+    offset = 0.0
+    for _ in range(4):
+        m1 = time.monotonic()
+        wall = time.time()
+        m2 = time.monotonic()
+        gap = m2 - m1
+        if best_gap is None or gap < best_gap:
+            best_gap, offset = gap, wall - (m1 + m2) / 2
+        if gap < 20e-6:
+            break
+    return t_mono + offset
 
 
 BNC_IN_MODES = ("edge", "pulse", "level", "log_only")
@@ -391,6 +427,7 @@ class IOManager:
         self._pulse_thread.start()
 
     def _pulse_loop(self) -> None:
+        realtime.elevate_current_thread("bnc-pulse")
         while True:
             with self._pulse_cv:
                 while self._pulse_job is None and not self._pulse_stop:
@@ -401,9 +438,12 @@ class IOManager:
                 self._pulse_job = None
                 self._pulse_busy = True
             try:
+                t_write_start = time.monotonic()
                 self._write_output(PIN_BNC_OUT, True)
                 t_rise = time.monotonic()
-                wall_rise = time.time()
+                # The edge is somewhere inside the write: log the middle of it, not the moment
+                # this thread got back to read the clock.
+                wall_rise = _wall_from_mono((t_write_start + t_rise) / 2)
                 self._bnc_out_state = True
                 self._precise_wait_us(duration_us)
                 self._write_output(PIN_BNC_OUT, False)
@@ -412,6 +452,7 @@ class IOManager:
                 record = PulseRecord(
                     purpose=purpose, requested_us=duration_us, t_request=t_request,
                     t_rise=t_rise, t_fall=t_fall, wall_rise=wall_rise,
+                    t_write_start=t_write_start,
                 )
                 for listener in list(self._pulse_listeners):
                     try:
@@ -565,6 +606,7 @@ class IOManager:
 
     def _gpiod_edge_loop(self, request) -> None:
         """Background thread: block on libgpiod edge events and dispatch them."""
+        realtime.elevate_current_thread("bnc-edge")
         while not self._edge_thread_stop.is_set():
             try:
                 if request.wait_edge_events(timeout=0.2):
@@ -621,7 +663,7 @@ class IOManager:
             self._last_seqno[pin] = seqno
         # Same offset between the two clocks as right now; exact to microseconds,
         # and still right if this thread read the event a little late.
-        t_wall = time.time() - (time.monotonic() - t_mono)
+        t_wall = _wall_from_mono(t_mono)
         event = BncEdgeEvent(
             channel=channel, which=which, rising=rising, t_mono=t_mono, t_wall=t_wall,
             seqno=seqno, missed=missed, source=source,

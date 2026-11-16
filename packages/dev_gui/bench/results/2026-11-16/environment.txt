@@ -1,0 +1,6 @@
+kernel: 6.18.60+rpt-rpi-2712
+os: "Debian GNU/Linux 13 (trixie)"
+gpiod: 2.2.0
+python: Python 3.13.5
+throttled: throttled=0x0
+Mem:           7.9Gi       3.5Gi       2.4Gi       179Mi       2.3Gi       4.4Gi

@@ -19,6 +19,7 @@ try:
 except ImportError as e:
     raise ImportError("python-can is required: pip install python-can") from e
 
+from . import realtime
 from .protocol import (
     CanCmd,
     CAN_CMD_BASE,
@@ -180,6 +181,7 @@ class CanManager:
         A dead interface must not spin this thread. After repeated failures
         the bus is closed and opened again.
         """
+        realtime.elevate_current_thread("can-rx")
         failures = 0
         while self._running:
             if self._bus is None:

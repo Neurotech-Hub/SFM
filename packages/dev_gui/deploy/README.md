@@ -139,6 +139,28 @@ added to the desktop unless you ask:
 BNC lines, and the second one to start refuses and says who has them. To use the
 old DearPyGui app: `systemctl --user stop sfm-engine`, then `python run.py`.
 
+### Real-time priority for BNC timing (optional)
+
+Out of the box the engine's BNC timing is good while the machine is quiet, but a busy machine can
+delay a pulse by several milliseconds. Real-time priority keeps the slowest of 1000 events near 1 ms
+(measurements: [`bench/README.md`](../bench/README.md)). It is off unless you ask for it:
+
+```bash
+./install-gui.sh --realtime 50
+```
+
+- **User install:** the script adds `--realtime 50` to the engine and prints one command to run once
+  (`echo 'USER - rtprio 50' | sudo tee /etc/security/limits.d/90-sfm-realtime.conf`). Log out and in, or
+  reboot, so your session picks it up. The script never writes to `/etc` itself.
+- **System install (`--system`):** the unit sets the limit itself; nothing else to do.
+- **Check it:** the Connect page shows "Timing: real-time priority 50 on ..." when it is working, and a
+  warning if the system refused it. If it is refused the engine simply runs at normal priority.
+- Only the engine's threads are raised: the timing threads at 50, the rest of the engine just below.
+  The gateway and the browser are not.
+- Another change that is on by default: after start-up the engine moves its long-lived objects out of
+  Python's garbage collector (`--gc freeze`), because a full collection paused every thread for several
+  milliseconds. `python -m base_station.service --gc default` turns it off.
+
 ### What happens when something stops
 
 | What stops | What you see | The session |

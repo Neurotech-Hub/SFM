@@ -691,7 +691,11 @@ class BaseStationEngine:
 
         run_id = 0
         if self._log:
-            run_id = self._log.open_session(sanitized, self._exp_log_dir)
+            try:
+                run_id = self._log.open_session(sanitized, self._exp_log_dir)
+            except OSError as exc:
+                return False, (f"The log folder can't be written ({self._exp_log_dir}): {exc}. "
+                               "Check that the drive is plugged in, or use Change connection to pick another folder.")
             self._log.set_context(session=sanitized, run_id=run_id, trial=0, session_start_ts=time.time())
 
         # Continue the pellet numbers when this session name already has a
@@ -1430,6 +1434,8 @@ class BaseStationEngine:
                     "width_us": round(rec.width_us, 1),
                     "latency_us": round(rec.latency_us, 1),
                     "t_mono_rise": round(rec.t_rise, 6),
+                    "rise_uncertainty_us": round(rec.rise_uncertainty_us, 1),
+                    "t_mono_write_start": round(rec.t_write_start, 6),
                 },
             ))
 

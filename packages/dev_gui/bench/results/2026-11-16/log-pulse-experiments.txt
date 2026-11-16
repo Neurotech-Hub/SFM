@@ -1,0 +1,116 @@
+##### E0 baseline, governor ondemand
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=False, busy_processes=0
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     28.9  p50=     90.8  p95=    146.9  p99=    162.6  max=   3934.9  (us)
+width_error_us               n=1000  min=      4.5  p50=     45.5  p95=     90.3  p99=    100.4  max=   2652.3  (us)
+request_to_edge_us: slower than 0.25 ms: 2, 0.5 ms: 2, 1 ms: 1, 2 ms: 1, 5 ms: 0  (of 1000)
+  slowest: #126 = 3.93 ms, #108 = 0.61 ms, #844 = 0.22 ms, #796 = 0.22 ms, #116 = 0.20 ms
+  met    request_to_edge_us: p99 163 us, max 3935 us, target 1000 us -> met
+  met    width_error_us: p99 100 us, max 2652 us, target 200 us -> met
+##### E1 4 busy processes on the other cores
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=False, busy_processes=4
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     63.3  p50=     86.4  p95=    176.2  p99=    571.5  max=   4031.9  (us)
+width_error_us               n=1000  min=      7.0  p50=     38.1  p95=    156.2  p99=   1167.5  max=   4323.9  (us)
+request_to_edge_us: slower than 0.25 ms: 30, 0.5 ms: 12, 1 ms: 5, 2 ms: 3, 5 ms: 0  (of 1000)
+  slowest: #317 = 4.03 ms, #143 = 2.36 ms, #166 = 2.34 ms, #335 = 1.93 ms, #263 = 1.53 ms
+  met    request_to_edge_us: p99 572 us, max 4032 us, target 1000 us -> met
+  NOT    width_error_us: p99 1167 us, max 4324 us, target 200 us -> NOT met
+##### E2 GIL thread load, default 5 ms switch
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=True, busy_processes=0
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     38.7  p50=  10191.8  p95=  10265.7  p99=  10610.6  max=  14052.8  (us)
+width_error_us               n=1000  min=    389.9  p50=  10009.7  p95=  10112.3  p99=  15650.5  max=  20348.6  (us)
+request_to_edge_us: slower than 0.25 ms: 957, 0.5 ms: 957, 1 ms: 957, 2 ms: 957, 5 ms: 957  (of 1000)
+  slowest: #479 = 14.05 ms, #422 = 14.01 ms, #777 = 13.96 ms, #678 = 13.88 ms, #487 = 12.72 ms
+  NOT    request_to_edge_us: p99 10611 us, max 14053 us, target 1000 us -> NOT met
+  NOT    width_error_us: p99 15650 us, max 20349 us, target 200 us -> NOT met
+##### E3 GIL thread load, 0.5 ms switch interval
+conditions: switch_interval_us=500, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=True, busy_processes=0
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     63.3  p50=   1176.5  p95=   1235.8  p99=   1650.9  max=   5667.2  (us)
+width_error_us               n=1000  min=    433.6  p50=   1024.1  p95=   1093.9  p99=   1972.2  max=   4693.1  (us)
+request_to_edge_us: slower than 0.25 ms: 989, 0.5 ms: 989, 1 ms: 977, 2 ms: 6, 5 ms: 1  (of 1000)
+  slowest: #804 = 5.67 ms, #341 = 4.00 ms, #380 = 4.00 ms, #347 = 2.87 ms, #959 = 2.37 ms
+  NOT    request_to_edge_us: p99 1651 us, max 5667 us, target 1000 us -> NOT met
+  NOT    width_error_us: p99 1972 us, max 4693 us, target 200 us -> NOT met
+(governor now performance)
+##### E4 baseline, performance governor
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=False, busy_processes=0
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     38.7  p50=     77.4  p95=    134.9  p99=    142.0  max=    327.4  (us)
+width_error_us               n=1000  min=      4.1  p50=     43.3  p95=     86.4  p99=    103.7  max=    451.8  (us)
+request_to_edge_us: slower than 0.25 ms: 2, 0.5 ms: 0, 1 ms: 0, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #83 = 0.33 ms, #769 = 0.31 ms, #765 = 0.20 ms, #135 = 0.18 ms, #277 = 0.16 ms
+  met    request_to_edge_us: p99 142 us, max 327 us, target 1000 us -> met
+  met    width_error_us: p99 104 us, max 452 us, target 200 us -> met
+##### E5 performance governor + 4 busy processes
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=False, busy_processes=4
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     65.8  p50=     87.0  p95=    168.0  p99=    416.7  max=   1271.1  (us)
+width_error_us               n=1000  min=      9.1  p50=     61.3  p95=    272.9  p99=   1008.4  max=   3403.0  (us)
+request_to_edge_us: slower than 0.25 ms: 23, 0.5 ms: 8, 1 ms: 2, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #274 = 1.27 ms, #551 = 1.00 ms, #844 = 0.77 ms, #738 = 0.68 ms, #675 = 0.63 ms
+  met    request_to_edge_us: p99 417 us, max 1271 us, target 1000 us -> met
+  NOT    width_error_us: p99 1008 us, max 3403 us, target 200 us -> NOT met
+governor restored to ondemand
+##### E6 real-time FIFO 50, pinned to core 3, ondemand
+conditions: switch_interval_us=5000, cpu_affinity=[3], scheduler=SCHED_FIFO 50, gil_thread_load=False, busy_processes=0
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     34.6  p50=     87.3  p95=    151.1  p99=    156.8  max=    176.8  (us)
+width_error_us               n=1000  min=      6.7  p50=     46.8  p95=     86.4  p99=     93.9  max=    108.3  (us)
+request_to_edge_us: slower than 0.25 ms: 0, 0.5 ms: 0, 1 ms: 0, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #813 = 0.18 ms, #982 = 0.18 ms, #68 = 0.18 ms, #559 = 0.17 ms, #905 = 0.17 ms
+  met    request_to_edge_us: p99 157 us, max 177 us, target 1000 us -> met
+  met    width_error_us: p99 94 us, max 108 us, target 200 us -> met
+##### E7 real-time FIFO 50, core 3, 4 busy processes
+governor restored to ondemand
+##### E7 real-time 50, core 3, 4 busy processes
+conditions: switch_interval_us=5000, cpu_affinity=[3], scheduler=SCHED_FIFO 50, gil_thread_load=False, busy_processes=4
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     27.1  p50=     44.1  p95=     77.4  p99=    124.1  max=    252.0  (us)
+width_error_us               n=1000  min=      9.3  p50=     16.4  p95=     46.6  p99=     71.1  max=     89.8  (us)
+request_to_edge_us: slower than 0.25 ms: 1, 0.5 ms: 0, 1 ms: 0, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #403 = 0.25 ms, #255 = 0.24 ms, #90 = 0.14 ms, #448 = 0.13 ms, #109 = 0.13 ms
+  met    request_to_edge_us: p99 124 us, max 252 us, target 1000 us -> met
+  met    width_error_us: p99 71 us, max 90 us, target 200 us -> met
+##### E8 real-time 50 only (not pinned), 4 busy processes
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_FIFO 50, gil_thread_load=False, busy_processes=4
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     29.2  p50=     41.4  p95=     65.4  p99=     75.1  max=    131.5  (us)
+width_error_us               n=1000  min=      8.4  p50=     15.1  p95=     20.8  p99=     32.3  max=     67.6  (us)
+request_to_edge_us: slower than 0.25 ms: 0, 0.5 ms: 0, 1 ms: 0, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #788 = 0.13 ms, #369 = 0.13 ms, #379 = 0.12 ms, #85 = 0.11 ms, #798 = 0.10 ms
+  met    request_to_edge_us: p99 75 us, max 132 us, target 1000 us -> met
+  met    width_error_us: p99 32 us, max 68 us, target 200 us -> met
+##### E9 pinned to core 3 only (normal priority), 4 busy processes
+conditions: switch_interval_us=5000, cpu_affinity=[3], scheduler=SCHED_OTHER, gil_thread_load=False, busy_processes=4
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     24.4  p50=     50.8  p95=     87.9  p99=    121.6  max=    297.1  (us)
+width_error_us               n=1000  min=      8.5  p50=     15.3  p95=     26.2  p99=     63.2  max=   1893.1  (us)
+request_to_edge_us: slower than 0.25 ms: 1, 0.5 ms: 0, 1 ms: 0, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #875 = 0.30 ms, #581 = 0.14 ms, #895 = 0.14 ms, #48 = 0.13 ms, #736 = 0.13 ms
+  met    request_to_edge_us: p99 122 us, max 297 us, target 1000 us -> met
+  met    width_error_us: p99 63 us, max 1893 us, target 200 us -> met
+##### V0 event path, baseline
+conditions: switch_interval_us=5000, cpu_affinity=[0, 1, 2, 3], scheduler=SCHED_OTHER, gil_thread_load=False, busy_processes=0
+mode=event  matched=1000  missed=0  edges seen=2000
+event_to_pulse_us            n=1000  min=     67.0  p50=    124.2  p95=    204.8  p99=    315.7  max=   7454.4  (us)
+event_to_pulse_us: slower than 0.25 ms: 19, 0.5 ms: 4, 1 ms: 2, 2 ms: 2, 5 ms: 1  (of 1000)
+  slowest: #852 = 7.45 ms, #739 = 4.38 ms, #738 = 0.79 ms, #800 = 0.63 ms, #760 = 0.34 ms
+  met    event_to_pulse_us: p99 316 us, max 7454 us, target 1000 us -> met
+##### V1 event path, real-time 50 + core 3
+conditions: switch_interval_us=5000, cpu_affinity=[3], scheduler=SCHED_FIFO 50, gil_thread_load=False, busy_processes=0
+mode=event  matched=1000  missed=0  edges seen=2000
+event_to_pulse_us            n=1000  min=     71.8  p50=    106.1  p95=    179.1  p99=    204.1  max=   7582.4  (us)
+event_to_pulse_us: slower than 0.25 ms: 5, 0.5 ms: 1, 1 ms: 1, 2 ms: 1, 5 ms: 1  (of 1000)
+  slowest: #852 = 7.58 ms, #346 = 0.29 ms, #370 = 0.28 ms, #262 = 0.28 ms, #358 = 0.28 ms
+  met    event_to_pulse_us: p99 204 us, max 7582 us, target 1000 us -> met
+##### V2 event path, real-time 50 + core 3 + 4 busy processes
+conditions: switch_interval_us=5000, cpu_affinity=[3], scheduler=SCHED_FIFO 50, gil_thread_load=False, busy_processes=4
+mode=event  matched=1000  missed=0  edges seen=2000
+event_to_pulse_us            n=1000  min=     68.2  p50=    106.3  p95=    150.0  p99=    166.2  max=    301.8  (us)
+event_to_pulse_us: slower than 0.25 ms: 6, 0.5 ms: 0, 1 ms: 0, 2 ms: 0, 5 ms: 0  (of 1000)
+  slowest: #554 = 0.30 ms, #852 = 0.29 ms, #542 = 0.29 ms, #566 = 0.29 ms, #590 = 0.28 ms
+  met    event_to_pulse_us: p99 166 us, max 302 us, target 1000 us -> met
+##### DONE

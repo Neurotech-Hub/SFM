@@ -6,6 +6,7 @@
 #   ./install-gui.sh --enable             also start them at login (and at boot, with linger)
 #   ./install-gui.sh --kiosk              also open the Rig Map full screen when the desktop starts
 #   ./install-gui.sh --system             install system-wide instead (needs sudo)
+#   ./install-gui.sh --realtime 50        run the BNC timing threads at real-time priority 50 (see deploy/README.md)
 #   ./install-gui.sh --uninstall          stop, disable and remove everything this script installed
 #   ./install-gui.sh --dry-run            show what would happen, change nothing
 #
@@ -15,7 +16,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKDIR="$(dirname "$HERE")"
-MODE=user PYTHON="$(command -v python3)" PORT=8080
+MODE=user PYTHON="$(command -v python3)" PORT=8080 REALTIME=0
 ENABLE=0 KIOSK=0 UNINSTALL=0 DRY=0 UNIT_DIR=""
 
 while [ $# -gt 0 ]; do
@@ -24,6 +25,7 @@ while [ $# -gt 0 ]; do
     --system) MODE=system ;;
     --python) PYTHON="$2"; shift ;;
     --port) PORT="$2"; shift ;;
+    --realtime) REALTIME="$2"; shift ;;
     --enable) ENABLE=1 ;;
     --kiosk) KIOSK=1 ;;
     --uninstall) UNINSTALL=1 ;;
@@ -55,6 +57,8 @@ render() {  # render <template> <destination>
   local dest="$2" text
   text="$(sed -e "s|@WORKDIR@|$WORKDIR|g" -e "s|@PYTHON@|$PYTHON|g" -e "s|@PORT@|$PORT|g" -e "s|@WANTED_BY@|$WANTED_BY|g" "$1")"
   text="${text//@SYSTEM_USER@/$SYSTEM_USER}"
+  text="${text//@ENGINE_ARGS@/$ENGINE_ARGS}"
+  text="${text//@RT_LIMIT@/$RT_LIMIT}"
   if [ "$DRY" = 1 ]; then say "[dry run] would write $dest"; else mkdir -p "$(dirname "$dest")"; printf '%s\n' "$text" > "$dest"; say "wrote $dest"; fi
 }
 
@@ -70,7 +74,15 @@ if [ "$UNINSTALL" = 1 ]; then
   exit 0
 fi
 
-echo "Installing the Rig Map services ($MODE), python: $PYTHON, port: $PORT"
+case "$REALTIME" in ''|*[!0-9]*) echo "--realtime needs a priority from 1 to 99" >&2; exit 2 ;; esac
+[ "$REALTIME" -le 99 ] || { echo "--realtime needs a priority from 1 to 99" >&2; exit 2; }
+ENGINE_ARGS=""; RT_LIMIT=""
+if [ "$REALTIME" -gt 0 ]; then
+  ENGINE_ARGS=" --realtime $REALTIME"
+  # In a system service systemd itself can allow it. For a user service the limit comes from the login session (limits.d).
+  [ "$MODE" = system ] && RT_LIMIT="LimitRTPRIO=$REALTIME"$'\n'
+fi
+echo "Installing the Rig Map services ($MODE), python: $PYTHON, port: $PORT$([ "$REALTIME" -gt 0 ] && echo ", real-time priority: $REALTIME")"
 [ -x "$PYTHON" ] || { echo "python not found: $PYTHON" >&2; exit 1; }
 "$PYTHON" -c 'import aiohttp, can' 2>/dev/null || echo "  WARNING: $PYTHON cannot import aiohttp and python-can; the services would not start (see requirements.txt)"
 
@@ -86,6 +98,13 @@ if [ "$ENABLE" = 1 ] && use_systemctl; then
   if [ "$MODE" = user ]; then
     say "To start them at boot, before anyone logs in:  loginctl enable-linger $(id -un)"
   fi
+fi
+
+if [ "$REALTIME" -gt 0 ] && [ "$MODE" = user ]; then
+  echo
+  echo "Real-time priority needs your login session to allow it. Run this once (it writes a root-owned file), then log out and in, or reboot:"
+  say "echo '$(id -un) - rtprio $REALTIME' | sudo tee /etc/security/limits.d/90-sfm-realtime.conf"
+  say "Until then the engine runs at normal priority and the Connect page says so. Nothing breaks."
 fi
 
 echo

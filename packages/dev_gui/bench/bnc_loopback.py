@@ -67,6 +67,19 @@ def summarize(values: Sequence[float]) -> Dict[str, Any]:
     }
 
 
+TAIL_US = (250, 500, 1000, 2000, 5000)
+
+
+def tail_counts(values: Sequence[float], thresholds: Sequence[float] = TAIL_US) -> Dict[str, int]:
+    """How many samples are above each threshold (in the unit of ``values``)."""
+    return {f"over_{int(t)}": sum(1 for v in values if v > t) for t in thresholds}
+
+
+def worst(values: Sequence[float], k: int = 5) -> List[Tuple[int, float]]:
+    """The ``k`` largest samples as (position, value), largest first. The position says when it happened."""
+    return sorted(enumerate(values), key=lambda iv: iv[1], reverse=True)[:k]
+
+
 @dataclass(frozen=True)
 class Edge:
     """A logical edge seen on the loopback input: rising means the BNC went high."""
@@ -201,6 +214,68 @@ def _busy_load(stop: threading.Event) -> None:
         x = (x * 31 + 7) % 1000003
 
 
+def _busy_process(stop) -> None:
+    x = 0
+    while not stop.is_set():
+        x = (x * 31 + 7) % 1000003
+
+
+def start_load_processes(n: int):
+    """
+    Start ``n`` busy processes. Call this BEFORE ``apply_scheduling``: a child inherits the parent's
+    real-time priority and core pinning, and a real-time busy loop on the benchmark's own core
+    would starve it instead of imitating "other programs".
+    Returns ``(processes, stop_event)``.
+    """
+    import multiprocessing
+    stop = multiprocessing.Event()
+    procs = [multiprocessing.Process(target=_busy_process, args=(stop,), daemon=True) for _ in range(n)]
+    for p in procs:
+        p.start()
+    return procs, stop
+
+
+def apply_gc(mode: str) -> str:
+    """
+    Python's cyclic garbage collector stops every thread while it runs. ``off`` switches it off for
+    the run, ``freeze`` collects once and moves everything alive into a generation that is never
+    scanned again. Returns the mode in force.
+    """
+    import gc
+
+    if mode == "off":
+        gc.disable()
+    elif mode == "freeze":
+        gc.collect()
+        gc.freeze()
+    return mode
+
+
+def apply_scheduling(switch_interval_us: Optional[float], pin_cpu: Optional[int], rt_priority: Optional[int]) -> Dict[str, Any]:
+    """
+    Apply the experiment switches before any thread is created, so every thread inherits them.
+    Returns what is in force, for the result file. Raises SystemExit with a plain message if the
+    system refuses (real-time priority needs privileges).
+    """
+    import os
+
+    if switch_interval_us is not None:
+        sys.setswitchinterval(switch_interval_us / 1e6)
+    if pin_cpu is not None:
+        os.sched_setaffinity(0, {pin_cpu})
+    if rt_priority is not None:
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(rt_priority))
+        except PermissionError:
+            raise SystemExit("Real-time priority needs privileges: run with sudo, or allow it with "
+                             "'ulimit -r' / limits.conf (rtprio).") from None
+    return {
+        "switch_interval_us": round(sys.getswitchinterval() * 1e6),
+        "cpu_affinity": sorted(os.sched_getaffinity(0)),
+        "scheduler": "SCHED_FIFO %d" % os.sched_getparam(0).sched_priority if os.sched_getscheduler(0) == os.SCHED_FIFO else "SCHED_OTHER",
+    }
+
+
 def run_pulses(args: argparse.Namespace) -> Dict[str, Any]:
     io, edges = _open_io(args.in_channel)
     pulses: List[Pulse] = []
@@ -232,6 +307,7 @@ def run_pulses(args: argparse.Namespace) -> Dict[str, Any]:
         "mode": "pulses", "requested_us": width_us, "pulses": len(pulses),
         "matched": len(measured), "missed": missed, "edges_seen": len(edges),
         "summaries": summaries,
+        "samples": {k: [round(m[k], 1) for m in measured] for k in keys},
         "targets_us": {"request_to_edge_us": args.target_latency_us,
                        "width_error_us": args.target_width_error_us},
     }
@@ -272,6 +348,7 @@ def run_event(args: argparse.Namespace) -> Dict[str, Any]:
         "mode": "event", "frames": len(arrivals), "matched": len(delays), "missed": missed,
         "edges_seen": len(edges),
         "summaries": {"event_to_pulse_us": summarize(delays)},
+        "samples": {"event_to_pulse_us": [round(d, 1) for d in delays]},
         "targets_us": {"event_to_pulse_us": args.target_latency_us},
     }
 
@@ -284,6 +361,13 @@ def report(result: Dict[str, Any]) -> bool:
     for name, summary in result["summaries"].items():
         print(format_summary(name, summary))
     print()
+    for name in ("request_to_edge_us", "event_to_pulse_us"):
+        samples = result.get("samples", {}).get(name)
+        if samples:
+            tail = tail_counts(samples)
+            print(f"{name}: slower than " + ", ".join(f"{int(k[5:]) / 1000:g} ms: {v}" for k, v in tail.items())
+                  + f"  (of {len(samples)})")
+            print("  slowest: " + ", ".join(f"#{i} = {v / 1000:.2f} ms" for i, v in worst(samples)))
     ok = result["missed"] == 0
     if not ok:
         print(f"{result['missed']} pulse(s) had no matching edge: check the cable and the input channel.")
@@ -306,10 +390,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--can", default="vcan0", help="CAN interface for the event test (default vcan0)")
     parser.add_argument("--target-latency-us", type=float, default=1000.0)
     parser.add_argument("--target-width-error-us", type=float, default=200.0)
-    parser.add_argument("--load", action="store_true", help="keep a CPU core busy during the run")
+    parser.add_argument("--load", action="store_true",
+                        help="a CPU-bound thread in THIS process: it competes with the pulse thread for the interpreter lock (the GIL)")
+    parser.add_argument("--load-procs", type=int, default=0, metavar="N",
+                        help="N busy processes on other cores: what a busy browser or other program does to the machine")
+    parser.add_argument("--switch-interval-us", type=float, help="Python thread switch interval in microseconds (default 5000)")
+    parser.add_argument("--pin-cpu", type=int, help="run on this CPU core only")
+    parser.add_argument("--rt", type=int, metavar="PRIO", help="real-time FIFO priority 1-99 (needs privileges)")
+    parser.add_argument("--gc", choices=("default", "off", "freeze"), default="default",
+                        help="Python garbage collector during the run (it pauses all threads while it works)")
     parser.add_argument("--out", help="also write the full result as JSON to this file")
     args = parser.parse_args(argv)
 
+    # Load first, then the switches: the load must not inherit real-time priority or pinning.
+    procs, mp_stop = start_load_processes(args.load_procs) if args.load_procs else ([], None)
+    scheduling = apply_scheduling(args.switch_interval_us, args.pin_cpu, args.rt)
+    scheduling["gc"] = apply_gc(args.gc)
     stop = threading.Event()
     if args.load:
         threading.Thread(target=_busy_load, args=(stop,), daemon=True).start()
@@ -317,7 +413,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = run_pulses(args) if args.mode == "pulses" else run_event(args)
     finally:
         stop.set()
+        if procs:
+            mp_stop.set()
+            for p in procs:
+                p.join(2)
+                if p.is_alive():
+                    p.kill()
     result["load"] = bool(args.load)
+    result["load_procs"] = args.load_procs
+    result["scheduling"] = scheduling
+    print("conditions: " + ", ".join(f"{k}={v}" for k, v in {**scheduling, "gil_thread_load": bool(args.load), "busy_processes": args.load_procs}.items()))
     ok = report(result)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:

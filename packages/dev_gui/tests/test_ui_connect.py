@@ -281,3 +281,52 @@ def test_saving_from_the_page_keeps_a_token_and_fault_types_it_does_not_show(tmp
         raw = json.loads(path.read_text())
         assert raw["token"] == "tk_secret" and "Jam" in raw["faults"] and raw["station_name"] == "Renamed rig"
     run_ui(body, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# What the BNC timing threads are running at
+# ---------------------------------------------------------------------------
+
+def test_the_page_says_when_real_time_priority_is_off(tmp_path, monkeypatch) -> None:
+    from base_station import realtime
+    monkeypatch.delenv(realtime.ENV, raising=False)
+    realtime.reset_for_tests()
+
+    async def body(rig, p):
+        await go_connect(rig, p)
+        await p.wait("document.querySelector('#timing-line').textContent.startsWith('Timing: normal priority')")
+        assert "muted" in await p.eval("document.querySelector('#timing-line').className")
+    run_ui(body, tmp_path)
+
+
+def test_the_page_says_when_real_time_priority_is_on(tmp_path, monkeypatch) -> None:
+    from base_station import realtime
+    monkeypatch.setenv(realtime.ENV, "50")
+    realtime.reset_for_tests()
+    realtime._threads.update({"can-rx": "FIFO 50", "bnc-edge": "FIFO 50", "engine threads": "FIFO 40"})
+
+    async def body(rig, p):
+        await go_connect(rig, p)
+        await p.wait("document.querySelector('#timing-line').textContent.includes('real-time priority 50 on')")
+        assert "ok-text" in await p.eval("document.querySelector('#timing-line').className")
+    try:
+        run_ui(body, tmp_path)
+    finally:
+        realtime.reset_for_tests()
+
+
+def test_the_page_warns_when_real_time_priority_was_refused(tmp_path, monkeypatch) -> None:
+    from base_station import realtime
+    monkeypatch.setenv(realtime.ENV, "50")
+    realtime.reset_for_tests()
+    realtime._threads.update({"can-rx": "refused: the real-time limit is too low (see LimitRTPRIO)"})
+
+    async def body(rig, p):
+        await go_connect(rig, p)
+        await p.wait("document.querySelector('#timing-line').textContent.includes('refused it')")
+        assert "note" in await p.eval("document.querySelector('#timing-line').className")
+        assert "normal priority" in await p.text("#timing-line")
+    try:
+        run_ui(body, tmp_path)
+    finally:
+        realtime.reset_for_tests()

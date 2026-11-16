@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -32,6 +33,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 
 from .commands import run_command
 from .host import EngineHost, HostNotRunning
+from . import realtime
 from .process_lock import AlreadyRunning, ProcessLock
 
 log = logging.getLogger("sfm.service")
@@ -183,10 +185,18 @@ class EngineService:
             return {"ok": False, "error": f"{name} is taking too long; it may still finish."}
         except HostNotRunning:
             return {"ok": False, "error": "The engine is shutting down."}
-        except Exception:
+        except OSError as exc:
+            # A file or device error, most often the external drive the log is written to.
+            log.exception("command %s raised", name)
+            reason = exc.strerror or str(exc)
+            return {"ok": False, "error": (
+                f"{name} failed: {reason}. Check that the external media drive is plugged in "
+                "and the log folder can be written, then try again. If it keeps happening, "
+                "pick another folder with Change connection.")}
+        except Exception as exc:
             # run_command turns the expected failures into replies. This is a bug in a command.
             log.exception("command %s raised", name)
-            return {"ok": False, "error": f"{name} failed inside the engine. See the engine log."}
+            return {"ok": False, "error": f"{name} failed inside the engine ({type(exc).__name__}: {exc}). See the engine log."}
 
     # ------------------------------------------------------------------
     # Pushing state
@@ -241,7 +251,15 @@ def build_engine(args: argparse.Namespace) -> Any:
 
 async def serve(args: argparse.Namespace) -> None:
     lock = ProcessLock(name="sfm-engine").acquire()
+    if getattr(args, "realtime", 0):
+        os.environ[realtime.ENV] = str(args.realtime)      # before any timing thread exists
+        # Every thread made from here on inherits this, so the engine's own threads can't be held off
+        # the CPU while a timing thread waits on the interpreter lock behind them.
+        realtime.elevate_current_thread("engine threads", below=realtime.OTHERS_BELOW)
+    if getattr(args, "switch_interval_us", None):
+        sys.setswitchinterval(args.switch_interval_us / 1e6)
     engine = build_engine(args)
+    engine.gc_mode = getattr(args, "gc", "freeze")
     host = EngineHost(engine)
     service = EngineService(host, args.address)
     loop = asyncio.get_running_loop()
@@ -251,6 +269,11 @@ async def serve(args: argparse.Namespace) -> None:
     try:
         host.start()
         await service.start()
+        if engine.gc_mode == "freeze":
+            # The collector stops every thread while it works, and a full pass over a grown-up heap
+            # can take milliseconds. Everything alive now is start-up state that never needs scanning.
+            gc.collect()
+            gc.freeze()
         log.info("engine service listening on %s %s", *service.address)
         await stop.wait()
     finally:
@@ -271,6 +294,16 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     p.add_argument("--bitrate", "-b", type=int, default=250_000)
     p.add_argument("--nodes", "-n", type=int, default=2)
     p.add_argument("--log-dir", default=None)
+    p.add_argument("--realtime", type=int, default=0, metavar="PRIO",
+                   help="real-time priority 1-99 for the timing threads (CAN receive, BNC pulse, BNC edges); "
+                        "needs a real-time limit that allows it. Off by default")
+    p.add_argument("--gc", choices=("default", "freeze"), default="freeze",
+                   help="'freeze' (the default): after start-up, move everything alive out of the garbage collector's "
+                        "reach. Its full passes pause every thread for milliseconds and delayed a BNC pulse by 7 ms "
+                        "in testing; with this the slowest of 1000 was under 1 ms. 'default' leaves Python's own behaviour")
+    p.add_argument("--switch-interval-us", type=float, default=None, metavar="US",
+                   help="how long a Python thread may hold the interpreter lock before another gets a turn "
+                        "(default 5000). A shorter time bounds how long a busy thread can delay a BNC pulse")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
     if args.tcp_port is not None:

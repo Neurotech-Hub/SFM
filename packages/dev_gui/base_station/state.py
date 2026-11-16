@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional
 
+from . import realtime
 from .log_manager import LogEntry
 
 SNAPSHOT_VERSION = 1
@@ -181,6 +182,7 @@ def build_snapshot(engine: Any) -> Dict[str, Any]:
         },
         "notice": None if notice is None else {"level": notice[0], "text": notice[1], "seq": engine.notice_seq},
         "notify": _notify_dict(engine._notifier),
+        "timing": {"realtime": realtime.status(), "gc": getattr(engine, "gc_mode", "default")},
         "log": {
             "dir": engine._exp_log_dir,
             "last_seq": log.last_seq if log is not None else 0,

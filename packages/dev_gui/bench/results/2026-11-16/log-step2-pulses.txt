@@ -1,0 +1,58 @@
+##### width 10 ms
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     22.3  p50=     76.6  p95=    112.3  p99=    151.5  max=   1142.7  (us)
+software_rise_to_edge_us     n=1000  min=    -99.8  p50=      6.0  p95=      8.7  p99=     11.9  max=     15.4  (us)
+observed_width_us            n=1000  min=  10004.9  p50=  10018.5  p95=  10073.3  p99=  10100.4  max=  10149.2  (us)
+width_error_us               n=1000  min=      4.9  p50=     18.5  p95=     73.3  p99=    100.4  max=    149.2  (us)
+software_width_error_us      n=1000  min=      6.1  p50=     20.4  p95=     72.3  p99=     99.2  max=    125.5  (us)
+  met    request_to_edge_us: p99 152 us, max 1143 us, target 1000 us -> met
+  met    width_error_us: p99 100 us, max 149 us, target 200 us -> met
+Python on Linux gives no hard guarantee: judge the p99 and the max over a long run,
+with the browser open and closed and the CPU busy, not one quiet run.
+wrote /tmp/claude-1000/-home-base-station-00-Project-SFM/6e8a1f4f-d7d0-4bef-9830-5110f3cc087b/scratchpad/bench/pulses-10ms-idle.json
+##### width 1 ms
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     17.0  p50=     42.5  p95=     87.2  p99=     96.2  max=   5786.8  (us)
+software_rise_to_edge_us     n=1000  min=     -7.8  p50=      4.0  p95=      7.0  p99=      8.0  max=     11.4  (us)
+observed_width_us            n=1000  min=   1002.4  p50=   1011.9  p95=   1020.4  p99=   1025.5  max=   1058.6  (us)
+width_error_us               n=1000  min=      2.4  p50=     11.9  p95=     20.4  p99=     25.5  max=     58.6  (us)
+software_width_error_us      n=1000  min=      4.3  p50=     12.5  p95=     17.5  p99=     24.5  max=     57.6  (us)
+  met    request_to_edge_us: p99 96 us, max 5787 us, target 1000 us -> met
+  met    width_error_us: p99 26 us, max 59 us, target 200 us -> met
+Python on Linux gives no hard guarantee: judge the p99 and the max over a long run,
+with the browser open and closed and the CPU busy, not one quiet run.
+wrote /tmp/claude-1000/-home-base-station-00-Project-SFM/6e8a1f4f-d7d0-4bef-9830-5110f3cc087b/scratchpad/bench/pulses-1ms-idle.json
+##### width 100 ms
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     28.4  p50=     50.9  p95=     92.9  p99=    103.8  max=   4591.6  (us)
+software_rise_to_edge_us     n=1000  min=     -6.2  p50=      4.3  p95=      7.3  p99=      9.2  max=     11.8  (us)
+observed_width_us            n=1000  min= 100011.5  p50= 100033.4  p95= 100057.3  p99= 100063.6  max= 100097.7  (us)
+width_error_us               n=1000  min=     11.5  p50=     33.4  p95=     57.3  p99=     63.6  max=     97.7  (us)
+software_width_error_us      n=1000  min=     13.3  p50=     33.2  p95=     58.8  p99=     68.9  max=     97.6  (us)
+  met    request_to_edge_us: p99 104 us, max 4592 us, target 1000 us -> met
+  met    width_error_us: p99 64 us, max 98 us, target 200 us -> met
+Python on Linux gives no hard guarantee: judge the p99 and the max over a long run,
+with the browser open and closed and the CPU busy, not one quiet run.
+wrote /tmp/claude-1000/-home-base-station-00-Project-SFM/6e8a1f4f-d7d0-4bef-9830-5110f3cc087b/scratchpad/bench/pulses-100ms-idle.json
+##### DONE
+##### step3 event idle
+mode=event  matched=1000  missed=0  edges seen=2000
+event_to_pulse_us            n=1000  min=     78.7  p50=    205.5  p95=    339.7  p99=    530.7  max=   7172.1  (us)
+  met    event_to_pulse_us: p99 531 us, max 7172 us, target 1000 us -> met
+##### step4 event CPU-busy
+mode=event  matched=998  missed=2  edges seen=1996
+event_to_pulse_us            n=998   min=  46288.0  p50=  96262.0  p95= 163572.8  p99= 172618.9  max= 187506.4  (us)
+2 pulse(s) had no matching edge: check the cable and the input channel.
+  NOT    event_to_pulse_us: p99 172619 us, max 187506 us, target 1000 us -> NOT met
+##### step4 pulses 10ms CPU-busy
+mode=pulses  matched=1000  missed=0  edges seen=2000
+request_to_edge_us           n=1000  min=     67.8  p50=  10197.4  p95=  10266.7  p99=  10615.8  max=  13767.7  (us)
+observed_width_us            n=1000  min=  10226.9  p50=  20017.4  p95=  20161.3  p99=  25916.4  max=  32655.5  (us)
+width_error_us               n=1000  min=    226.9  p50=  10017.4  p95=  10161.3  p99=  15916.4  max=  22655.5  (us)
+  NOT    request_to_edge_us: p99 10616 us, max 13768 us, target 1000 us -> NOT met
+  NOT    width_error_us: p99 15916 us, max 22656 us, target 200 us -> NOT met
+##### step4 event + ~1000 frames/s of CAN traffic
+mode=event  matched=1000  missed=0  edges seen=2000
+event_to_pulse_us            n=1000  min=     84.6  p50=    134.0  p95=    234.8  p99=    285.4  max=   1352.1  (us)
+  met    event_to_pulse_us: p99 285 us, max 1352 us, target 1000 us -> met
+##### DONE

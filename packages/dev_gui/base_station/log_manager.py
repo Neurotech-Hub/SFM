@@ -120,16 +120,18 @@ class LogEntry:
 
     @property
     def timestamp_str(self) -> str:
-        dt = datetime.fromtimestamp(self.timestamp)
+        dt = datetime.fromtimestamp(self.timestamp_ms / 1000)
         return dt.strftime("%H:%M:%S.%f")[:-3]   # HH:MM:SS.mmm
 
     @property
     def timestamp_iso(self) -> str:
-        return datetime.fromtimestamp(self.timestamp).isoformat(timespec="milliseconds")
+        return datetime.fromtimestamp(self.timestamp_ms / 1000).isoformat(timespec="milliseconds")
 
     @property
     def timestamp_ms(self) -> int:
-        return int(self.timestamp * 1000)
+        # Rounded, not truncated: truncating is up to 1 ms early, and the iso column and this one
+        # are made from this same number so they always agree.
+        return int(round(self.timestamp * 1000))
 
     @property
     def raw_data_hex(self) -> str:
@@ -853,16 +855,19 @@ class LogManager:
             self._hb_csv_file.flush()
 
     def _close_files_locked(self) -> None:
-        if self._csv_file is not None:
-            self._csv_file.flush()
-            self._csv_file.close()
-            self._csv_file = None
-            self._csv_writer = None
-        if self._hb_csv_file is not None:
-            self._hb_csv_file.flush()
-            self._hb_csv_file.close()
-            self._hb_csv_file = None
-            self._hb_csv_writer = None
+        """Close both files. A drive that has gone away makes flush/close fail; the error is kept in
+        ``_write_error`` (shown in the state) and the files are dropped anyway, so a new folder can be used."""
+        for name in ("_csv_file", "_hb_csv_file"):
+            f = getattr(self, name)
+            if f is None:
+                continue
+            for step in (f.flush, f.close):
+                try:
+                    step()
+                except OSError as exc:
+                    self._write_error = exc
+        self._csv_file = self._csv_writer = None
+        self._hb_csv_file = self._hb_csv_writer = None
         self._sink_kind = None
 
     def _entry_to_row(self, entry: LogEntry) -> list:

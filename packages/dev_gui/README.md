@@ -348,11 +348,42 @@ node, pulsed straight from the CAN receive thread), or `periodic`. The default,
 the `trigger` pulses above. Settings are saved in `~/.sfm/bnc_settings.json`
 once a front-end calls `engine.enable_bnc_persistence()`.
 
-The timing has **not yet been measured on real hardware**. The steps to confirm
-it, with the proposed limits and what to do if one is missed, are in
-[bench/README.md](bench/README.md). In short: cable BNC OUT to BNC IN 0 and run
-`python -m bench.bnc_loopback pulses` (output accuracy) or
-`python -m bench.bnc_loopback event --can vcan0` (event to pulse).
+#### Timing accuracy: 1 ms
+
+**The time written in the CSV for a BNC edge or BNC OUT pulse is within 1 ms of when it happened.**
+That is the accuracy of the log, and it holds however busy the base station is: the time comes from
+the moment of the edge, not from when the engine or the CSV writer got to the row.
+
+| What | Where the time comes from | Measured error (Pi 5, 1000 pulses, written CSV against the kernel's stamp of the same edge) |
+|---|---|---|
+| BNC IN edge and pulse width | libgpiod kernel stamp of the edge | this stamp is the reference; it is taken a few µs after the electrical edge (interrupt latency: 8 µs median, 24 µs worst against the pin write) |
+| BNC OUT pulse row | middle of the pin write (nothing stamps an output edge); `rise_uncertainty_us` in `fields_json` says how wide that window was, normally a few µs | idle: p99 0.10 ms, worst 0.24 ms. Four busy programs: p99 0.08 ms, worst 0.30 ms |
+| CAN rows | kernel arrival stamp of the frame at the base station | by design, same clock; not separately measured |
+| `timestamp_ms` / `timestamp_iso` columns | one rounded millisecond; the two always agree | within 0.5 ms of the time above |
+
+What 1 ms does and does not cover:
+
+- **Covered:** every row is on one clock, so BNC, CAN and experiment rows line up with each other to
+  1 ms. Your other equipment lines up through the shared BNC edge: the pulse on the wire and the row
+  in the CSV are the same instant. `fields_json` on BNC rows carries the exact `t_mono` (µs) when you
+  need finer than the millisecond columns.
+- **Not the same thing, and not guaranteed:** the delay between a node event and the BNC OUT pulse
+  it triggers. The log records when the pulse really went out, so a late pulse is logged late, not
+  hidden. Measured p99: about 0.4–0.5 ms with GC freeze (the service default) and real-time priority,
+  1.2 ms (worst 4.8 ms) with four busy programs, no real-time priority and a normal-priority test sender. Real-time priority is
+  opt-in (see [deploy/README.md](deploy/README.md)).
+- **Not included:** the node's own delay from sensor to CAN frame, and CAN bus time (about 0.5 ms a
+  frame at 250 kbit/s). Both are on the node side of the kernel stamp.
+- **Needs:** the libgpiod backend (rows say `capture: kernel`; the `RPi.GPIO` fallback has no edge
+  stamp, so the 1 ms is not claimed there), and a wall clock that is not stepped (a `ClockStep` row
+  marks any jump). Absolute time of day depends on NTP; the Pi has no battery clock.
+- **Not yet done:** a cross-check against an external DAQ or oscilloscope recording the same BNC OUT.
+  The figures above are the Pi measuring itself over a BNC OUT to BNC IN 0 cable.
+
+The measurements, the conditions and how to repeat them are in [bench/README.md](bench/README.md);
+raw results are in `bench/results/`. To repeat: `systemctl --user stop sfm-engine`, cable BNC OUT to
+BNC IN 0, then `python -m bench.engine_loopback --count 1000 --can vcan0` (it reads the written CSV
+and prints `logged_minus_edge_us` and `csv_ms_diff_us`, each checked against 1 ms).
 
 ## Phone notifications (ntfy)
 

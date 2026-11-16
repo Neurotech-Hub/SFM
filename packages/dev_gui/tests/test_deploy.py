@@ -46,8 +46,9 @@ def test_the_units_run_the_right_modules_with_a_shared_socket(tmp_path) -> None:
     assert "Restart=always" in gateway
     # Restarting one must not stop the other.
     assert "Wants=sfm-engine.service" in gateway and "Requires=" not in gateway and "BindsTo=" not in gateway
-    # Real-time scheduling is documented but off.
-    assert "#CPUSchedulingPolicy=fifo" in engine and "\nCPUSchedulingPolicy=" not in engine
+    # Real-time priority is opt-in: nothing about it unless --realtime is given.
+    exec_line = next(l for l in engine.splitlines() if l.startswith("ExecStart="))
+    assert "--realtime" not in exec_line and "\nLimitRTPRIO" not in engine and "\nCPUSchedulingPolicy=" not in engine
 
 
 def test_system_install_runs_as_the_user_and_starts_at_boot(tmp_path) -> None:
@@ -110,4 +111,47 @@ def test_systemd_accepts_the_generated_units(tmp_path, mode) -> None:
     # Unit-file mistakes are what verify exists to find. Ignore only the notice that a
     # unit's [Install] target is not loaded in this isolated check.
     problems = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and "default.target" not in l and "multi-user.target" not in l]
+    assert not problems, "\n".join(problems)
+
+
+def test_realtime_is_off_unless_asked_and_the_default_run_says_nothing_about_it(tmp_path) -> None:
+    r = run("--unit-dir", str(tmp_path / "u"), home=tmp_path)
+    assert "real-time" not in r.stdout.lower().split("next steps")[0], r.stdout
+
+
+def test_realtime_adds_the_engine_option_and_for_a_user_install_prints_the_one_step_needed(tmp_path) -> None:
+    units = tmp_path / "u"
+    r = run("--unit-dir", str(units), "--realtime", "50", home=tmp_path)
+    assert r.returncode == 0, r.stderr
+    engine = (units / "sfm-engine.service").read_text()
+    assert "base_station.service --socket %t/sfm/engine.sock --realtime 50" in engine
+    assert "\nLimitRTPRIO" not in engine, "a user service gets its limit from the login session, not the unit"
+    assert "(gateway)" not in engine and "--realtime" not in (units / "sfm-gateway.service").read_text()
+    assert "limits.d/90-sfm-realtime.conf" in r.stdout and "rtprio 50" in r.stdout
+    assert "normal priority" in r.stdout, "it says what happens until the limit is in place"
+    assert not (tmp_path / "etc").exists(), "the script never writes /etc itself"
+
+
+def test_realtime_in_a_system_service_sets_the_limit_in_the_unit(tmp_path) -> None:
+    units = tmp_path / "u"
+    r = run("--system", "--unit-dir", str(units), "--realtime", "60", home=tmp_path)
+    engine = (units / "sfm-engine.service").read_text()
+    assert "--realtime 60" in engine and "\nLimitRTPRIO=60\n" in engine
+    assert "limits.d" not in r.stdout
+
+
+@pytest.mark.parametrize("bad", ["0x", "abc", "100", "-5", ""])
+def test_a_bad_realtime_priority_is_refused(tmp_path, bad) -> None:
+    r = run("--unit-dir", str(tmp_path / "u"), "--realtime", bad, home=tmp_path)
+    assert r.returncode == 2 and "1 to 99" in r.stderr
+    assert not (tmp_path / "u").exists()
+
+
+@pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="no systemd-analyze")
+def test_systemd_accepts_a_system_unit_with_the_realtime_limit(tmp_path) -> None:
+    units = tmp_path / "units"
+    run("--system", "--unit-dir", str(units), "--realtime", "50", "--python", sys.executable, home=tmp_path)
+    r = subprocess.run(["systemd-analyze", "verify", str(units / "sfm-engine.service"), str(units / "sfm-gateway.service")],
+                       capture_output=True, text=True, timeout=60)
+    problems = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and "multi-user.target" not in l]
     assert not problems, "\n".join(problems)

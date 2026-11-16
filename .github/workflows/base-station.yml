@@ -55,4 +55,5 @@ jobs:
             tests/test_service.py tests/test_gateway.py \
             tests/test_node_layout.py tests/test_gui_settings.py tests/test_ui_browser.py \
             tests/test_kiosk.py tests/test_deploy.py tests/test_load_monitor.py \
-            tests/test_notify_and_logdir.py tests/test_ui_connect.py
+            tests/test_notify_and_logdir.py tests/test_ui_connect.py \
+            tests/test_realtime.py

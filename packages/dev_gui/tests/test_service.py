@@ -159,6 +159,20 @@ def test_oversized_line_disconnects_only_that_client(tmp_path, monkeypatch) -> N
     run(body, tmp_path)
 
 
+def test_a_file_error_tells_the_operator_to_check_the_drive(tmp_path, monkeypatch) -> None:
+    def gone(engine):
+        raise OSError(5, "Input/output error")
+    monkeypatch.setitem(COMMANDS, "gone", gone)
+
+    async def body(svc, engine, host):
+        c = await Client.connect(svc)
+        out = await c.call("gone")
+        assert out["ok"] is False
+        assert "Input/output error" in out["error"] and "external media drive is plugged in" in out["error"]
+        assert (await c.call("get_dev_settings"))["ok"] is True
+    run(body, tmp_path)
+
+
 def test_a_command_that_crashes_is_reported_and_the_service_stays_up(tmp_path, monkeypatch) -> None:
     def explode(engine):
         raise RuntimeError("bug in a command")

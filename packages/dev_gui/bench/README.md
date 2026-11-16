@@ -1,10 +1,76 @@
 # BNC timing: bench confirmation
 
-**Status: not done yet.** The BNC timing code is built and unit-tested, but the
-timing budget below has never been measured on real hardware. Until it is, treat
-every number here as a target, not a result. Development of the GUI and gateway
-does not depend on it; the numbers decide whether the timing design is enough or
-needs more (see *If a target is missed*).
+**Status: measured on 2026-11-16** on the base station Pi (Raspberry Pi 5, Debian 13, kernel
+6.18.60, libgpiod 2.2.0, BNC OUT cabled to BNC IN 0). The raw results are in
+[`results/2026-11-16/`](results/2026-11-16/). The summary is below; every number is a
+measurement, with the conditions it was taken under.
+
+## Results
+
+**What was confirmed**
+
+- The HAT inverts the BNC input as the code assumes (a raw rising pin edge is a falling BNC edge).
+  20 smoke pulses of 10 ms read back as 10.04 ms, none missed.
+- The kernel timestamps on both ends behave as designed. Across about 12,000 pulses and events, none
+  was missed.
+
+**BNC OUT on its own** (1000 pulses per row, `bnc_loopback pulses`, nothing else running):
+
+| Pulse | request to edge p50 / p99 | slowest | width error p99 (always positive, about +10 to +40 us) |
+|---|---|---|---|
+| 1 ms | 43 / 96 us | 5.8 ms (one pulse) | 26 us |
+| 10 ms | 77 / 152 us | 1.1 ms | 100 us |
+| 100 ms | 51 / 104 us | 4.6 ms (one pulse) | 64 us |
+
+**Whole engine, node event to BNC OUT** (`engine_loopback`, 1000 events per row; frame sent to the
+kernel's stamp on BNC OUT rising, read from the engine's own log; target p99 under 1 ms):
+
+| Engine setup | machine | p99 | slowest |
+|---|---|---|---|
+| defaults | idle | 628 us | **6.0 ms** |
+| GC freeze | idle | 510 us | 580 us |
+| real-time priority | idle | 502 us | 624 us |
+| real-time + GC freeze | idle | 447 us | 710 us |
+| real-time + GC freeze | 4 busy programs | 426 us | 671 us |
+| real-time + GC freeze | 100 CAN frames/s + 4 busy programs | 514 us | 855 us |
+| real-time + GC freeze | 300 CAN frames/s + 4 busy programs | 765 and 805 us | 1.08 and 1.44 ms |
+| real-time + GC freeze | 1000 CAN frames/s, otherwise idle | **1.30 ms (not met)** | 3.4 ms |
+
+So the engine meets the 1 ms target at p99 at realistic loads, and with real-time priority and GC freeze
+the slowest event of 1000 stays near or just over 1 ms. At 1000 CAN frames a second (about half the
+bus capacity, far more than a rig produces) the engine's receive path is the limit and the target is
+not met.
+
+**CSV timestamps against the real edge** (`engine_loopback`, 1000 events, read from the written CSV, 2026-11-16; BNC OUT row against the kernel's stamp of the same edge on BNC IN 0):
+
+| Condition | `logged_minus_edge` p50 / p99 / worst | CSV `timestamp_ms` difference |
+|---|---|---|
+| idle | -23 / 101 / 235 us | 0 at p99, never more than 1 ms (one-millisecond rounding) |
+| 4 busy programs | -20 / 81 / 301 us | 0 at p99, never more than 1 ms |
+
+The time written for a BNC OUT pulse is the middle of the pin write, because nothing stamps an output edge; `rise_uncertainty_us` in the row's `fields_json` is half the write time (a few microseconds, wider only if the thread was held off the CPU mid-write). `timestamp_ms` is rounded, and `timestamp_iso` is made from it, so the two agree. BNC IN rows carry the kernel's edge stamp. How late the engine processes an event never changes the time in its row; it only changes when the pulse goes out (the table above). Not covered: node-side delay, CAN bus time, an external DAQ.
+
+**What causes the occasional slow event, and what fixes it**
+
+| Cause | Evidence | Fix |
+|---|---|---|
+| Python's garbage collector pauses every thread (a 7 ms stall at the same event number in three runs; gone with it off) | `--gc off` / `freeze` runs | `--gc freeze`, now the engine's default |
+| Other programs holding a timing thread off the CPU | 4 busy programs: pulse width error up to 14 ms without real-time priority, 0.1 ms with | real-time priority (`--realtime`, opt-in) |
+| The engine's own other threads being held off while a timing thread waits for the interpreter lock behind them (priority inversion) | with only the timing threads raised, one second of load delayed pulses by 50 ms | the engine's other threads run just below the timing threads (set once, inherited) |
+| CPU running slow when idle (`ondemand` governor) | `performance` governor cut the idle worst case from 3.9 ms to 0.33 ms | not changed; real-time priority makes it unnecessary |
+
+Not helpful, measured and left alone: pinning to one CPU core (no gain, and it does not protect the
+pulse width), and a shorter Python thread switch interval (no clear gain at realistic loads).
+
+**A CPU-bound Python thread inside the engine process delays every pulse by about 10 ms** (two 5 ms
+waits). That is the interpreter lock, not the browser. Keep heavy computation off the engine's threads.
+
+**Limits of these measurements.** One cable, one Pi, 1000 samples per row. Run-to-run variation in
+the slowest event is large (two identical runs gave 1.05 and 2.07 ms), so read p99 and the order of
+magnitude of the worst case, not a single maximum. The virtual CAN bus has no bus time, and nodes
+add their own delay: the end-to-end time from a node's sensor to the pulse is not measured here.
+Frames sent by a normal-priority test sender can be delayed by busy programs and mistaken for engine
+delay, which is why the busy-machine rows run the sender at real-time priority.
 
 ## What is being confirmed
 
@@ -34,6 +100,22 @@ the node, not with this tool.
   it gives no edge timestamps and the tool will refuse to run.
 - A terminal on the Pi, in `packages/dev_gui`.
 - Optional, for a cross-check: a DAQ or oscilloscope that can record BNC OUT.
+
+## The two tools
+
+`python -m bench.bnc_loopback pulses|event` times the BNC code on its own (this document's steps).
+Options for finding what disturbs the timing: `--load-procs N` (N busy programs on other cores),
+`--load` (a busy thread inside the test: it competes for the interpreter lock), `--rt PRIO` (real-time
+priority, needs privileges), `--pin-cpu N`, `--gc off|freeze`, `--switch-interval-us N`. Every run
+keeps its raw samples in the `--out` file and prints how many were slower than 0.25, 0.5, 1, 2 and
+5 ms, and which ones were slowest.
+
+`python -m bench.engine_loopback` times the real engine end to end. It starts its own engine with
+scratch settings (your saved BNC settings, node map and logs are not touched), connects it to a virtual
+CAN bus, sends node events and reads the delays from the engine's own log. Options: `--realtime PRIO
+--grant-rt` (start the engine with real-time priority and the limit it needs), `--gc`,
+`--can-traffic-fps N`, `--load-procs N`, `--sender-rt PRIO`. It refuses to use a real CAN interface.
+Stop the engine service first (`systemctl --user stop sfm-engine`) and start it again afterwards.
 
 ## Before you start
 

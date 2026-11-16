@@ -299,3 +299,18 @@ def test_a_failing_pulse_listener_does_not_kill_the_worker() -> None:
     io.pulse_bnc_out(2_000)
     assert done.wait(2.0)
     io.shutdown()
+
+
+def test_pulse_record_uncertainty_is_half_the_write_time_and_zero_when_unknown() -> None:
+    from base_station.io_manager import PulseRecord
+    rec = PulseRecord(purpose="x", requested_us=1000, t_request=1.0, t_rise=1.000100, t_fall=1.001, wall_rise=5.0,
+                      t_write_start=1.000020)
+    assert rec.rise_uncertainty_us == pytest.approx(40.0, abs=0.01)
+    assert PulseRecord(purpose="x", requested_us=1, t_request=1.0, t_rise=1.1, t_fall=1.2, wall_rise=5.0).rise_uncertainty_us == 0.0
+
+
+def test_wall_from_mono_matches_the_two_clocks() -> None:
+    import time
+    from base_station.io_manager import _wall_from_mono
+    now_m = time.monotonic()
+    assert abs(_wall_from_mono(now_m) - time.time()) < 0.002
