@@ -28,10 +28,13 @@ the node is enabled and none of those own it.
 
 A fourth input, **mouse presence**, is the capacitive pad read by `PresenceService`. It is independent of the
 pellet sensor and the dispense cycle, and is reported for behavioral context only. Raw counts rise when a mouse
-is present, so mouse presence is `raw > threshold`, and it shares the same 100 ms debounce as the photogates — one approach produces
-one trigger and one clear. The threshold is calibrated against the idle pad as
-`mean + factor × std_dev` (short click of the on-board button or serial `cal`; factor via serial `factor <n>`)
-and stored in NVS alongside the node ID, so it survives reboots.
+is present. The node reports present when the smoothed reading has stayed more than `factor` percent above a
+drifting baseline for 100 ms, and clear when it has stayed under half that rise for 100 ms. The factor (NVS
+`presPct`, default 1.0) is the only stored setting. The baseline is not stored: it is seeded from the first
+second after boot and then tracks drift only while the pad reads clear and the dome has been closed for 2 s.
+A short click, serial `cal`, or `CalibratePresence` re-baselines over 20 s without pausing detection. The dome
+is not part of the reported presence bit. It only protects the baseline, and each time it closes the node emits
+`DomeBoutSummary` so a later analysis can see whether the touch pad rose during that access.
 
 The pellet sensor sits on the plate and reports occupancy in every state. Because it holds its state, the node
 always knows whether the plate is occupied — before a dispense, during travel, and after an access.
@@ -277,12 +280,19 @@ bus is recovered by the next frame carrying the count (or by the next heartbeat)
 than silently dropped. The node counter is the independent witness that makes that detection possible, which
 is why the firmware still sends it. See `packages/dev_gui/base_station/pellet_ledger.py`.
 
-**Presence recalibration.** `CanCmd::CalibratePresence` (`0x09`, no payload, broadcast-friendly) starts a fresh
-5 s idle-pad capture on the presence sensor — the same action as a short `PIN_BTN` click. The node replies with
-`PresenceCalResult`: `ok=1` and the new `threshold` (uint32 LE) on success, or `ok=0` with the *unchanged*
-threshold if the capture saw fewer than `kPresenceCalMinSamples` (10) samples. Calibrating with an animal on the
-pad sets a threshold above real presence readings, so the cage must be empty for the whole capture — see
-[HARDCODED_VALUES.md](HARDCODED_VALUES.md#presence-detection-presenceservice) for the full timing table.
+**Presence re-baseline.** `CanCmd::CalibratePresence` (`0x09`, no payload, broadcast-friendly) starts a 20 s
+capture — the same action as a short `PIN_BTN` click. Detection keeps running. The node replies with
+`PresenceCalResult`: `ok` (1 byte), `baseline` (uint32 LE, the lowest 1 s median) and `sigma×10` (uint16 LE,
+the spread of that second). `ok=0` means the window never completed a 1 s block; the live baseline is left
+as it was. An animal may be in the cage. If it sits on the pad for the whole window the baseline comes out
+high and that visit reads clear until the animal steps off. See
+[HARDCODED_VALUES.md](HARDCODED_VALUES.md#presence-detection-presenceservice).
+
+**Presence trace and bout summary.** `SetConfig` type `0x03` with a following `1` or `0` turns a 1 Hz trace
+on or off for that node (not stored). Frames use id `0x400 + nodeId`. On every dome close the node also emits
+`DomeBoutSummary` (`0x18`) and, in shadow mode only, `PresenceStuckCandidate` (`0x17`) after 15 min of flat
+presence with the dome closed. Heartbeat byte 3 is still presence 0/1. Byte 4 bit 3 is the sensitivity warning
+and bit 4 is "baseline frozen".
 
 The context byte on dome and take events separates intent from accident. `DomeOpened` carries whether a
 pellet was on the plate at the moment of the lift, so an opening with an empty plate is recognizable as
@@ -319,8 +329,8 @@ Node → base on CAN ID `0x200 + nodeId`, sent every `kDefaultHeartbeatIntervalM
 | ---- | ----------------------------------------------------------------------------- |
 | 0    | Dispense state                                                                |
 | 1–2  | Loaded milestone count (LE16)                                                 |
-| 3    | Mouse presence (capacitive mouse-presence pad)                                |
-| 4    | Sensor bits: `bit0` pellet present, `bit1` at load position, `bit2` dome open |
+| 3    | Mouse presence, 0 or 1. Flag bits are not packed in this byte                 |
+| 4    | Sensor bits: `bit0` pellet, `bit1` load position, `bit2` dome open, `bit3` sensitivity warning, `bit4` baseline frozen |
 | 5    | Fault code                                                                    |
 | 6–7  | Pellets taken (LE16)                                                          |
 

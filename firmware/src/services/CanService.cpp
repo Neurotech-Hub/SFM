@@ -104,7 +104,12 @@ void CanService::sendEvent(CanEvent ev, const uint8_t *extra, uint8_t extraLen) 
 
 // ---------------------------------------------------------------------------
 void CanService::sendDiscovery(uint32_t frameId, const uint8_t *payload, uint8_t len) {
-    if (!started_) return;
+    sendFrame(frameId, payload, len);
+}
+
+// ---------------------------------------------------------------------------
+void CanService::sendFrame(uint32_t frameId, const uint8_t *payload, uint8_t len) {
+    if (!started_ || payload == nullptr) return;
 
     twai_message_t msg = {};
     msg.identifier       = frameId;

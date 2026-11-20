@@ -50,10 +50,12 @@ public:
     bool     mousePresent() const       { return presence_.present(); }
     bool     presenceDetected() const   { return mousePresent(); } // compatibility alias
     uint32_t presenceRaw() const       { return presence_.raw(); }
+    // Effective on-level: baseline + (factor percent / 100) * baseline.
     uint32_t presenceThreshold() const { return presence_.threshold(); }
 
-    // Recalibrate the presence pad against its idle noise (same as a short
-    // press of PIN_BTN). The pad must stay clear for kPresenceCalMs.
+    // Re-baseline the presence pad (same as a short press of PIN_BTN).
+    // Detection keeps running. The window starts once the dome has been
+    // closed for kDomeBaselineHoldMs.
     bool startPresenceCalibration()   { return presence_.startCalibration(); }
     bool presenceCalibrating() const  { return presence_.calibrating(); }
 
@@ -117,6 +119,14 @@ private:
     // silently drop that node's feedback.
     bool presenceCalResultPending_ = false;
 
+    // Stuck-candidate and dome-bout reports that finished before this node
+    // had a CAN id. Held until identity_.isEnabled(), same as the cal result.
+    bool stuckReportPending_ = false;
+    bool boutReportPending_  = false;
+    PresenceStuckReport stuckReport_;
+    DomeBoutReport      boutReport_;
+    uint32_t lastPresenceTraceMs_ = 0;
+
     // Non-blocking confirm blink after a successful calibration — LED9
     // blinks briefly instead of routing through LedService::flashConfirm(),
     // which blocks on delay() for ~600ms. flashConfirm() is fine for the
@@ -153,6 +163,8 @@ private:
     void sendHeartbeatIfDue();
     void updateCalConfirmBlink();
     void handlePresenceEvents();
+    void publishPresenceSideReports();
+    void sendPresenceTraceIfDue();
     void updateButton();
     void updatePingBlink();
     void updateSyncFlash();

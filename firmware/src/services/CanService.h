@@ -20,9 +20,9 @@ constexpr uint32_t kMinHeartbeatIntervalMs = 100;
 //   byte 0: DispenseState
 //   byte 1: pelletCount (low byte) — Loaded milestones
 //   byte 2: pelletCount (high byte)
-//   byte 3: mouse presence (capacitive pad, 0/1)
+//   byte 3: mouse presence (capacitive pad, 0/1). Flags are NOT packed here.
 //   byte 4: sensor bits
-//           [2:dome open | 1:load position | 0:pellet on plate]
+//           [4:baseline frozen | 3:sensitivity warning | 2:dome open | 1:load position | 0:pellet on plate]
 //   byte 5: fault code (ServiceStatus)
 //   byte 6: takenCount (low byte) — pellets taken
 //   byte 7: takenCount (high byte)
@@ -77,6 +77,9 @@ public:
 
     // Send a discovery frame (used by NodeIdentity).
     void sendDiscovery(uint32_t frameId, const uint8_t *payload, uint8_t len);
+
+    // Send an arbitrary standard frame (presence trace uses 0x400 + nodeId).
+    void sendFrame(uint32_t frameId, const uint8_t *payload, uint8_t len);
 
     // --- Callbacks ---
     void onCommand(CommandCallback cb)     { commandCb_   = cb; }

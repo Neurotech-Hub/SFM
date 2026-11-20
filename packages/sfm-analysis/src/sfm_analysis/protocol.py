@@ -29,7 +29,7 @@ class CanCmd(IntEnum):
     ReqStatus         = 0x06
     ClearId           = 0x07  # clear NVS id; node re-enters discovery
     DispenseNoFeed    = 0x08  # dispense motion with no pellet; payload = dwell ms LE16 (optional)
-    CalibratePresence = 0x09  # recalibrate the presence pad; cage MUST be empty for ~5s
+    CalibratePresence = 0x09  # re-baseline presence now (20 s; detection keeps running)
     SyncFlash         = 0x0A  # status LED solid ON for N ms (camera sync); payload = duration ms LE16 (optional, default 500)
 
 
@@ -43,7 +43,7 @@ CAN_CMD_PURPOSE = {
     CanCmd.ReqStatus: "request heartbeat now",
     CanCmd.ClearId: "wipe stored ID",
     CanCmd.DispenseNoFeed: "run dispense motion, deliver no pellet",
-    CanCmd.CalibratePresence: "recalibrate presence pad (cage must be empty)",
+    CanCmd.CalibratePresence: "re-baseline presence pad (20 s, detection stays on)",
     CanCmd.SyncFlash: "sync flash — status LED solid ON for camera alignment",
 }
 
@@ -72,13 +72,15 @@ class CanEvent(IntEnum):
     Seeking           = 0x0D  # M2 clearing the load sensor before Lowering (clear or step cap)
     NoFeedPresented   = 0x0E  # no-feed raise complete; raw_extra: count LE16 (NOT incremented)
     Dwelling          = 0x0F  # phase: holding at the drop position, M1 idle
-    PresenceCalResult = 0x10  # raw_extra: ok(1), threshold LE32, samples LE16
+    PresenceCalResult = 0x10  # raw_extra: ok(1), baseline LE32, sigma*10 LE16
     ConfigApplied     = 0x11  # raw_extra: configType(1), ok(1), value LE32
     DomeHold          = 0x12  # at the drop position, motors off, waiting for the dome to stay closed
     Retracting        = 0x13  # plate returning to the drop position (dome opened before 80% of the raise)
     PelletReload      = 0x14  # raw_extra: count LE16, reason(1), attempt(1). Pellet missing; wheel loads again
     FirmwareInfo      = 0x15  # raw_extra: major(1), minor(1), patch(1)
     PelletReturned    = 0x16  # pellet back on the raised plate after a PelletTaken (that take was false); raw_extra: count LE16
+    PresenceStuckCandidate = 0x17  # raw_extra: deltaPct*100 LE16, rangeCounts LE16
+    DomeBoutSummary   = 0x18  # raw_extra: touchSeen(1), peakPct*100 LE16, preliftPct*100 int16, duration100ms LE16
 
 
 # Friendly event-log labels for dispense phases (CanEvent.name may differ).
@@ -105,6 +107,8 @@ CAN_EVENT_DISPLAY_NAME = {
     CanEvent.FirmwareInfo: "Firmware Info",
     CanEvent.PresenceCalResult: "PresenceCalResult",
     CanEvent.ConfigApplied: "ConfigApplied",
+    CanEvent.PresenceStuckCandidate: "PresenceStuckCandidate",
+    CanEvent.DomeBoutSummary: "DomeBoutSummary",
 }
 
 # Events whose extra bytes really are a pellet count LE16 (+ optional context
@@ -324,6 +328,7 @@ CAN_CMD_BASE      = 0x100  # 0x100 + nodeId  (0x100 alone = broadcast to all)
 CAN_CMD_BROADCAST = 0x100  # nodeId == 0 → all nodes
 CAN_STATUS_BASE   = 0x200  # 0x200 + nodeId  (heartbeat)
 CAN_EVENT_BASE    = 0x300  # 0x300 + nodeId  (events)
+CAN_TRACE_BASE    = 0x400  # 0x400 + nodeId  (opt-in presence trace)
 
 # Discovery frame IDs
 CAN_ID_ANNOUNCE = 0x080  # node → base: MAC(6)
@@ -339,11 +344,13 @@ DISCOVERY_IDS = {CAN_ID_ANNOUNCE, CAN_ID_ASSIGN, CAN_ID_ACK, CAN_ID_REJOIN}
 # ---------------------------------------------------------------------------
 # SetConfig payload: [configType(1), value...]
 CONFIG_HEARTBEAT_INTERVAL = 0x01  # value = uint16 LE, heartbeat interval in ms
-CONFIG_PRESENCE_FACTOR    = 0x02  # value = float32 LE; threshold = mean + factor * stdDev
+CONFIG_PRESENCE_FACTOR    = 0x02  # value = float32 LE; percent above the live baseline
+CONFIG_PRESENCE_TRACE     = 0x03  # value = uint8; 1 = 1 Hz trace on, 0 = off. Not stored
 
 CONFIG_TYPE_NAME = {
     CONFIG_HEARTBEAT_INTERVAL: "heartbeat_interval",
     CONFIG_PRESENCE_FACTOR: "presence_factor",
+    CONFIG_PRESENCE_TRACE: "presence_trace",
 }
 
 
@@ -353,8 +360,10 @@ CONFIG_TYPE_NAME = {
 # byte 0: DispenseState
 # byte 1: pelletCountLo (presented)
 # byte 2: pelletCountHi
-# byte 3: mouse presence (0/1)
-# byte 4: sensor bits  [bit2=dome open | bit1=load position | bit0=pellet]
+# byte 3: mouse presence (0/1). Flag bits are NOT packed in this byte.
+# byte 4: sensor bits
+#   bit0 pellet, bit1 load position, bit2 dome open,
+#   bit3 sensitivity warning, bit4 baseline tracking frozen
 # byte 5: faultCode (ServiceStatus)
 # byte 6: takenCountLo
 # byte 7: takenCountHi
@@ -369,6 +378,8 @@ class HeartbeatPayload:
     fault_code: ServiceStatus
     pellets_presented: int = 0
     pellets_taken: int = 0
+    sensitivity_warning: bool = False  # bit 3 — onDelta above half the weak-bout peak
+    baseline_frozen: bool = False      # bit 4 — baseline tracker is not moving
 
     @property
     def sensor_bits(self) -> int:
@@ -376,6 +387,8 @@ class HeartbeatPayload:
             (self.pellet << 0)
             | (self.load_position << 1)
             | (self.dome_open << 2)
+            | (self.sensitivity_warning << 3)
+            | (self.baseline_frozen << 4)
         )
 
     @property
@@ -412,6 +425,8 @@ def parse_heartbeat(data: bytes) -> Optional[HeartbeatPayload]:
         fault_code=fault,
         pellets_presented=presented,
         pellets_taken=taken,
+        sensitivity_warning=bool(sensor_bits & 0x08),
+        baseline_frozen=bool(sensor_bits & 0x10),
     )
 
 
@@ -491,19 +506,98 @@ def parse_input_changed(event: EventPayload) -> Optional[InputChangedPayload]:
 @dataclass
 class PresenceCalPayload:
     ok: bool
-    threshold: int
-    samples: int = 0
+    baseline: int          # quietest 1 s median, counts
+    sigma: float = 0.0     # smoothed sigma of that second, counts
 
 
 def parse_presence_cal(event: EventPayload) -> Optional[PresenceCalPayload]:
-    """Decode PresenceCalResult extra bytes: ok(1), threshold LE32, samples LE16."""
+    """Decode PresenceCalResult extra bytes: ok(1), baseline LE32, sigma*10 LE16."""
     if event.event != CanEvent.PresenceCalResult or len(event.raw_extra) < 5:
         return None
+    sigma_x10 = (int.from_bytes(event.raw_extra[5:7], "little")
+                 if len(event.raw_extra) >= 7 else 0)
     return PresenceCalPayload(
         ok=bool(event.raw_extra[0]),
-        threshold=int.from_bytes(event.raw_extra[1:5], "little"),
-        samples=(int.from_bytes(event.raw_extra[5:7], "little")
-                 if len(event.raw_extra) >= 7 else 0),
+        baseline=int.from_bytes(event.raw_extra[1:5], "little"),
+        sigma=sigma_x10 / 10.0,
+    )
+
+
+@dataclass
+class PresenceStuckPayload:
+    delta_pct_x100: int   # percent above baseline, times 100
+    range_counts: int
+
+
+def parse_presence_stuck(event: EventPayload) -> Optional[PresenceStuckPayload]:
+    """Decode PresenceStuckCandidate: deltaPct*100 LE16, rangeCounts LE16."""
+    if event.event != CanEvent.PresenceStuckCandidate or len(event.raw_extra) < 4:
+        return None
+    return PresenceStuckPayload(
+        delta_pct_x100=int.from_bytes(event.raw_extra[0:2], "little"),
+        range_counts=int.from_bytes(event.raw_extra[2:4], "little"),
+    )
+
+
+@dataclass
+class DomeBoutPayload:
+    touch_seen: bool
+    peak_pct_x100: int
+    prelift_pct_x100: int  # signed; percent above baseline, times 100
+    duration_100ms: int
+
+
+def parse_dome_bout(event: EventPayload) -> Optional[DomeBoutPayload]:
+    """Decode DomeBoutSummary extra bytes."""
+    if event.event != CanEvent.DomeBoutSummary or len(event.raw_extra) < 7:
+        return None
+    return DomeBoutPayload(
+        touch_seen=bool(event.raw_extra[0]),
+        peak_pct_x100=int.from_bytes(event.raw_extra[1:3], "little"),
+        prelift_pct_x100=int.from_bytes(event.raw_extra[3:5], "little", signed=True),
+        duration_100ms=int.from_bytes(event.raw_extra[5:7], "little"),
+    )
+
+
+@dataclass
+class PresenceTracePayload:
+    baseline: int
+    max_delta: int
+    min_delta: int
+    present: bool
+    dome_open: bool
+    tracking: bool
+    calibrating: bool
+    stuck_candidate: bool
+
+    @property
+    def flags(self) -> int:
+        return (
+            (self.present << 0)
+            | (self.dome_open << 1)
+            | (self.tracking << 2)
+            | (self.calibrating << 3)
+            | (self.stuck_candidate << 4)
+        )
+
+
+def parse_presence_trace(data: bytes) -> Optional[PresenceTracePayload]:
+    """Decode an 8-byte presence-trace frame (CAN id 0x400 + nodeId)."""
+    if len(data) < 8:
+        return None
+    baseline = data[0] | (data[1] << 8) | (data[2] << 16)
+    max_delta = int.from_bytes(data[3:5], "little", signed=True)
+    min_delta = int.from_bytes(data[5:7], "little", signed=True)
+    flags = data[7]
+    return PresenceTracePayload(
+        baseline=baseline,
+        max_delta=max_delta,
+        min_delta=min_delta,
+        present=bool(flags & 0x01),
+        dome_open=bool(flags & 0x02),
+        tracking=bool(flags & 0x04),
+        calibrating=bool(flags & 0x08),
+        stuck_candidate=bool(flags & 0x10),
     )
 
 
@@ -593,21 +687,26 @@ def build_setconfig_heartbeat(interval_ms: int) -> bytes:
 
 
 # Mirrors PresenceService.h kMinPresenceFactor / kMaxPresenceFactor.
-PRESENCE_FACTOR_MIN = 0.1
-PRESENCE_FACTOR_MAX = 100.0
+# The factor is the percent rise above the live baseline that counts as presence.
+PRESENCE_FACTOR_MIN = 0.2
+PRESENCE_FACTOR_MAX = 10.0
 
 
 def build_setconfig_presence_factor(factor: float) -> bytes:
     """
     Build the payload (after the SetConfig command byte) that sets the
-    presence-detection multiplier: threshold = mean + factor * stdDev.
+    presence factor: percent above the live baseline.
 
     Payload: [CONFIG_PRESENCE_FACTOR, factor float32 LE]. Clamped client-side
-    to match firmware's own clamp in PresenceService::setFactor — the node
-    clamps independently too, so a stale GUI can't push an out-of-range value.
+    to match firmware's own clamp in PresenceService::setFactor.
     """
     factor = max(PRESENCE_FACTOR_MIN, min(float(factor), PRESENCE_FACTOR_MAX))
     return bytes([CONFIG_PRESENCE_FACTOR]) + struct.pack("<f", factor)
+
+
+def build_setconfig_presence_trace(enabled: bool) -> bytes:
+    """Payload: [CONFIG_PRESENCE_TRACE, 0 or 1]. Not stored on the node."""
+    return bytes([CONFIG_PRESENCE_TRACE, 1 if enabled else 0])
 
 
 def build_sync_flash(duration_ms: int = DEFAULT_SYNC_FLASH_MS) -> bytes:
@@ -682,11 +781,19 @@ def node_id_from_event_id(arb_id: int) -> Optional[int]:
     return None
 
 
+def node_id_from_trace_id(arb_id: int) -> Optional[int]:
+    """Extract node ID from a presence-trace frame arbitration ID."""
+    if CAN_TRACE_BASE < arb_id <= CAN_TRACE_BASE + 254:
+        return arb_id - CAN_TRACE_BASE
+    return None
+
+
 def classify_frame(arb_id: int) -> str:
     """
     Classify a received CAN frame by its arbitration ID.
 
-    Returns one of: 'HEARTBEAT', 'EVENT', 'COMMAND', 'DISCOVERY', 'UNKNOWN'.
+    Returns one of: 'HEARTBEAT', 'EVENT', 'COMMAND', 'DISCOVERY',
+    'PRESENCE_TRACE', 'UNKNOWN'.
     """
     if arb_id in DISCOVERY_IDS:
         return "DISCOVERY"
@@ -694,6 +801,8 @@ def classify_frame(arb_id: int) -> str:
         return "HEARTBEAT"
     if CAN_EVENT_BASE < arb_id <= CAN_EVENT_BASE + 254:
         return "EVENT"
+    if CAN_TRACE_BASE < arb_id <= CAN_TRACE_BASE + 254:
+        return "PRESENCE_TRACE"
     if CAN_CMD_BASE <= arb_id <= CAN_CMD_BASE + 254:
         return "COMMAND"
     return "UNKNOWN"

@@ -107,10 +107,19 @@ class TestParseHeartbeat:
         assert hb.pellet is True
         assert hb.load_position is False
         assert hb.dome_open is True
+        assert hb.sensitivity_warning is False
+        assert hb.baseline_frozen is False
 
     def test_presence(self):
         hb = parse_heartbeat(self._make_data(presence=1))
         assert hb.mouse_presence is True
+
+    def test_flag_bits_do_not_force_presence(self):
+        # Byte 3 stays 0/1. A warning or frozen bit in byte 4 must not read as present.
+        hb = parse_heartbeat(self._make_data(presence=0, sensor_bits=0x18))
+        assert hb.mouse_presence is False
+        assert hb.sensitivity_warning is True
+        assert hb.baseline_frozen is True
 
     def test_fault_state(self):
         hb = parse_heartbeat(self._make_data(state=6, fault=2))  # Fault, Jam
@@ -433,23 +442,24 @@ class TestPresenceCalibration:
 
     def test_parse_presence_cal_ok(self):
         from base_station.protocol import parse_presence_cal
-        # ok=1, threshold=35820 LE32, samples=199 LE16
-        extra = bytes([1]) + (35820).to_bytes(4, "little") + (199).to_bytes(2, "little")
+        # ok=1, baseline=35120 LE32, sigma*10 = 42 (sigma 4.2)
+        extra = bytes([1]) + (35120).to_bytes(4, "little") + (42).to_bytes(2, "little")
         ev = parse_event(bytes([CanEvent.PresenceCalResult]) + extra)
         cal = parse_presence_cal(ev)
         assert cal is not None
         assert cal.ok is True
-        assert cal.threshold == 35820
-        assert cal.samples == 199
+        assert cal.baseline == 35120
+        assert cal.sigma == pytest.approx(4.2)
 
-    def test_parse_presence_cal_failed_keeps_threshold(self):
+    def test_parse_presence_cal_failed(self):
         from base_station.protocol import parse_presence_cal
         extra = bytes([0]) + (35000).to_bytes(4, "little") + (0).to_bytes(2, "little")
         ev = parse_event(bytes([CanEvent.PresenceCalResult]) + extra)
         cal = parse_presence_cal(ev)
         assert cal is not None
         assert cal.ok is False
-        assert cal.threshold == 35000
+        assert cal.baseline == 35000
+        assert cal.sigma == 0
 
     def test_parse_presence_cal_rejects_wrong_event(self):
         from base_station.protocol import parse_presence_cal
@@ -593,4 +603,50 @@ class TestDomeSafeAndFirmware:
         composed = f"{major.group(1)}.{minor.group(1)}.{patch.group(1)}"
         assert text.group(1) == composed
         assert lib.group(1).strip() == composed
-        assert composed == "1.7.0"
+        assert composed == "1.7.1"
+
+
+class TestPresenceDriftProtocol:
+    def test_stuck_and_bout_payloads(self):
+        from base_station.protocol import parse_presence_stuck, parse_dome_bout
+        stuck_ev = parse_event(bytes([CanEvent.PresenceStuckCandidate]) + (150).to_bytes(2, "little") + (12).to_bytes(2, "little"))
+        stuck = parse_presence_stuck(stuck_ev)
+        assert stuck.delta_pct_x100 == 150
+        assert stuck.range_counts == 12
+
+        prelift = (-20).to_bytes(2, "little", signed=True)
+        extra = bytes([1]) + (250).to_bytes(2, "little") + prelift + (15).to_bytes(2, "little")
+        bout = parse_dome_bout(parse_event(bytes([CanEvent.DomeBoutSummary]) + extra))
+        assert bout.touch_seen is True
+        assert bout.peak_pct_x100 == 250
+        assert bout.prelift_pct_x100 == -20
+        assert bout.duration_100ms == 15
+
+    def test_trace_frame_and_classify(self):
+        from base_station.protocol import (
+            CAN_TRACE_BASE,
+            classify_frame,
+            node_id_from_trace_id,
+            parse_presence_trace,
+        )
+        raw = (35120).to_bytes(3, "little") + (40).to_bytes(2, "little", signed=True) + (-5).to_bytes(2, "little", signed=True) + bytes([0x15])
+        trace = parse_presence_trace(raw)
+        assert trace.baseline == 35120
+        assert trace.max_delta == 40
+        assert trace.min_delta == -5
+        assert trace.present is True
+        assert trace.dome_open is False
+        assert trace.tracking is True
+        assert trace.calibrating is False
+        assert trace.stuck_candidate is True
+        assert classify_frame(CAN_TRACE_BASE + 4) == "PRESENCE_TRACE"
+        assert node_id_from_trace_id(CAN_TRACE_BASE + 4) == 4
+        assert classify_frame(0x204) == "HEARTBEAT"
+
+    def test_saved_factor_60_resets_to_default(self, tmp_path):
+        from base_station.dev_settings import DEFAULT_PRESENCE_FACTOR, DevSettings
+        path = tmp_path / "dev_settings.json"
+        path.write_text('{"version": 1, "presence_factor": 60.0}\n', encoding="utf-8")
+        settings = DevSettings(path)
+        assert settings.presence_factor == DEFAULT_PRESENCE_FACTOR
+        assert settings.presence_factor == 1.0

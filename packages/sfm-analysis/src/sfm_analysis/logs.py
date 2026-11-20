@@ -51,3 +51,8 @@ EXP6_HEADER: List[str] = [
 def heartbeat_path_for(main_path: Path) -> Path:
     """Sibling heartbeat CSV path: ``foo.csv`` -> ``foo_heartbeats.csv``."""
     return main_path.with_name(f"{main_path.stem}_heartbeats.csv")
+
+
+def presence_trace_path_for(main_path: Path) -> Path:
+    """Sibling presence-trace CSV: ``foo.csv`` -> ``foo_presence_trace.csv``."""
+    return main_path.with_name(f"{main_path.stem}_presence_trace.csv")

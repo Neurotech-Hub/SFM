@@ -141,6 +141,20 @@ class TestLogManager:
         assert all(e.frame_type != "HEARTBEAT" for e in lm.all_entries())
         assert lm.recent_heartbeats()[0].frame_type == "HEARTBEAT"
 
+    def test_presence_trace_goes_to_its_own_csv(self, tmp_path):
+        lm = LogManager(log_dir=str(tmp_path), auto_save=True)
+        lm.add(make_entry(frame_type="EVENT", event_name="OnPlate"))
+        lm.add(make_entry(frame_type="PRESENCE_TRACE", event_name="PresenceTrace", node_id=3))
+        lm.close()
+        today = datetime.now().strftime("%Y%m%d")
+        with open(tmp_path / f"session_{today}.csv") as f:
+            main_rows = list(csv.DictReader(f))
+        with open(tmp_path / f"session_{today}_presence_trace.csv") as f:
+            trace_rows = list(csv.DictReader(f))
+        assert [r["frame_type"] for r in main_rows] == ["EVENT"]
+        assert [r["frame_type"] for r in trace_rows] == ["PRESENCE_TRACE"]
+        assert all(e.frame_type != "PRESENCE_TRACE" for e in lm.all_entries())
+
     def test_named_session_heartbeats_sibling(self, tmp_path):
         lm = LogManager(auto_save=False)
         lm.open_session("cohortA", str(tmp_path))
@@ -282,7 +296,10 @@ class TestDailySink:
         lm2.close()
 
         today = datetime.now().strftime("%Y%m%d")
-        mains = [p for p in tmp_path.glob("session_*.csv") if "_heartbeats" not in p.name]
+        mains = [
+            p for p in tmp_path.glob("session_*.csv")
+            if "_heartbeats" not in p.name and "_presence_trace" not in p.name
+        ]
         assert mains == [tmp_path / f"session_{today}.csv"]
         with open(mains[0]) as f:
             rows = list(csv.DictReader(f))

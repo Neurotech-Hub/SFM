@@ -163,6 +163,18 @@ bool SFM::begin() {
 
                         break;
 
+                    case ConfigType::PresenceTrace:
+
+                        if (len >= 2) {
+
+                            presence_.setTraceEnabled(payload[1] != 0);
+                            rawValue = presence_.traceEnabled() ? 1u : 0u;
+                            ok = true;
+
+                        }
+
+                        break;
+
                 }
 
                 // Ack every SetConfig so the base station can tell it landed
@@ -309,11 +321,15 @@ void SFM::update() {
 
     leds_.update();
 
-    presence_.update();
+    presence_.update(dispenser_.domeOpen());
 
     updateButton();
 
     handlePresenceEvents();
+
+    publishPresenceSideReports();
+
+    sendPresenceTraceIfDue();
 
     handleInputEvents();
 
@@ -680,17 +696,86 @@ void SFM::handlePresenceEvents() {
     presenceCalResultPending_ = false;
 
     const PresenceCalibration &cal = presence_.lastCalibration();
-    uint32_t samples = cal.samples > 0xFFFF ? 0xFFFF : cal.samples;
+    uint32_t baseline = cal.mean > 0.0f ? static_cast<uint32_t>(cal.mean + 0.5f) : 0;
+    float sigmaScaled = cal.stdDev * 10.0f;
+    if (sigmaScaled < 0.0f) sigmaScaled = 0.0f;
+    if (sigmaScaled > 65535.0f) sigmaScaled = 65535.0f;
+    uint16_t sigmaX10 = static_cast<uint16_t>(sigmaScaled + 0.5f);
     uint8_t extra[7] = {
         static_cast<uint8_t>(cal.ok ? 1 : 0),
-        static_cast<uint8_t>( cal.threshold        & 0xFF),
-        static_cast<uint8_t>((cal.threshold >>  8) & 0xFF),
-        static_cast<uint8_t>((cal.threshold >> 16) & 0xFF),
-        static_cast<uint8_t>((cal.threshold >> 24) & 0xFF),
-        static_cast<uint8_t>( samples       & 0xFF),
-        static_cast<uint8_t>((samples >> 8) & 0xFF),
+        static_cast<uint8_t>( baseline        & 0xFF),
+        static_cast<uint8_t>((baseline >>  8) & 0xFF),
+        static_cast<uint8_t>((baseline >> 16) & 0xFF),
+        static_cast<uint8_t>((baseline >> 24) & 0xFF),
+        static_cast<uint8_t>( sigmaX10       & 0xFF),
+        static_cast<uint8_t>((sigmaX10 >> 8) & 0xFF),
     };
     can_.sendEvent(CanEvent::PresenceCalResult, extra, 7);
+}
+
+
+void SFM::publishPresenceSideReports() {
+    PresenceStuckReport stuck;
+    if (presence_.takeStuck(stuck)) {
+        stuckReport_ = stuck;
+        stuckReportPending_ = true;
+    }
+    DomeBoutReport bout;
+    if (presence_.takeDomeBout(bout)) {
+        boutReport_ = bout;
+        boutReportPending_ = true;
+    }
+    if (!identity_.isEnabled() || can_.nodeId() == 0) return;
+
+    if (stuckReportPending_) {
+        stuckReportPending_ = false;
+        uint8_t extra[4] = {
+            static_cast<uint8_t>( stuckReport_.deltaPctX100        & 0xFF),
+            static_cast<uint8_t>((stuckReport_.deltaPctX100 >> 8)  & 0xFF),
+            static_cast<uint8_t>( stuckReport_.rangeCounts         & 0xFF),
+            static_cast<uint8_t>((stuckReport_.rangeCounts >> 8)   & 0xFF),
+        };
+        can_.sendEvent(CanEvent::PresenceStuckCandidate, extra, 4);
+    }
+
+    if (boutReportPending_) {
+        boutReportPending_ = false;
+        uint16_t peak = boutReport_.peakPctX100;
+        uint16_t pre  = static_cast<uint16_t>(boutReport_.preliftPctX100);
+        uint16_t dur  = boutReport_.duration100ms;
+        uint8_t extra[7] = {
+            static_cast<uint8_t>(boutReport_.touchSeen ? 1 : 0),
+            static_cast<uint8_t>( peak       & 0xFF),
+            static_cast<uint8_t>((peak >> 8) & 0xFF),
+            static_cast<uint8_t>( pre        & 0xFF),
+            static_cast<uint8_t>((pre >> 8)  & 0xFF),
+            static_cast<uint8_t>( dur        & 0xFF),
+            static_cast<uint8_t>((dur >> 8)  & 0xFF),
+        };
+        can_.sendEvent(CanEvent::DomeBoutSummary, extra, 7);
+    }
+}
+
+
+void SFM::sendPresenceTraceIfDue() {
+    if (!presence_.traceEnabled()) return;
+    if (!identity_.isEnabled() || can_.nodeId() == 0) return;
+    const uint32_t now = millis();
+    if (lastPresenceTraceMs_ != 0 && (now - lastPresenceTraceMs_) < kPresenceTraceMs) return;
+    lastPresenceTraceMs_ = now;
+
+    const PresenceTraceSample sample = presence_.takeTrace();
+    uint8_t frame[8] = {
+        static_cast<uint8_t>( sample.baseline        & 0xFF),
+        static_cast<uint8_t>((sample.baseline >>  8) & 0xFF),
+        static_cast<uint8_t>((sample.baseline >> 16) & 0xFF),
+        static_cast<uint8_t>( static_cast<uint16_t>(sample.maxDelta)       & 0xFF),
+        static_cast<uint8_t>((static_cast<uint16_t>(sample.maxDelta) >> 8) & 0xFF),
+        static_cast<uint8_t>( static_cast<uint16_t>(sample.minDelta)       & 0xFF),
+        static_cast<uint8_t>((static_cast<uint16_t>(sample.minDelta) >> 8) & 0xFF),
+        sample.flags,
+    };
+    can_.sendFrame(CAN_TRACE_BASE + can_.nodeId(), frame, 8);
 }
 
 
@@ -713,7 +798,7 @@ void SFM::sendInputChanged(InputId input, bool active) {
 
 
 
-static HeartbeatPayload buildHeartbeat(const DispenserService &d, bool presence) {
+static HeartbeatPayload buildHeartbeat(const DispenserService &d, const PresenceService &presence) {
 
     HeartbeatPayload p = {};
 
@@ -725,13 +810,17 @@ static HeartbeatPayload buildHeartbeat(const DispenserService &d, bool presence)
 
     p.pelletCountHi  = static_cast<uint8_t>((count >> 8) & 0xFF);
 
-    p.presence       = presence ? 1 : 0;
+    p.presence       = presence.present() ? 1 : 0;
 
     p.sensorBits     = (d.pelletOnPlate() ? 0x01 : 0) |
 
                        (d.atLoadPosition() ? 0x02 : 0) |
 
-                       (d.domeOpen() ? 0x04 : 0);
+                       (d.domeOpen() ? 0x04 : 0) |
+
+                       (presence.sensitivityWarning() ? kHbBitSensitivityWarn : 0) |
+
+                       (presence.baselineFrozen() ? kHbBitBaselineFrozen : 0);
 
     p.faultCode      = static_cast<uint8_t>(d.faultCode());
 
@@ -751,7 +840,7 @@ void SFM::sendHeartbeatIfDue() {
 
     if (!can_.heartbeatDue()) return;
 
-    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_.present()));
+    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_));
 
 }
 
@@ -759,7 +848,7 @@ void SFM::sendHeartbeatIfDue() {
 
 void SFM::sendHeartbeatNow() {
 
-    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_.present()));
+    can_.sendHeartbeat(buildHeartbeat(dispenser_, presence_));
 
 }
 

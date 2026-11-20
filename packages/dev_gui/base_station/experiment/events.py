@@ -315,12 +315,12 @@ class EventNormalizer:
                 event_data["session_taken"] = tally.taken
         elif payload.event == CanEvent.PresenceCalResult:
             # Not a pellet count — must not fall into the generic raw_extra
-            # count fallback below, or ok/threshold get misread as a count.
+            # count fallback below, or ok/baseline get misread as a count.
             cal = parse_presence_cal(payload)
             if cal is not None:
                 event_data["ok"] = cal.ok
-                event_data["threshold"] = cal.threshold
-                event_data["samples"] = cal.samples
+                event_data["baseline"] = cal.baseline
+                event_data["sigma"] = cal.sigma
         else:
             ctx = parse_event_context(payload)
             if ctx is not None:

@@ -67,15 +67,22 @@ class NodeState:
     # it, so a missed event can never leave a stale EMPTY reading.
     presented_empty: bool = False
 
-    # Result of the most recent presence recalibration, if any (None = never
-    # calibrated this session; the node's own NVS-stored value is unknown to
-    # the base station until a CalibratePresence broadcast reports back).
-    presence_threshold: Optional[int] = None
+    # Result of the most recent presence re-baseline, if any (None = never
+    # reported this session). baseline is the quietest 1 s median in counts;
+    # sigma is the smoothed spread of that second.
+    presence_baseline: Optional[int] = None
+    presence_sigma: Optional[float] = None
     presence_cal_ok: Optional[bool] = None
+    # Heartbeat byte 4, bits 3 and 4.
+    sensitivity_warning: bool = False
+    baseline_frozen: bool = False
+    # Last opt-in trace sample (counts). None until a trace frame arrives.
+    trace_baseline: Optional[int] = None
+    trace_max_delta: Optional[int] = None
+    trace_enabled: bool = False
 
-    # Last-known presence-detection multiplier (threshold = mean + factor *
-    # stdDev), set from a ConfigApplied ack after the Developer Menu broadcasts
-    # a new value. None = never reported this session.
+    # Last-known presence factor (percent above the live baseline), set from
+    # a ConfigApplied ack. None = never reported this session.
     presence_factor: Optional[float] = None
 
     # Connectivity
@@ -170,6 +177,8 @@ class NodeRegistry:
         node.pellet = hb.pellet
         node.load_position = hb.load_position
         node.dome_open = hb.dome_open
+        node.sensitivity_warning = hb.sensitivity_warning
+        node.baseline_frozen = hb.baseline_frozen
         node.fault_code = hb.fault_code
         node.last_heartbeat_time = time.time()
         node.online = True

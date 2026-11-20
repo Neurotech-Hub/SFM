@@ -14,7 +14,8 @@
 //   Keep the pad CLEAR (no mouse) for 5 s.
 //   Collect samples → mean, std_dev (population σ).
 //   thr = mean + factor * std_dev
-//   (factor is user-settable; default 3.0)
+//   (this sketch's own factor; default 60. The node firmware's PresenceService
+//   no longer uses a sigma multiple — its factor is a percent above baseline.)
 //   LED 9 solid ON during capture; flashConfirm() on success.
 //
 // Open Serial Monitor at 115200 baud.

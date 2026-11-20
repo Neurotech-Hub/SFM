@@ -24,6 +24,10 @@ main CSV stays event/command/experiment traffic only. Heartbeats do not
 enter the in-memory display ring. The last few are kept only so a test or
 a diagnostic can inspect the row that was queued for the heartbeat file.
 
+PRESENCE_TRACE rows go to their own sibling
+(``{session}_presence_trace.csv``) for the same reason: one frame a second
+per node would drown the event log. They are not kept in the display ring.
+
 ``open_session()`` closes whichever sink is currently open and switches to
 the named one; it is not a second, parallel writer, so daily traffic is
 never merged into the experiment file.
@@ -49,6 +53,7 @@ from pathlib import Path
 
 from sfm_analysis.logs import CSV_HEADER as _CSV_HEADER
 from sfm_analysis.logs import heartbeat_path_for as _heartbeat_path_for
+from sfm_analysis.logs import presence_trace_path_for as _presence_trace_path_for
 from typing import Any, Deque, Dict, List, Optional
 
 # Last heartbeats retained for inspection. Not shown in the GUI.
@@ -177,6 +182,9 @@ class LogManager:
         self._hb_csv_path: Optional[Path] = None
         self._hb_csv_file = None
         self._hb_csv_writer = None
+        self._tr_csv_path: Optional[Path] = None
+        self._tr_csv_file = None
+        self._tr_csv_writer = None
 
         # "daily" | "named" | None — which CSV pair is currently open.
         self._sink_kind: Optional[str] = None
@@ -215,7 +223,8 @@ class LogManager:
         Queue an entry for CSV and, unless it is a heartbeat, the display ring.
 
         HEARTBEAT rows go only to the sibling ``*_heartbeats.csv`` sink.
-        All other types are queued for the main session CSV.
+        PRESENCE_TRACE rows go only to the sibling ``*_presence_trace.csv``
+        sink. All other types are queued for the main session CSV.
 
         The row is built here, on the caller thread, so session/run/trial
         stamps match the moment ``add`` was called. The background writer
@@ -226,10 +235,15 @@ class LogManager:
         if self._sink_kind == "daily":
             self._rollover_daily_if_needed()
         self._stamp_context(entry)
-        which = "hb" if entry.frame_type == "HEARTBEAT" else "main"
+        if entry.frame_type == "HEARTBEAT":
+            which = "hb"
+        elif entry.frame_type == "PRESENCE_TRACE":
+            which = "trace"
+        else:
+            which = "main"
         if which == "hb":
             self._recent_heartbeats.append(entry)
-        else:
+        elif which == "main":
             self._buffer.append(entry)
             self._display_generation += 1
         self._pending.put(("row", which, self._entry_to_row(entry)))
@@ -307,6 +321,10 @@ class LogManager:
         return self._hb_csv_path
 
     @property
+    def presence_trace_csv_path(self) -> Optional[Path]:
+        return self._tr_csv_path
+
+    @property
     def session_name(self) -> str:
         return self._session
 
@@ -328,6 +346,7 @@ class LogManager:
     # CSV_HEADER above. staticmethod() is required here: without it,
     # self.heartbeat_path_for(path) would pass self as main_path.
     heartbeat_path_for = staticmethod(_heartbeat_path_for)
+    presence_trace_path_for = staticmethod(_presence_trace_path_for)
 
     # ------------------------------------------------------------------
     # Named session management
@@ -427,6 +446,7 @@ class LogManager:
         if mode == "w":
             self._csv_writer.writerow(self.CSV_HEADER)
         self._open_heartbeat_csv(self.heartbeat_path_for(path), mode)
+        self._open_trace_csv(self.presence_trace_path_for(path), mode)
 
         self._sink_kind = "named"
         self._daily_date = None
@@ -635,7 +655,7 @@ class LogManager:
         return path
 
     def close(self) -> None:
-        """Drain queued rows to disk, then close the main and heartbeat CSV files."""
+        """Drain queued rows to disk, then close the main, heartbeat, and trace CSV files."""
         self._drain()
         with self._io_lock:
             self._close_files_locked()
@@ -683,6 +703,7 @@ class LogManager:
         if mode == "w":
             self._csv_writer.writerow(self.CSV_HEADER)
         self._open_heartbeat_csv(self.heartbeat_path_for(path), mode)
+        self._open_trace_csv(self.presence_trace_path_for(path), mode)
 
         self._sink_kind = "daily"
         self._daily_date = stamp
@@ -714,6 +735,24 @@ class LogManager:
         self._hb_csv_writer = csv.writer(self._hb_csv_file)
         if write_header:
             self._hb_csv_writer.writerow(self.CSV_HEADER)
+
+    def _open_trace_csv(self, path: Path, mode: str) -> None:
+        """Open the sibling presence-trace sink. Same header rules as heartbeats."""
+        write_header = mode == "w"
+        if mode == "a" and path.exists():
+            _max_run, _count, header_ok = self._scan_existing(path)
+            if not header_ok:
+                mode = "w"
+                write_header = True
+        elif mode == "a" and not path.exists():
+            mode = "w"
+            write_header = True
+
+        self._tr_csv_path = path
+        self._tr_csv_file = open(path, mode, newline="", buffering=1)
+        self._tr_csv_writer = csv.writer(self._tr_csv_file)
+        if write_header:
+            self._tr_csv_writer.writerow(self.CSV_HEADER)
 
     def _drain(self) -> None:
         """Block until every row queued so far has been written and flushed."""
@@ -776,7 +815,12 @@ class LogManager:
         try:
             with self._io_lock:
                 for _kind, which, row in rows:
-                    writer = self._hb_csv_writer if which == "hb" else self._csv_writer
+                    if which == "hb":
+                        writer = self._hb_csv_writer
+                    elif which == "trace":
+                        writer = self._tr_csv_writer
+                    else:
+                        writer = self._csv_writer
                     if writer is None:
                         continue
                     writer.writerow(row)
@@ -790,6 +834,8 @@ class LogManager:
             self._csv_file.flush()
         if self._hb_csv_file is not None:
             self._hb_csv_file.flush()
+        if self._tr_csv_file is not None:
+            self._tr_csv_file.flush()
 
     def _close_files_locked(self) -> None:
         if self._csv_file is not None:
@@ -802,6 +848,11 @@ class LogManager:
             self._hb_csv_file.close()
             self._hb_csv_file = None
             self._hb_csv_writer = None
+        if self._tr_csv_file is not None:
+            self._tr_csv_file.flush()
+            self._tr_csv_file.close()
+            self._tr_csv_file = None
+            self._tr_csv_writer = None
         self._sink_kind = None
 
     def _entry_to_row(self, entry: LogEntry) -> list:

@@ -32,7 +32,7 @@ from .discovery_manager import DiscoveryManager, DiscoveryPhase
 from .io_manager import BNCInputConfig, BNCOutputConfig, IOManager
 from .log_manager import LogEntry, LogManager, sanitize_session_name
 from .mac_id_registry import DEFAULT_REGISTRY_PATH, MacIdRegistry
-from .dev_settings import DevSettings
+from .dev_settings import DEFAULT_PRESENCE_FACTOR, DevSettings
 from . import storage
 from .node_registry import (
     NodeRegistry,
@@ -56,6 +56,7 @@ from .protocol import (
     fault_user_message,
     node_id_from_event_id,
     node_id_from_hb_id,
+    node_id_from_trace_id,
     parse_event,
     parse_event_context,
     parse_fault_code,
@@ -63,6 +64,9 @@ from .protocol import (
     parse_heartbeat,
     parse_discovery,
     parse_presence_cal,
+    parse_presence_stuck,
+    parse_dome_bout,
+    parse_presence_trace,
     parse_config_applied,
     parse_pellet_reload,
     parse_firmware_info,
@@ -70,6 +74,7 @@ from .protocol import (
     config_applied_factor,
     build_setconfig_heartbeat,
     build_setconfig_presence_factor,
+    build_setconfig_presence_trace,
     build_sync_flash,
     DEFAULT_SYNC_FLASH_MS,
     CAN_EVENT_DISPLAY_NAME,
@@ -78,6 +83,7 @@ from .protocol import (
     normalize_event_match_key,
     CONFIG_HEARTBEAT_INTERVAL,
     CONFIG_PRESENCE_FACTOR,
+    CONFIG_PRESENCE_TRACE,
     CONFIG_TYPE_NAME,
     PRESENCE_FACTOR_MIN,
     PRESENCE_FACTOR_MAX,
@@ -95,7 +101,7 @@ from .protocol import (
 WINDOW_W = 1500
 WINDOW_H = 1200        
 TILE_W   = 320
-TILE_H   = 340  # room for multi-line fault instructions + pellet counts
+TILE_H   = 370  # room for fault text, pellet counts, and the presence baseline line
 FAULT_TEXT_WRAP = TILE_W - 24  # stay inside child_window padding/border
 LOG_VISIBLE_ROWS = 30  # fixed event-strip rows; created once, updated in place
 LOG_TABLE_HEIGHT = 220
@@ -728,6 +734,8 @@ class SFMApp:
                 dpg.add_spacer(width=12)
                 dpg.add_text("Presence:", color=(160,165,175,255))
                 tags["presence_text"] = dpg.add_text("○", color=_COLOR_GREY)
+                dpg.add_spacer(width=8)
+                tags["base_text"] = dpg.add_text("Base: —", color=(160, 165, 175, 255))
 
             with dpg.group(horizontal=True):
                 dpg.add_text("Sensors:", color=(160,165,175,255))
@@ -763,6 +771,10 @@ class SFMApp:
                 dpg.add_button(
                     label="Ping", width=55, user_data=node_id,
                     callback=lambda s, a, u: self._send_cmd(u, CanCmd.Ping),
+                )
+                tags["trace_btn"] = dpg.add_button(
+                    label="Trace", width=55, user_data=node_id,
+                    callback=lambda s, a, u: self._on_toggle_presence_trace(u),
                 )
 
             # -- AssignId override --
@@ -1548,6 +1560,8 @@ class SFMApp:
                         f"sensors=pellet:{int(hb.pellet)},"
                         f"load_position:{int(hb.load_position)},"
                         f"dome_open:{int(hb.dome_open)} "
+                        f"sens_warn:{int(hb.sensitivity_warning)} "
+                        f"base_frozen:{int(hb.baseline_frozen)} "
                         f"fault={hb.fault_code.name}"
                     )
                     if hb.fault_code.value != 0:
@@ -1660,24 +1674,46 @@ class SFMApp:
                                 details = "malformed PresenceCalResult payload"
                             else:
                                 details = (
-                                    f"ok={int(cal.ok)} threshold={cal.threshold} "
-                                    f"samples={cal.samples}"
+                                    f"ok={int(cal.ok)} baseline={cal.baseline} "
+                                    f"sigma={cal.sigma:.1f}"
                                 )
                                 node = self._registry.get(node_id)
                                 if not cal.ok:
-                                    details += (
-                                        " — FAILED (too few samples captured; "
-                                        "retry with an empty cage)"
-                                    )
-                                elif (
-                                    node is not None
-                                    and node.presence_threshold is not None
-                                    and node.presence_threshold == cal.threshold
-                                ):
-                                    details += " — note: threshold unchanged from previous calibration"
+                                    details += " — FAILED (no quiet second; baseline unchanged)"
                                 if node is not None:
-                                    node.presence_threshold = cal.threshold
+                                    node.presence_baseline = cal.baseline
+                                    node.presence_sigma = cal.sigma
                                     node.presence_cal_ok = cal.ok
+                        elif ev.event == CanEvent.PresenceStuckCandidate:
+                            stuck = parse_presence_stuck(ev)
+                            if stuck is None:
+                                details = "malformed PresenceStuckCandidate payload"
+                            else:
+                                details = (
+                                    f"shadow delta={stuck.delta_pct_x100 / 100:.2f}% "
+                                    f"range={stuck.range_counts} counts"
+                                )
+                                log_fields.update({
+                                    "delta_pct_x100": stuck.delta_pct_x100,
+                                    "range_counts": stuck.range_counts,
+                                })
+                        elif ev.event == CanEvent.DomeBoutSummary:
+                            bout = parse_dome_bout(ev)
+                            if bout is None:
+                                details = "malformed DomeBoutSummary payload"
+                            else:
+                                details = (
+                                    f"touch_seen={int(bout.touch_seen)} "
+                                    f"peak={bout.peak_pct_x100 / 100:.2f}% "
+                                    f"prelift={bout.prelift_pct_x100 / 100:.2f}% "
+                                    f"duration_s={bout.duration_100ms / 10:.1f}"
+                                )
+                                log_fields.update({
+                                    "touch_seen": bout.touch_seen,
+                                    "peak_pct_x100": bout.peak_pct_x100,
+                                    "prelift_pct_x100": bout.prelift_pct_x100,
+                                    "duration_100ms": bout.duration_100ms,
+                                })
                         elif ev.event == CanEvent.ConfigApplied:
                             applied = parse_config_applied(ev)
                             if applied is None:
@@ -1691,6 +1727,11 @@ class SFMApp:
                                     node = self._registry.get(node_id)
                                     if node is not None and applied.ok:
                                         node.presence_factor = config_applied_factor(applied)
+                                elif applied.config_type == CONFIG_PRESENCE_TRACE:
+                                    value_str = "on" if applied.raw_value else "off"
+                                    node = self._registry.get(node_id)
+                                    if node is not None and applied.ok:
+                                        node.trace_enabled = bool(applied.raw_value)
                                 else:
                                     value_str = str(applied.raw_value)
                                 details = f"config={config_name} ok={int(applied.ok)} value={value_str}"
@@ -1742,6 +1783,34 @@ class SFMApp:
                         self._maybe_fire_bnc_out(entry_name)
                     if ev.event in (CanEvent.Loaded, CanEvent.NoFeedPresented):
                         self._arm_chained_schedules(node_id)
+
+        elif ftype == "PRESENCE_TRACE":
+            node_id = node_id_from_trace_id(arb_id)
+            trace = parse_presence_trace(data)
+            if node_id and trace is not None:
+                entry_name = "PresenceTrace"
+                details = (
+                    f"baseline={trace.baseline} max_delta={trace.max_delta} "
+                    f"min_delta={trace.min_delta} present={int(trace.present)} "
+                    f"dome={int(trace.dome_open)} tracking={int(trace.tracking)}"
+                )
+                log_fields.update({
+                    "baseline": trace.baseline,
+                    "max_delta": trace.max_delta,
+                    "min_delta": trace.min_delta,
+                    "present": trace.present,
+                    "dome_open": trace.dome_open,
+                    "tracking": trace.tracking,
+                    "calibrating": trace.calibrating,
+                    "stuck_candidate": trace.stuck_candidate,
+                })
+                node = self._registry.get(node_id) if self._registry else None
+                if node is not None:
+                    node.trace_baseline = trace.baseline
+                    node.trace_max_delta = trace.max_delta
+                    node.trace_enabled = True
+            elif node_id is None:
+                node_id = 0
 
         elif ftype == "DISCOVERY":
             node_id = 0
@@ -1986,6 +2055,20 @@ class SFMApp:
             default_value="●" if node.presence else "○",
             color=(100, 220, 120, 255) if node.presence else (160, 165, 175, 255),
         )
+        base = node.trace_baseline if node.trace_baseline is not None else node.presence_baseline
+        if base is None:
+            base_str = "Base: —"
+        elif node.presence_sigma is not None and node.trace_baseline is None:
+            base_str = f"Base {base} σ{node.presence_sigma:.0f}"
+        else:
+            base_str = f"Base {base}"
+        if "base_text" in tags:
+            dpg.configure_item(tags["base_text"], default_value=base_str)
+        if "trace_btn" in tags:
+            dpg.configure_item(
+                tags["trace_btn"],
+                label="Trace*" if node.trace_enabled else "Trace",
+            )
 
         # Sensors
         for sensor_tag, val, label in [
@@ -2012,8 +2095,14 @@ class SFMApp:
         dpg.configure_item(tags["fault_text"], default_value=status_str, color=status_col)
 
         # Dome open warning (amber, non-sticky)
-        warn = "Dome open >30s" if node.dome_open_warning else ""
-        dpg.configure_item(tags["warn_text"], default_value=warn, color=_COLOR_AMBER)
+        warn_parts = []
+        if node.dome_open_warning:
+            warn_parts.append("Dome open >30s")
+        if node.sensitivity_warning:
+            warn_parts.append("Presence factor may be high")
+        dpg.configure_item(
+            tags["warn_text"], default_value=" · ".join(warn_parts), color=_COLOR_AMBER,
+        )
 
     def _refresh_all_tiles(self) -> None:
         if not self._registry:
@@ -2214,7 +2303,9 @@ class SFMApp:
             purpose = f"heartbeat={ms / 1000:g}s"
         elif cmd == CanCmd.SetConfig and len(payload) >= 5 and payload[0] == CONFIG_PRESENCE_FACTOR:
             factor = struct.unpack("<f", payload[1:5])[0]
-            purpose = f"presence_factor={factor:g}"
+            purpose = f"presence_factor={factor:g}%"
+        elif cmd == CanCmd.SetConfig and len(payload) >= 2 and payload[0] == CONFIG_PRESENCE_TRACE:
+            purpose = f"presence_trace={'on' if payload[1] else 'off'}"
         if not ok:
             return f"{purpose} — send failed"
         return purpose
@@ -2337,11 +2428,11 @@ class SFMApp:
                          color=(100, 180, 255, 255))
             dpg.add_separator()
             dpg.add_text(
-                "Every cage must be EMPTY and undisturbed for ~5 seconds.\n"
-                "Each node samples its idle pad and stores the new threshold\n"
-                "in NVS. Calibrating with an animal present sets a threshold\n"
-                "ABOVE real presence readings — that node will stop detecting\n"
-                "the animal until it is recalibrated again.",
+                "Each node spends 20 seconds finding the quietest 1 second\n"
+                "and uses that as the new baseline. Detection keeps running.\n"
+                "An animal may stay in the cage. If it sits on the pad the\n"
+                "whole time, that visit reads clear until it steps off and\n"
+                "the baseline tracks back down.",
                 color=(230, 140, 30, 255), wrap=390,
             )
             dpg.add_separator()
@@ -2371,12 +2462,12 @@ class SFMApp:
             modal=True,
             no_resize=True,
             width=420,
-            height=280,
-            pos=((WINDOW_W - 420) // 2, (WINDOW_H - 280) // 2),
+            height=320,
+            pos=((WINDOW_W - 420) // 2, (WINDOW_H - 320) // 2),
         ):
             dpg.add_text("Presence Detection", color=(100, 180, 255, 255))
             dpg.add_text(
-                f"threshold = mean + factor × std_dev  (range {PRESENCE_FACTOR_MIN:g}-{PRESENCE_FACTOR_MAX:g})",
+                f"percent above the live baseline  (range {PRESENCE_FACTOR_MIN:g}–{PRESENCE_FACTOR_MAX:g}; default {DEFAULT_PRESENCE_FACTOR:g})",
                 color=(160, 165, 175, 255), wrap=390,
             )
             with dpg.group(horizontal=True):
@@ -2384,23 +2475,40 @@ class SFMApp:
                     tag="dev_presence_factor_input",
                     default_value=self._dev_settings.presence_factor,
                     width=120,
-                    step=0.5,
+                    step=0.1,
+                    min_value=PRESENCE_FACTOR_MIN,
+                    max_value=PRESENCE_FACTOR_MAX,
+                    min_clamped=True,
+                    max_clamped=True,
                 )
                 dpg.add_button(
                     label="Apply to All Nodes", width=180,
                     callback=self._on_apply_presence_factor,
                 )
             dpg.add_text(
-                "Note: a lower factor makes detection more sensitive.",
+                "A lower percent is more sensitive. A saved value outside this range (the old default was 60) resets to 1.",
                 color=(160, 165, 175, 255), wrap=390,
             )
 
     def _on_apply_presence_factor(self, sender=None, app_data=None, user_data=None) -> None:
         factor = dpg.get_value("dev_presence_factor_input") if dpg.does_item_exist("dev_presence_factor_input") else self._dev_settings.presence_factor
         factor = float(factor)
+        if factor < PRESENCE_FACTOR_MIN or factor > PRESENCE_FACTOR_MAX:
+            factor = DEFAULT_PRESENCE_FACTOR
         payload = build_setconfig_presence_factor(factor)
         self._broadcast(CanCmd.SetConfig, payload)
         self._dev_settings.set_presence_factor(factor)
+        if dpg.does_item_exist("dev_presence_factor_input"):
+            dpg.set_value("dev_presence_factor_input", factor)
+
+    def _on_toggle_presence_trace(self, node_id: int) -> None:
+        """Opt one node in or out of the 1 Hz presence trace. Not stored on the node."""
+        node = self._registry.get(node_id) if self._registry else None
+        enabled = not (node.trace_enabled if node is not None else False)
+        self._send_cmd(node_id, CanCmd.SetConfig, build_setconfig_presence_trace(enabled))
+        if node is not None:
+            node.trace_enabled = enabled
+            self._refresh_tile(node_id)
 
     def _on_assign_id(self, node_id: int) -> None:
         """

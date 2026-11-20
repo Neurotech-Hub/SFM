@@ -121,36 +121,66 @@ and one clear event no matter which sensor reported it.
 ## Presence detection (`PresenceService`)
 
 
-The threshold is calibrated against the idle pad and stored in NVS under the
-same namespace as the node ID, so it survives reboots. Calibration is started by
-a short click of `PIN_BTN`, the serial `cal` command, or a broadcast
-`CanCmd::CalibratePresence` (0x09) from the base station — see
-[DISPENSE_CYCLE.md](DISPENSE_CYCLE.md) for the wire format and the resulting
-`CanEvent::PresenceCalResult` (0x10). A 3 s hold of `PIN_BTN` clears the node ID
-instead. The multiplier is set with serial `factor <n>` (also persisted).
+Reported presence is still a pure touch measurement. The dome only freezes
+the baseline and produces a per-bout summary; it is not OR-ed into presence.
 
-Calibration rule: `threshold = mean + factor × std_dev` (Welford online stats
-over the 5 s idle capture; population σ). The pad must stay clear for the
-capture. Changing `factor` after a successful cal recomputes and saves the
-threshold from the stored mean/σ without a new capture.
+Each 20 ms sample is the median of the last 5 raw reads, then an EMA
+(`kPresenceSmoothAlpha` 0.3). That filter, plus the 100 ms debounce, puts a
+present or clear edge about 200 ms after the pad actually changed. Compare
+sessions across the 1.7.0 and 1.7.1 firmware with that lag in mind.
+
+```
+onDelta = factor / 100 × baseline
+present once (smooth − baseline) > onDelta for 100 ms
+clear   once (smooth − baseline) < 0.5 × onDelta for 100 ms
+```
+
+The baseline is a double and tracks only while the pad reads clear, the
+delta is already below the clear level, and the dome has been closed for
+2 s. It rises with a 60 s time constant and falls with a 5 s time constant.
+A falling reading is treated as drift.
+
+At boot the baseline is the median of the first 1 s. Nothing is restored
+from NVS: a stored baseline that had drifted low would latch false presence,
+and the tracker will not move while it believes the pad is occupied. The
+first boot of 1.7.1 deletes `presThr`, `presFac`, `presMean` and `presStd`
+and writes `presPct` (the percent). An old value such as 60 is never read
+as a percent.
+
+`cal` (button, serial, or `CanCmd::CalibratePresence`) re-baselines over
+20 s without pausing detection. The new baseline is the lowest 1 s median
+in that window; sigma is the spread of that same second of smoothed
+samples. If the dome is open the window waits until it has been closed for
+2 s. A finger held down the whole time leaves the baseline high, so that
+visit reads clear; fast downward tracking corrects it after the finger lifts.
+
+The stuck guard watches for 15 min of presence with the dome closed and a
+smoothed range under 3× the idle sigma. It emits `PresenceStuckCandidate`
+and does not move the baseline (`kPresenceStuckActive` is false). Mice rest
+on the pad, so an automatic rebaseline would end a real visit and release
+experiments that wait on presence-clear. Turn the flag on only after a run
+shows wet-pad and resting-mouse readings can be told apart.
+
+Build every node with Arduino-ESP32 core **3.3.13** (Boards Manager:
+"esp32 by Espressif Systems"). The logic uses `touchRead()` only.
 
 
-| Value    | Constant / where                | Notes                                                                                     |
-| -------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
-| 35000    | `kDefaultPresenceThreshold`     | Compile-time fallback used only until a calibration is stored. Bench idle ≈ 35 000–35 500 |
-| 60       | `kDefaultPresenceFactor`        | Default multiplier in `thr = mean + factor × σ`. Runtime via serial `factor <n>`. A factor already stored in NVS (`presFac`) is kept across reboot |
-| 0.1–100  | `kMinPresenceFactor` / `kMax…`  | Clamp range for the factor                                                                |
-| 5 s      | `kPresenceCalMs`                | Idle capture duration                                                                     |
-| 25 ms    | `kPresenceCalSampleMs`          | Sample cadence during the capture (≈200 samples over 5 s)                                 |
-| 10       | `kPresenceCalMinSamples`        | Below this the attempt fails and the threshold is left unchanged                          |
-| 20 ms    | `kPresenceSampleMs`             | `touchRead()` cadence in normal operation — several samples per debounce window            |
-| `presThr`| NVS key                         | Stored threshold                                                                          |
-| `presFac`| NVS key                         | Stored factor                                                                             |
-| `presMean` / `presStd` | NVS keys              | Last-cal mean / σ so factor changes can re-apply after reboot                             |
+| Value | Constant | Notes |
+| ----- | -------- | ----- |
+| 1.0 | `kDefaultPresenceFactor` | Percent above baseline. Placeholder until a 24 h run. NVS key `presPct` |
+| 0.2–10 | `kMinPresenceFactor` / `kMaxPresenceFactor` | Clamp. Out-of-range `presPct` resets to the default |
+| 20 ms | `kPresenceSampleMs` | `touchRead()` cadence |
+| 5 / 0.3 | `kPresenceMedianN` / `kPresenceSmoothAlpha` | Spike reject, then EMA |
+| 60 s / 5 s | `kBaselineTauUpMs` / `kBaselineTauDownMs` | Baseline time constants |
+| 0.5 | `kPresenceOffRatio` | Clear level as a fraction of onDelta |
+| 1 s | `kPresenceSeedMs` | Boot median window |
+| 20 s | `kPresenceCalMs` | Re-baseline window |
+| 2 s | `kDomeBaselineHoldMs` | Dome must be closed this long before tracking or a re-baseline starts |
+| 15 min | `kPresenceStuckMs` | Shadow stuck-candidate delay. `kPresenceStuckActive` = false |
+| 1 s | `kPresenceTraceMs` | Opt-in trace period. `ConfigType::PresenceTrace` (0x03), not stored |
 
 
-Threshold changes apply immediately rather than waiting out a debounce window:
-the reading did not change, the decision boundary did.
+The on-node test procedure is [PRESENCE_DRIFT_TEST.md](PRESENCE_DRIFT_TEST.md).
 
 
 ---
@@ -213,9 +243,21 @@ The number lives in two places that must stay identical. `packages/dev_gui/tests
 | `firmware/src/SFMVersion.h` | `kFirmwareVersionMajor` / `Minor` / `Patch` and `kFirmwareVersionStr` |
 | `firmware/library.properties` | `version=` |
 
-Use the **minor** number for a behaviour or protocol change, and the **patch** number for a fix that does not change the wire format. Current release: **1.7.0**.
+Use the **minor** number for a behaviour or protocol change, and the **patch** number for a fix that does not change the wire format. Current release: **1.7.1**.
 
 When you bump the version, add a subsection here for the new number. The base station only records the number; this list is what that number means.
+
+### 1.7.1
+
+Presence no longer uses a frozen `mean + factor × σ` threshold. The factor is a percent above a drifting baseline. Flash the base station with this tree at the same time as the nodes: the calibration payload, two new events, the trace id, and two heartbeat flag bits all changed.
+
+- **Decision.** Median of 5, then EMA. Present above `factor%` of the baseline, clear below half of that, each debounced 100 ms. End-to-end lag is about 200 ms.
+- **Baseline.** Tracks only while clear, below the clear level, and with the dome closed for 2 s. Up τ = 60 s, down τ = 5 s. Boot seed is the median of the first 1 s. Not stored.
+- **Factor.** `ConfigType::PresenceFactor` (0x02) is unchanged on the wire and now means percent, clamped 0.2–10, default 1.0, NVS key `presPct`. The old keys are deleted on first boot.
+- **Re-baseline.** `CalibratePresence` still 0x09. 20 s, detection keeps running. `PresenceCalResult` (0x10) is now `ok`, `baseline` uint32 LE, `sigma×10` uint16 LE.
+- **New events.** `PresenceStuckCandidate` (0x17): delta%×100 uint16, range uint16. Shadow only. `DomeBoutSummary` (0x18): touchSeen, peak%×100 uint16, prelift%×100 int16, duration in 100 ms steps uint16.
+- **Heartbeat byte 4.** Bit 3 sensitivity warning, bit 4 baseline frozen. Byte 3 stays 0/1.
+- **Trace.** `ConfigType::PresenceTrace` (0x03, uint8, not stored) sends one frame a second on `0x400 + nodeId`: baseline uint24, max delta int16, min delta int16, flags.
 
 ### 1.7.0
 

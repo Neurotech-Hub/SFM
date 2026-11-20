@@ -14,9 +14,11 @@
 //   short click – recalibrate the mouse-presence pad (keep the pad CLEAR)
 //   3 s hold    – clear the NVS node ID, then re-enter discovery
 //
-// Presence threshold, calibration factor, and node ID live in NVS, so a
-// calibrated node keeps its settings across reboots. Serial 'cal' does the
-// same as a button click. Calibration rule: thr = mean + factor * std_dev.
+// The presence factor (percent above the live baseline) and the node ID live
+// in NVS. Serial 'cal' re-baselines over 20 s (same as a button click) without
+// pausing detection. Presence = smoothed reading more than factor% above the
+// drifting baseline. 'pres' prints the live numbers; 'trace' toggles the 1 Hz
+// CAN trace.
 //
 // CAN frame reference (250 kbps, 11-bit IDs):
 //   Commands  base->node : 0x100 + nodeId  (0x100 = broadcast)
@@ -37,11 +39,13 @@ static void printHelp() {
     Serial.println(F("  d          dispense pellet"));
     Serial.println(F("  a          recover (stop motion / clear fault)"));
     Serial.println(F("  s          print status"));
-    Serial.println(F("  cal        calibrate presence pad (5 s, keep pad CLEAR)"));
-    Serial.println(F("  thr        print presence raw + threshold + factor"));
-    Serial.println(F("  factor     print calibration factor"));
-    Serial.println(F("  factor <n> set factor (thr = mean + factor*σ); saves to NVS"));
-    Serial.println(F("  thrclr     forget saved presence cal (back to defaults)"));
+    Serial.println(F("  cal        re-baseline presence (20 s; detection keeps running)"));
+    Serial.println(F("  pres       print raw, smooth, baseline, delta, factor"));
+    Serial.println(F("  thr        same as pres"));
+    Serial.println(F("  factor     print presence factor (percent above baseline)"));
+    Serial.println(F("  factor <n> set factor percent (0.2-10); saves to NVS"));
+    Serial.println(F("  trace      toggle the 1 Hz presence trace on CAN"));
+    Serial.println(F("  thrclr     reset the stored factor to the default"));
     Serial.println(F("  clr        clear NVS node ID (forces first-boot next reset)"));
 }
 
@@ -85,44 +89,47 @@ static void printStatus() {
 }
 
 static void printPresence() {
+    const sfm::PresenceService &p = gSfm.presence();
     Serial.print(F("[PRESENCE] raw="));
-    Serial.print(gSfm.presenceRaw());
-    Serial.print(F("  thr="));
-    Serial.print(gSfm.presenceThreshold());
+    Serial.print(p.raw());
+    Serial.print(F("  smooth="));
+    Serial.print(p.smooth(), 0);
+    Serial.print(F("  base="));
+    Serial.print(p.baseline(), 0);
+    Serial.print(F("  delta="));
+    Serial.print(p.delta(), 0);
+    Serial.print(F("  on="));
+    Serial.print(p.onDelta(), 0);
     Serial.print(F("  factor="));
-    Serial.print(gSfm.presence().factor(), 2);
-    if (gSfm.presence().hasCalStats()) {
-        Serial.print(F("  mean="));
-        Serial.print(gSfm.presence().calMean(), 1);
-        Serial.print(F("  σ="));
-        Serial.print(gSfm.presence().calStdDev(), 1);
-    }
+    Serial.print(p.factor(), 2);
+    Serial.print(F("%  σ="));
+    Serial.print(p.noiseSigma(), 1);
+    Serial.print(F("  track="));
+    Serial.print(p.tracking() ? 1 : 0);
     Serial.print(F("  -> "));
-    Serial.println(gSfm.mousePresent() ? F("PRESENT") : F("clear"));
+    Serial.println(p.present() ? F("PRESENT") : F("clear"));
 }
 
 // Report the outcome of a calibration started by serial or by the button.
 static void reportPresenceEvents() {
     switch (gSfm.takePresenceEvent()) {
         case sfm::PresenceEvent::CalibrationStarted:
-            Serial.print(F("[PRESENCE] CAL START - keep pad CLEAR for 5 s (LED9 solid)  factor="));
-            Serial.println(gSfm.presence().factor(), 2);
+            Serial.print(F("[PRESENCE] RE-BASELINE START - 20 s, detection stays on  factor="));
+            Serial.print(gSfm.presence().factor(), 2);
+            Serial.println(F("%"));
             break;
 
         case sfm::PresenceEvent::CalibrationDone: {
             const sfm::PresenceCalibration &c = gSfm.presence().lastCalibration();
-            Serial.print(F("[PRESENCE] CAL DONE  samples=")); Serial.print(c.samples);
-            Serial.print(F("  mean=")); Serial.print(c.mean, 1);
-            Serial.print(F("  std_dev=")); Serial.print(c.stdDev, 1);
-            Serial.print(F("  factor=")); Serial.println(c.factor, 2);
-            Serial.print(F("[PRESENCE] thr = mean + factor*σ = "));
-            Serial.print(c.threshold);
-            Serial.println(F("  (saved to NVS)"));
+            Serial.print(F("[PRESENCE] RE-BASELINE DONE  samples=")); Serial.print(c.samples);
+            Serial.print(F("  baseline=")); Serial.print(c.mean, 1);
+            Serial.print(F("  sigma=")); Serial.print(c.stdDev, 1);
+            Serial.print(F("  on-level=")); Serial.println(c.threshold);
             break;
         }
 
         case sfm::PresenceEvent::CalibrationFailed:
-            Serial.println(F("[PRESENCE] CAL FAILED - not enough samples; threshold unchanged"));
+            Serial.println(F("[PRESENCE] RE-BASELINE FAILED - no quiet second; baseline unchanged"));
             break;
 
         default:
@@ -155,34 +162,31 @@ static void handleSerialLine(const char *line) {
         if (!gSfm.startPresenceCalibration()) {
             Serial.println(F("[PRESENCE] Calibration already running"));
         }
-    } else if (strcmp(line, "thr") == 0) {
+    } else if (strcmp(line, "thr") == 0 || strcmp(line, "pres") == 0) {
         printPresence();
     } else if (strcmp(line, "factor") == 0) {
         Serial.print(F("[PRESENCE] factor="));
-        Serial.println(gSfm.presence().factor(), 2);
-        Serial.println(F("Usage: factor <n>  (e.g. factor 3 or factor 2.5)"));
-        if (!gSfm.presence().hasCalStats()) {
-            Serial.println(F("No cal stats yet – run 'cal' or press button first to re-apply."));
-        }
+        Serial.print(gSfm.presence().factor(), 2);
+        Serial.println(F("% above baseline  (range 0.2-10, e.g. factor 1.0)"));
     } else if (strncmp(line, "factor ", 7) == 0) {
         const char *p = line + 7;
         char *end = nullptr;
         float f = strtof(p, &end);
         if (end == p || f <= 0.0f) {
-            Serial.println(F("Invalid factor. Usage: factor <n>"));
+            Serial.println(F("Invalid factor. Usage: factor <n>  (percent, 0.2-10)"));
         } else if (!gSfm.presence().setFactor(f)) {
             Serial.println(F("Invalid factor."));
         } else {
-            if (gSfm.presence().hasCalStats()) {
-                Serial.println(F("[PRESENCE] Factor saved; threshold re-applied from last cal."));
-            } else {
-                Serial.println(F("[PRESENCE] Factor saved; run 'cal' to apply (no cal stats yet)."));
-            }
+            Serial.println(F("[PRESENCE] Factor saved (percent above baseline)."));
             printPresence();
         }
+    } else if (strcmp(line, "trace") == 0) {
+        bool on = !gSfm.presence().traceEnabled();
+        gSfm.presence().setTraceEnabled(on);
+        Serial.println(on ? F("[PRESENCE] trace ON (1 Hz)") : F("[PRESENCE] trace OFF"));
     } else if (strcmp(line, "thrclr") == 0) {
-        gSfm.presence().clearStoredThreshold();
-        Serial.println(F("Saved presence cal cleared; using compile-time defaults."));
+        gSfm.presence().clearStoredFactor();
+        Serial.println(F("Stored presence factor reset to the default."));
         printPresence();
     } else if (strcmp(line, "clr") == 0) {
         gSfm.identity().clearId();

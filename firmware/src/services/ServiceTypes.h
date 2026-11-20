@@ -93,7 +93,7 @@ enum class CanCmd : uint8_t {
     DispenseNoFeed    = 0x08, // full dispense motion, M1 never runs; no payload (the
                               // raise is triggered by a peer node's Raising event).
                               // A trailing payload from an older base station is ignored.
-    CalibratePresence = 0x09, // recalibrate the presence pad; cage MUST be empty for ~5s
+    CalibratePresence = 0x09, // re-baseline the presence pad now (20 s, detection keeps running)
     SyncFlash         = 0x0A, // status LED solid ON for N ms (camera sync); payload = duration ms LE16 (optional, default 500)
 };
 
@@ -119,13 +119,15 @@ enum class CanEvent : uint8_t {
     Seeking           = 0x0D, // M2 clearing the load sensor before Lowering (clear or step cap)
     NoFeedPresented   = 0x0E, // no-feed raise complete; extra: count LE16 (NOT incremented)
     Dwelling          = 0x0F, // phase: holding at the drop position, M1 idle
-    PresenceCalResult = 0x10, // extra: ok(1), threshold LE32, samples LE16
+    PresenceCalResult = 0x10, // extra: ok(1), baseline LE32, sigma*10 LE16
     ConfigApplied     = 0x11, // extra: configType(1), ok(1), value LE32 (uint32 or float32 bit pattern, per configType)
     DomeHold          = 0x12, // phase: at the drop position, waiting for the dome to close
     Retracting        = 0x13, // phase: M2 returning to the drop position
     PelletReload      = 0x14, // extra: count LE16, PelletReloadReason(1), attempt(1)
     FirmwareInfo      = 0x15, // extra: major(1), minor(1), patch(1)
     PelletReturned    = 0x16, // pellet back on the raised plate after a PelletTaken; extra: count LE16 (pellets, NOT incremented)
+    PresenceStuckCandidate = 0x17, // extra: deltaPct*100 LE16, rangeCounts LE16. Shadow only unless kPresenceStuckActive
+    DomeBoutSummary   = 0x18, // extra: touchSeen(1), peakPct*100 LE16, preliftPct*100 LE16 (signed), duration100ms LE16
 };
 
 // Input IDs carried by CanEvent::InputChanged.
@@ -142,7 +144,8 @@ enum class InputId : uint8_t {
 // ---------------------------------------------------------------------------
 enum class ConfigType : uint8_t {
     HeartbeatInterval = 0x01, // value = uint16 LE, heartbeat interval in ms
-    PresenceFactor    = 0x02, // value = float32 LE; threshold = mean + factor * stdDev
+    PresenceFactor    = 0x02, // value = float32 LE; percent above the live baseline (0.2–10)
+    PresenceTrace     = 0x03, // value = uint8; 1 = emit the 1 Hz presence trace, 0 = stop. Not stored
 };
 
 // ---------------------------------------------------------------------------
@@ -160,6 +163,7 @@ constexpr uint32_t CAN_CMD_BASE       = 0x100; // 0x100 + nodeId
 constexpr uint32_t CAN_CMD_BROADCAST  = 0x100; // nodeId == 0 -> all nodes
 constexpr uint32_t CAN_STATUS_BASE    = 0x200; // 0x200 + nodeId
 constexpr uint32_t CAN_EVENT_BASE     = 0x300; // 0x300 + nodeId
+constexpr uint32_t CAN_TRACE_BASE     = 0x400; // 0x400 + nodeId  (presence trace, opt-in)
 
 // ---------------------------------------------------------------------------
 // NodeIdentity discovery states

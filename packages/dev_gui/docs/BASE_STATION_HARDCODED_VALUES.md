@@ -65,14 +65,20 @@ Pins are BCM numbering, fixed by the custom CAN HAT. See
 
 ## Presence (base-station side)
 
-The threshold itself is calibrated and stored on the node. The GUI only ships
-the multiplier used in `threshold = mean + factor × σ`.
+The node tracks its own baseline. The GUI only ships the factor, which is the
+percent rise above that baseline that counts as presence. A value stored in
+`~/.sfm/dev_settings.json` outside 0.2–10 (the old default of 60 was a sigma
+multiple) is reset to 1.0 on load.
 
 
 | Value | Constant | Location | Notes |
 | ----- | -------- | -------- | ----- |
-| 60 | `DEFAULT_PRESENCE_FACTOR` | `dev_settings.py` | Dev-settings default; persisted under `~/.sfm/dev_settings.json`. A file that already stores a factor keeps that value |
-| 0.1–100 | `PRESENCE_FACTOR_MIN` / `MAX` | `protocol.py` | Clamp on `SetConfig` payload; mirrors firmware |
+| 1.0 | `DEFAULT_PRESENCE_FACTOR` | `dev_settings.py` | Dev-settings default. Percent above baseline |
+| 0.2–10 | `PRESENCE_FACTOR_MIN` / `MAX` | `protocol.py` | Clamp on `SetConfig` payload; mirrors firmware |
+
+The opt-in 1 Hz trace is logged to `{session}_presence_trace.csv`, next to the
+heartbeat sibling, and is not shown in the event strip. Summarize a run with
+`python -m sfm_analysis.analysis.presence_drift SESSION.csv`.
 
 
 ---

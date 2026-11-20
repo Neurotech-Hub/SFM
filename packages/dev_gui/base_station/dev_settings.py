@@ -8,7 +8,7 @@ File format (JSON)::
 
     {
       "version": 1,
-      "presence_factor": 60.0
+      "presence_factor": 1.0
     }
 
 Unknown keys are ignored on load, so a settings file written by an older build
@@ -25,8 +25,12 @@ from typing import Any, Dict, Optional
 
 DEFAULT_SETTINGS_PATH = Path("~/.sfm/dev_settings.json")
 
-# Mirrors firmware's kDefaultPresenceFactor (PresenceService.h).
-DEFAULT_PRESENCE_FACTOR = 60.0
+# Mirrors firmware's kDefaultPresenceFactor (PresenceService.h): percent
+# above the live baseline. A stored value outside 0.2–10 (the old default
+# of 60 was a sigma multiple) is reset to this on load.
+DEFAULT_PRESENCE_FACTOR = 1.0
+PRESENCE_FACTOR_MIN = 0.2
+PRESENCE_FACTOR_MAX = 10.0
 
 
 class DevSettings:
@@ -53,7 +57,11 @@ class DevSettings:
                 return
             factor = data.get("presence_factor")
             if isinstance(factor, (int, float)):
-                self.presence_factor = float(factor)
+                if PRESENCE_FACTOR_MIN <= float(factor) <= PRESENCE_FACTOR_MAX:
+                    self.presence_factor = float(factor)
+                else:
+                    # Old sigma-multiple (typically 60) is not a percent.
+                    self.save()
         except (OSError, json.JSONDecodeError, TypeError):
             self.presence_factor = DEFAULT_PRESENCE_FACTOR
 

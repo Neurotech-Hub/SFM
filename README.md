@@ -48,6 +48,8 @@ SFM is a firmware library for the Spatial Foraging Platform node. It provides no
 
 The Arduino library is the `firmware/` folder (not the repo root). Copy or symlink `firmware/` into `Arduino/libraries/SFM`, or zip that folder and add it via *Sketch → Include Library → Add .ZIP Library…*.
 
+Build node firmware with Arduino-ESP32 core **3.3.13** (Boards Manager: "esp32 by Espressif Systems"). Presence detection uses `touchRead()` from that core; do not mix cores across a fleet. The on-node presence test procedure is [firmware/docs/PRESENCE_DRIFT_TEST.md](firmware/docs/PRESENCE_DRIFT_TEST.md).
+
 ## Documentation
 
 | Doc | What it's for |

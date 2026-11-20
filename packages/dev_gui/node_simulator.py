@@ -174,8 +174,9 @@ class SimNode:
     # node raises before this one finishes lowering), consumed only at step 10.
     peer_raise_seen: bool = False
     cal_until: Optional[float] = None  # presence calibration in progress until this time
-    presence_threshold: int = 35000    # mirrors firmware kDefaultPresenceThreshold
-    presence_factor: float = 60.0      # mirrors firmware kDefaultPresenceFactor
+    presence_baseline: int = 35000     # quietest-second median, counts
+    presence_sigma: float = 5.0
+    presence_factor: float = 1.0       # percent above baseline (firmware default)
 
     # Timing
     last_heartbeat: float = field(default_factory=time.time)
@@ -217,9 +218,10 @@ class NodeSimulator:
     DOME_WARN_DELAY = 3.0  # shorter than firmware 30s for sim demos
     CONFIG_HEARTBEAT_INTERVAL = 0x01
     CONFIG_PRESENCE_FACTOR    = 0x02
-    PRESENCE_FACTOR_MIN = 0.1  # mirrors firmware kMinPresenceFactor
-    PRESENCE_FACTOR_MAX = 100.0  # mirrors firmware kMaxPresenceFactor
-    PRESENCE_CAL_S  = 5.0  # mirrors firmware kPresenceCalMs
+    CONFIG_PRESENCE_TRACE     = 0x03
+    PRESENCE_FACTOR_MIN = 0.2  # mirrors firmware kMinPresenceFactor
+    PRESENCE_FACTOR_MAX = 10.0  # mirrors firmware kMaxPresenceFactor
+    PRESENCE_CAL_S  = 2.0  # shortened stand-in for the firmware's 20 s window
     PRESENCE_LINGER_S = 1.0  # presence clears slightly after the dome closes
 
     def __init__(
@@ -453,7 +455,15 @@ class NodeSimulator:
                     node.presence_factor = factor
                     raw_value = struct.unpack("<I", struct.pack("<f", factor))[0]
                     ok = True
-                    print(f"  [SIM] Node {node.node_id}: presence factor set to {factor:.2f}", flush=True)
+                    print(f"  [SIM] Node {node.node_id}: presence factor set to {factor:.2f}%", flush=True)
+                elif config_type == self.CONFIG_PRESENCE_TRACE and len(data) >= 3:
+                    raw_value = 1 if data[2] else 0
+                    ok = True
+                    print(
+                        f"  [SIM] Node {node.node_id}: presence trace "
+                        f"{'ON' if raw_value else 'OFF'}",
+                        flush=True,
+                    )
                 extra = (
                     bytes([config_type, 1 if ok else 0])
                     + raw_value.to_bytes(4, "little")
@@ -666,27 +676,25 @@ class NodeSimulator:
             node.dispense_step = 15
 
     def _advance_calibration(self, node: SimNode, now: float) -> None:
-        """Model the real failure mode: a pad occupied during the 5s capture
-        yields a threshold above real presence readings -> ok=0, so the GUI's
-        failure path is exercisable without hardware."""
+        """Finish a re-baseline. Occupied pad still succeeds in the simulator:
+        the firmware accepts that case and corrects when the animal steps off.
+        ok=0 is reserved for a window that captured no full second."""
         if node.cal_until is None or now < node.cal_until:
             return
         node.cal_until = None
-        ok = not node.mouse_presence
-        if ok:
-            node.presence_threshold = 35000 + random.randint(200, 900)
-            samples = random.randint(180, 200)
-        else:
-            samples = 0
+        ok = True
+        node.presence_baseline = 35000 + random.randint(-200, 200)
+        node.presence_sigma = random.uniform(2.0, 8.0)
+        sigma_x10 = max(0, min(65535, int(round(node.presence_sigma * 10))))
         extra = (
             bytes([1 if ok else 0])
-            + node.presence_threshold.to_bytes(4, "little")
-            + samples.to_bytes(2, "little")
+            + node.presence_baseline.to_bytes(4, "little")
+            + sigma_x10.to_bytes(2, "little")
         )
         self._send_event(node, CanEvent.PresenceCalResult, extra)
         print(
-            f"  [SIM] Node {node.node_id}: presence calibration "
-            f"{'OK' if ok else 'FAILED'} threshold={node.presence_threshold}",
+            f"  [SIM] Node {node.node_id}: presence re-baseline "
+            f"baseline={node.presence_baseline} sigma={node.presence_sigma:.1f}",
             flush=True,
         )
 
